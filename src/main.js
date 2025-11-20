@@ -15,6 +15,7 @@ import { InputHandler } from './player/input.js';
 import { PlayerController } from './player/playerController.js';
 import { MonsterManager } from './entities/monsterManager.js';
 import { ExitPoint } from './world/exitPoint.js';
+import { AudioManager } from './audio/audioManager.js';
 
 /**
  * Initialize and start the game
@@ -58,6 +59,15 @@ function initGame() {
   sceneManager.setCamera(camera);
   console.log('Camera created');
 
+  // Create audio manager (requires camera for AudioListener)
+  const audioManager = new AudioManager(camera.getCamera());
+  console.log('🔊 Audio manager created');
+
+  // Pre-load audio files (optional, gracefully fails if files missing)
+  audioManager.setupAmbient('/audio/ambient.mp3').catch(() => {
+    console.log('⚠️ Ambient sound not available (optional)');
+  });
+
   // Create minimap
   console.log('Creating minimap with canvas:', minimapCanvas);
   const minimap = new Minimap(minimapCanvas, worldState);
@@ -71,8 +81,8 @@ function initGame() {
   const gameState = new GameState();
   console.log('🎮 Game state created');
 
-  // Create player controller (with gameState for tracking)
-  const player = new PlayerController(worldState, camera, input, gameState);
+  // Create player controller (with gameState and audioManager)
+  const player = new PlayerController(worldState, camera, input, gameState, audioManager);
   console.log('Player spawned at:', player.getGridPosition());
 
   // Create exit point at a far location from spawn
@@ -158,6 +168,10 @@ function initGame() {
 
     // Show settings toggle button
     document.getElementById('toggle-settings').classList.remove('hidden');
+
+    // Start ambient audio (user interaction required for Web Audio API)
+    audioManager.playAmbient();
+    console.log('🔊 Ambient audio started');
 
     // Start game loop FIRST (important!)
     console.log('🎬 Starting game loop...');
