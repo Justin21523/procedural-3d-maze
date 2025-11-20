@@ -32,17 +32,24 @@ export class Monster {
     console.log(`📏 Monster scale set to: ${scale}`);
 
     // Calculate proper ground level based on model bounding box
-    const modelHeight = this.calculateModelHeight();
-    // FIXED: Place model center at modelHeight/2 above ground for visibility
-    const groundOffset = Math.max(0.5, modelHeight / 2);
+    // CRITICAL FIX: Account for model's pivot point position
+    this.model.updateMatrixWorld(true);
+    const bbox = new THREE.Box3().setFromObject(this.model);
+    const modelHeight = bbox.max.y - bbox.min.y;
 
-    console.log(`🦊 Monster model height: ${modelHeight.toFixed(2)}, ground offset: ${groundOffset.toFixed(2)}`);
+    // The ground offset should NEGATE the minimum Y to put model bottom on ground
+    // If model pivot is at feet (bbox.min.y = 0), groundOffset = 0
+    // If model pivot is at center (bbox.min.y = -1), groundOffset = 1
+    const groundOffset = -bbox.min.y;
 
-    // World position (place model center above ground for visibility)
+    console.log(`🦊 Model bbox Y range: [${bbox.min.y.toFixed(2)}, ${bbox.max.y.toFixed(2)}], height: ${modelHeight.toFixed(2)}, ground offset: ${groundOffset.toFixed(2)}`);
+
+    // World position (place model at GRID CENTER, not corner!)
+    // Grid cell (x,y) has its center at (x * TILE_SIZE + TILE_SIZE/2, y * TILE_SIZE + TILE_SIZE/2)
     this.position = new THREE.Vector3(
-      spawnPosition.x * CONFIG.TILE_SIZE,
-      groundOffset, // Raised for visibility
-      spawnPosition.y * CONFIG.TILE_SIZE
+      spawnPosition.x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
+      groundOffset, // Offset to put bottom on ground
+      spawnPosition.y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
     );
 
     // Set model position
@@ -419,10 +426,11 @@ export class Monster {
             const checkX = currentGridX + dx;
             const checkZ = currentGridZ + dz;
             if (this.worldState.isWalkable(checkX, checkZ)) {
-              this.position.x = checkX * CONFIG.TILE_SIZE;
-              this.position.z = checkZ * CONFIG.TILE_SIZE;
+              // Place at grid CENTER
+              this.position.x = checkX * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
+              this.position.z = checkZ * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
               this.model.position.copy(this.position);
-              console.log(`✅ Emergency teleport to (${checkX}, ${checkZ})`);
+              console.log(`✅ Emergency teleport to grid (${checkX}, ${checkZ}), world (${this.position.x.toFixed(1)}, ${this.position.z.toFixed(1)})`);
               return; // Don't try to move this frame
             }
           }
