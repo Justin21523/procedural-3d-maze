@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Diagnostic Page</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: #1a1a1a;
+      color: #0f0;
+      padding: 20px;
+    }
+    .log { margin: 5px 0; }
+    .error { color: #f00; font-weight: bold; }
+    .success { color: #0f0; }
+    .warn { color: #ff0; }
+    pre { background: #000; padding: 10px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>System Diagnostic</h1>
+  <button onclick="testMain()">Test Main Game</button>
+  <button onclick="clearLogs()">Clear</button>
+  <div id="logs"></div>
+
+  <script type="module">
+    window.logs = [];
+
+    window.log = function(msg, level = 'info') {
+      const div = document.getElementById('logs');
+      const p = document.createElement('div');
+      p.className = `log ${level}`;
+      p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      div.appendChild(p);
+      console.log(msg);
+    };
+
+    window.clearLogs = function() {
+      document.getElementById('logs').innerHTML = '';
+    };
+
+    window.testMain = async function() {
+      clearLogs();
+      log('Starting main game test...', 'info');
+
+      try {
+        log('Loading main.js...', 'info');
+
+        // Capture console errors
+        const originalError = console.error;
+        const errors = [];
+        console.error = function(...args) {
+          errors.push(args.join(' '));
+          originalError.apply(console, args);
+        };
+
+        // Try to load main script
+        const script = document.createElement('script');
+        script.type = 'module';
+        script.src = './src/main.js';
+
+        script.onerror = function(e) {
+          log(`❌ Failed to load main.js: ${e}`, 'error');
+          if (errors.length > 0) {
+            log(`Errors captured:`, 'error');
+            errors.forEach(err => log(`  - ${err}`, 'error'));
+          }
+        };
+
+        script.onload = function() {
+          log('✅ main.js loaded successfully', 'success');
+          if (errors.length > 0) {
+            log(`⚠️ ${errors.length} errors during load:`, 'warn');
+            errors.forEach(err => log(`  - ${err}`, 'warn'));
+          }
+        };
+
+        document.head.appendChild(script);
+
+      } catch (e) {
+        log(`❌ Exception: ${e.message}`, 'error');
+        log(`Stack: ${e.stack}`, 'error');
+      }
+    };
+
+    // Auto-test on load
+    log('Page loaded. Click "Test Main Game" to diagnose.', 'info');
+  </script>
+</body>
+</html>

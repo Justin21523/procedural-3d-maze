@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Basic Test</title>
+  <style>
+    body { margin: 0; padding: 20px; font-family: monospace; background: #1a1a1a; color: #0f0; }
+    #info { padding: 20px; background: #000; border: 2px solid #0f0; }
+  </style>
+</head>
+<body>
+  <div id="info">
+    <h1>🧪 Basic Functionality Test</h1>
+    <p>Check the Console (F12) for test results</p>
+    <button id="test-btn" style="padding: 10px 20px; font-size: 16px;">Run Tests</button>
+    <pre id="output"></pre>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { CONFIG } from './src/core/config.js';
+    import { WorldState } from './src/world/worldState.js';
+    import { ExitPoint } from './src/world/exitPoint.js';
+    import { MonsterManager } from './src/entities/monsterManager.js';
+
+    const output = document.getElementById('output');
+    function log(msg) {
+      console.log(msg);
+      output.textContent += msg + '\n';
+    }
+
+    document.getElementById('test-btn').addEventListener('click', async () => {
+      output.textContent = '';
+      log('='.repeat(50));
+      log('🧪 Starting Basic Tests...');
+      log('='.repeat(50));
+
+      // Test 1: THREE.js
+      log('\n✅ TEST 1: THREE.js loaded: ' + (typeof THREE !== 'undefined'));
+      log('   THREE.Vector3: ' + (typeof THREE.Vector3 !== 'undefined'));
+
+      // Test 2: WorldState
+      log('\n🧪 TEST 2: Creating WorldState...');
+      const worldState = new WorldState();
+      worldState.initialize();
+      log('✅ WorldState created');
+      log('   Grid size: ' + worldState.width + 'x' + worldState.height);
+
+      const spawnPoint = worldState.getSpawnPoint();
+      log('   Spawn point: (' + spawnPoint.x + ', ' + spawnPoint.y + ')');
+
+      // Test 3: Exit Point
+      log('\n🧪 TEST 3: Creating Exit Point...');
+      const exitGridPos = worldState.getExitPoint();
+      log('   Exit grid pos: (' + exitGridPos.x + ', ' + exitGridPos.y + ')');
+
+      const exitPoint = new ExitPoint(exitGridPos);
+      const exitMesh = exitPoint.getMesh();
+      log('✅ Exit point created');
+      log('   Exit mesh position: (' + exitMesh.position.x + ', ' + exitMesh.position.y + ', ' + exitMesh.position.z + ')');
+      log('   Exit mesh children: ' + exitMesh.children.length);
+
+      // Test 4: Monster Manager
+      log('\n🧪 TEST 4: Creating Monsters...');
+      const scene = new THREE.Scene();
+      const monsterManager = new MonsterManager(scene, worldState);
+      monsterManager.spawnPlaceholderMonsters(CONFIG.MONSTER_COUNT);
+
+      const monsters = monsterManager.getMonsters();
+      log('✅ Monsters created: ' + monsters.length);
+
+      if (monsters.length > 0) {
+        const firstMonster = monsters[0];
+        const gridPos = firstMonster.getGridPosition();
+        const worldPos = firstMonster.getWorldPosition();
+        log('   First monster grid: (' + gridPos.x + ', ' + gridPos.y + ')');
+        log('   First monster world: (' + worldPos.x.toFixed(1) + ', ' + worldPos.y.toFixed(1) + ', ' + worldPos.z.toFixed(1) + ')');
+      }
+
+      const monsterPositions = monsterManager.getMonsterPositions();
+      log('   Monster positions array length: ' + monsterPositions.length);
+      log('   Monster positions: ' + JSON.stringify(monsterPositions));
+
+      // Test 5: Scene
+      log('\n🧪 TEST 5: Scene Test...');
+      scene.add(exitMesh);
+      log('✅ Exit mesh added to scene');
+      log('   Scene children count: ' + scene.children.length);
+      log('   Exit mesh in scene: ' + scene.children.includes(exitMesh));
+
+      log('\n='.repeat(50));
+      log('✅ ALL TESTS COMPLETED');
+      log('='.repeat(50));
+    });
+
+    // Auto-run on load
+    setTimeout(() => {
+      document.getElementById('test-btn').click();
+    }, 500);
+  </script>
+</body>
+</html>
