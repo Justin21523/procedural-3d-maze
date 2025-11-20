@@ -13,12 +13,15 @@ export class PlayerController {
    * @param {WorldState} worldState - Reference to world state for collision checking
    * @param {FirstPersonCamera} camera - Reference to camera controller
    * @param {InputHandler} input - Reference to input handler
+   * @param {GameState} gameState - Game state manager (optional)
+   * @param {AudioManager} audioManager - Audio manager (optional)
    */
-  constructor(worldState, camera, input, gameState = null) {
+  constructor(worldState, camera, input, gameState = null, audioManager = null) {
     this.worldState = worldState;
     this.camera = camera;
     this.input = input;
     this.gameState = gameState;
+    this.audioManager = audioManager;
 
     // Player position in world coordinates
     this.position = new THREE.Vector3(0, CONFIG.PLAYER_HEIGHT, 0);
@@ -27,9 +30,10 @@ export class PlayerController {
     // Movement tracking
     this.lastPosition = new THREE.Vector3();
     this.distanceMoved = 0;
-    this.stepDistance = 2; // Distance for one step
+    this.stepDistance = 2; // Distance for one footstep sound
     this.lastGridX = -1;
     this.lastGridY = -1;
+    this.footstepTimer = 0; // Timer for footstep sounds
 
     // Initialize at spawn point
     const spawnPoint = worldState.getSpawnPoint();
@@ -78,19 +82,28 @@ export class PlayerController {
    * Update statistics (steps and room exploration)
    */
   updateStatistics() {
-    if (!this.gameState) return;
-
-    // Track movement distance for steps
+    // Track movement distance for steps and footsteps
     const distance = this.position.distanceTo(this.lastPosition);
     if (distance > 0) {
       this.distanceMoved += distance;
 
       // Count a step every stepDistance units
       if (this.distanceMoved >= this.stepDistance) {
-        this.gameState.addStep();
+        if (this.gameState) {
+          this.gameState.addStep();
+        }
+
+        // Play footstep sound
+        if (this.audioManager) {
+          const isRunning = this.input.isSprinting();
+          this.audioManager.playFootstep(isRunning);
+        }
+
         this.distanceMoved = 0;
       }
     }
+
+    if (!this.gameState) return;
 
     // Track room exploration
     const gridPos = this.getGridPosition();
