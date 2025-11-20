@@ -67,81 +67,110 @@
 
 ---
 
-## Phase 3：基礎怪物 AI（Basic Monster AI）
+## Phase 3：基礎怪物 AI（已完成）✅
 
 ### A* 路徑搜尋
-- ⬜ 在 `docs/AI_ALGO_NOTES.md` 補充 A* 演算法說明
-- ⬜ 實作 `src/ai/pathfinding.js`：A* 核心演算法
-- ⬜ 支援 4-way 或 8-way 移動
-- ⬜ 編寫單元測試（選用）
+- ✅ 在 `docs/AI_ALGO_NOTES.md` 補充 A* 演算法說明
+- ✅ 實作 `src/ai/pathfinding.js`：A* 核心演算法
+- ✅ 支援 4-way 和 8-way 移動
+- ✅ 支援動態權重（避免擁擠）
 
 ### 基礎怪物實作
-- ⬜ 實作 `src/ai/monsters.js`：Monster 類別
-- ⬜ 怪物可取得自己與玩家的 grid 座標
-- ⬜ 怪物使用 A* 計算到玩家的路徑
-- ⬜ 怪物沿路徑平滑移動
+- ✅ 實作 `src/entities/monster.js`：Monster 類別
+- ✅ 實作 `src/entities/monsterManager.js`：怪物管理器
+- ✅ 實作 `src/ai/monsterTypes.js`：多種怪物類型配置
+- ✅ 怪物可取得自己與玩家的 grid 座標
+- ✅ 怪物使用 A* 計算到玩家的路徑
+- ✅ 怪物沿路徑平滑移動
 
 ### 場景整合
-- ⬜ 在場景中生成怪物 Mesh（簡單方塊或球體）
-- ⬜ 整合怪物更新到 `gameLoop.js`
-- ⬜ 初步測試：怪物是否能正確追蹤玩家
+- ✅ 支援多種 3D 模型格式（GLTF/GLB/DAE）
+- ✅ 整合怪物更新到 `gameLoop.js`
+- ✅ 支援多隻怪物同時存在
+- ✅ 動畫系統（Idle、Walk、Run）
 
-**Phase 3 完成標準：**
-- 至少一隻怪物在場景中
-- 怪物能使用 A* 追蹤並接近玩家
+**Phase 3 完成標準：✅ 已達成**
+- ✅ 多隻怪物在場景中
+- ✅ 怪物能使用 A* 追蹤並接近玩家
+- ✅ 支援不同怪物類型
 
 ---
 
-## Phase 4：完整 FSM 與視線系統（FSM & Line-of-Sight）
+## Phase 4：完整 FSM 與視線系統（已完成）✅
 
 ### 視線判斷
-- ⬜ 在 `docs/AI_ALGO_NOTES.md` 補充視線判斷說明
-- ⬜ 實作距離檢查（Vision Range）
-- ⬜ 實作視角檢查（Field of View）
-- ⬜ 實作遮擋檢查（Grid-based 或 Raycaster）
+- ✅ 在 `docs/AI_ALGO_NOTES.md` 補充視線判斷說明
+- ✅ 實作距離檢查（Vision Range）
+- ✅ 實作視角檢查（Field of View）
+- ✅ 實作聽覺系統（Hearing Range）
+- ✅ 實作 Grid-based 視線遮擋檢查
 
-### FSM 實作
-- ⬜ 在 `docs/AI_ALGO_NOTES.md` 補充 FSM 設計
-- ⬜ 實作 `src/ai/fsm.js`：通用 FSM 工具
-- ⬜ 更新 Monster 類別：加入 Patrol / Chase / Search 狀態
-- ⬜ 實作狀態轉移邏輯
+### AI 系統實作
+- ✅ 實作 `src/ai/behaviorTree.js`：行為樹系統
+- ✅ 實作 `src/ai/behaviorProfiles.js`：不同怪物行為檔案
+- ✅ 實作 `src/ai/frontierExploration.js`：前沿探索演算法
+- ✅ Monster 類別：加入完整狀態機（EXPLORE, PATROL, CHASE, SEARCH, WANDER, IDLE）
+- ✅ 實作狀態轉移邏輯與記憶系統
 
-### 巡邏行為
-- ⬜ 實作 Patrol 狀態：預設路徑或隨機漫步
-- ⬜ 實作 Search 狀態：在最後目擊位置搜尋
-- ⬜ 調整參數（視距、視角、狀態持續時間）
+### 高級行為
+- ✅ 實作 EXPLORE 狀態：自主探索未知區域
+- ✅ 實作 PATROL 狀態：巡邏已知區域
+- ✅ 實作 CHASE 狀態：追蹤玩家
+- ✅ 實作 SEARCH 狀態：在最後目擊位置搜尋
+- ✅ 實作 WANDER 狀態：隨機漫步
+- ✅ 實作 IDLE 狀態：暫停思考
+- ✅ 調整參數（5種怪物類型各有不同配置）
 
-**Phase 4 完成標準：**
-- 怪物有明確的狀態切換
-- 只有在看到玩家時才追擊
-- 失去視線後會搜尋再巡邏
+**Phase 4 完成標準：✅ 已達成**
+- ✅ 怪物有明確的狀態切換
+- ✅ 只有在感知到玩家時才追擊（視線或聽覺）
+- ✅ 失去感知後會搜尋再探索/巡邏
+- ✅ 自主探索未知區域
 
 ---
 
-## Phase 5：體驗優化（Polish & Enhancement）
+## Phase 5：體驗優化（部分完成）🚧
 
 ### 視覺增強
-- ⬜ 加入牆面與地板貼圖
-- ⬜ 調整燈光營造 Backrooms 氛圍
-- ⬜ 怪物使用可愛 3D 模型（選用）
+- ✅ 支援多種怪物 3D 模型（GLTF/GLB/DAE）
+- ✅ 模型動畫系統（Idle、Walk、Run）
+- ✅ 實作 `src/entities/modelLoader.js`：模型載入器
+- 🚧 牆面與地板貼圖優化（基礎已實作）
+- ⬜ 調整燈光營造更好的 Backrooms 氛圍
 
 ### 音效系統
 - ⬜ 加入環境音效（空調、燈光嗡嗡聲）
 - ⬜ 加入怪物音效（腳步聲、叫聲）
 - ⬜ 加入玩家腳步聲
+- ⬜ 音效空間化（3D audio）
 
-### UI 系統（選用）
-- ⬜ 迷你地圖（Minimap）
-- ⬜ 怪物距離提示
-- ⬜ 簡單開始 / 暫停菜單
+### UI 系統
+- ✅ 迷你地圖（Minimap）- `src/rendering/minimap.js`
+- ✅ 遊戲狀態管理（`src/core/gameState.js`）
+- ✅ 出口點提示（`src/world/exitPoint.js`）
+- ✅ Debug 面板（怪物模型切換、參數調整）
+- ⬜ 開始 / 暫停菜單優化
+- ⬜ 遊戲結束畫面
 
-### 多怪物支援
-- ⬜ 支援多隻怪物同時存在
-- ⬜ 優化多怪物情境下的效能
+### 多怪物支援與效能
+- ✅ 支援多隻怪物同時存在
+- ✅ 怪物管理器（`src/entities/monsterManager.js`）
+- ✅ 5種不同怪物類型
+- ⬜ 效能優化（InstancedMesh、物件池）
+- ⬜ LOD 系統（距離遠時降低模型精度）
+
+### 遊戲體驗
+- ✅ 碰撞檢測優化
+- ✅ 玩家移動優化（衝刺功能）
+- ⬜ 被抓到時的反饋（音效、畫面）
+- ⬜ 找到出口時的反饋
+- ⬜ 難度遞增機制
 
 **Phase 5 完成標準：**
-- 遊戲體驗更流暢
-- 視覺與聽覺反饋完整
+- ✅ 多隻怪物流暢運作
+- ✅ 迷你地圖顯示完整
+- ⬜ 音效系統完整
+- ⬜ 視覺效果更精緻
 
 ---
 
