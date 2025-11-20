@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GLB Model Test</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #222;
+      color: #fff;
+    }
+    #container {
+      width: 100vw;
+      height: 100vh;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      padding: 15px;
+      background: rgba(0, 0, 0, 0.7);
+      border-radius: 5px;
+      max-width: 400px;
+    }
+    #console {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      right: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.8);
+      border-radius: 5px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .log { color: #0f0; }
+    .error { color: #f00; }
+    .warn { color: #ff0; }
+  </style>
+</head>
+<body>
+  <div id="container"></div>
+  <div id="info">
+    <h2>GLB Model Loading Test</h2>
+    <p id="status">Loading...</p>
+    <p id="details"></p>
+  </div>
+  <div id="console"></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
+    // Console logging
+    const consoleDiv = document.getElementById('console');
+    function log(message, type = 'log') {
+      console.log(message);
+      const p = document.createElement('p');
+      p.className = type;
+      p.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      consoleDiv.appendChild(p);
+      consoleDiv.scrollTop = consoleDiv.scrollHeight;
+    }
+
+    // Setup scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x333333);
+
+    const camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    camera.position.set(3, 2, 3);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.getElementById('container').appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(5, 10, 5);
+    directionalLight.castShadow = true;
+    scene.add(directionalLight);
+
+    // Ground
+    const groundGeometry = new THREE.PlaneGeometry(20, 20);
+    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 });
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Grid helper
+    const gridHelper = new THREE.GridHelper(20, 20);
+    scene.add(gridHelper);
+
+    // Status
+    const statusEl = document.getElementById('status');
+    const detailsEl = document.getElementById('details');
+
+    // Test models
+    const models = [
+      '/models/fuzzlefox__cute_stylized_cartoon_fox_character.glb',
+      '/models/cute_chick.glb',
+      '/models/pbr_low-poly_fox_character.glb'
+    ];
+
+    let currentModelIndex = 0;
+    let loadedModel = null;
+
+    async function loadModel(path) {
+      log(`🔄 Loading: ${path}`, 'log');
+      statusEl.textContent = `Loading: ${path}`;
+
+      const loader = new GLTFLoader();
+
+      return new Promise((resolve, reject) => {
+        loader.load(
+          path,
+          (gltf) => {
+            log(`✅ Model loaded successfully!`, 'log');
+            log(`   - Children: ${gltf.scene.children.length}`, 'log');
+            log(`   - Animations: ${gltf.animations.length}`, 'log');
+
+            let meshCount = 0;
+            gltf.scene.traverse((child) => {
+              if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+                meshCount++;
+              }
+            });
+            log(`   - Meshes: ${meshCount}`, 'log');
+
+            statusEl.textContent = '✅ Model loaded!';
+            detailsEl.innerHTML = `
+              <strong>Model Info:</strong><br>
+              Path: ${path}<br>
+              Children: ${gltf.scene.children.length}<br>
+              Animations: ${gltf.animations.length}<br>
+              Meshes: ${meshCount}
+            `;
+
+            resolve(gltf);
+          },
+          (progress) => {
+            if (progress.total > 0) {
+              const percent = (progress.loaded / progress.total * 100).toFixed(0);
+              log(`   Loading: ${percent}%`, 'log');
+            }
+          },
+          (error) => {
+            log(`❌ Error loading model: ${error.message}`, 'error');
+            statusEl.textContent = '❌ Failed to load model';
+            detailsEl.textContent = `Error: ${error.message}`;
+            reject(error);
+          }
+        );
+      });
+    }
+
+    async function testModel(index) {
+      if (index >= models.length) {
+        log('🎉 All models tested!', 'log');
+        return;
+      }
+
+      // Remove previous model
+      if (loadedModel) {
+        scene.remove(loadedModel);
+      }
+
+      try {
+        const gltf = await loadModel(models[index]);
+        loadedModel = gltf.scene;
+        loadedModel.scale.set(0.8, 0.8, 0.8);
+        loadedModel.position.set(0, 0, 0);
+        scene.add(loadedModel);
+
+        log(`📦 Model added to scene`, 'log');
+      } catch (error) {
+        log(`⚠️ Skipping to next model...`, 'warn');
+        setTimeout(() => testModel(index + 1), 2000);
+      }
+    }
+
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+
+      // Rotate model if loaded
+      if (loadedModel) {
+        loadedModel.rotation.y += 0.005;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Keyboard controls
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight') {
+        currentModelIndex = (currentModelIndex + 1) % models.length;
+        testModel(currentModelIndex);
+      } else if (e.key === 'ArrowLeft') {
+        currentModelIndex = (currentModelIndex - 1 + models.length) % models.length;
+        testModel(currentModelIndex);
+      }
+    });
+
+    log('🎮 Model Test Ready', 'log');
+    log('   Press → to load next model', 'log');
+    log('   Press ← to load previous model', 'log');
+
+    // Start testing
+    testModel(currentModelIndex);
+    animate();
+  </script>
+</body>
+</html>

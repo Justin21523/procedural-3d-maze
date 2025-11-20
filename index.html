@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Procedural 3D Maze - Prototype</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+      background-color: #1a1a1a;
+      color: #f0f0f0;
+      cursor: default; /* Always show cursor */
+    }
+
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+    }
+
+    #ui-overlay {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background-color: rgba(0, 0, 0, 0.7);
+      padding: 15px;
+      border-radius: 5px;
+      font-size: 14px;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    #ui-overlay h3 {
+      margin-bottom: 10px;
+      color: #ffd700;
+    }
+
+    #ui-overlay p {
+      margin: 5px 0;
+    }
+
+    #instructions {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background-color: rgba(0, 0, 0, 0.9);
+      padding: 30px;
+      border-radius: 10px;
+      text-align: center;
+      z-index: 200;
+    }
+
+    #instructions h1 {
+      color: #ffd700;
+      margin-bottom: 20px;
+    }
+
+    #instructions ul {
+      list-style: none;
+      margin: 20px 0;
+      text-align: left;
+    }
+
+    #instructions li {
+      margin: 10px 0;
+    }
+
+    #instructions button {
+      background-color: #ffd700;
+      color: #1a1a1a;
+      border: none;
+      padding: 15px 30px;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+
+    #instructions button:hover {
+      background-color: #ffed4e;
+    }
+
+    #instructions.hidden {
+      display: none;
+    }
+
+    /* Minimap styles */
+    #minimap-container {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background-color: rgba(0, 0, 0, 0.9);
+      padding: 10px;
+      border-radius: 5px;
+      border: 2px solid #ffd700;
+      z-index: 999;
+      pointer-events: auto; /* Enable clicks */
+    }
+
+    #minimap-container h4 {
+      margin: 0 0 5px 0;
+      color: #ffd700;
+      font-size: 12px;
+      text-align: center;
+    }
+
+    #minimap {
+      display: block;
+      border: 1px solid #666;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      cursor: crosshair; /* Show cursor on minimap */
+    }
+
+    #minimap-controls {
+      margin-top: 5px;
+      text-align: center;
+      font-size: 10px;
+      color: #ccc;
+    }
+
+    /* Settings panel */
+    #settings-panel {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background-color: rgba(0, 0, 0, 0.85);
+      padding: 15px;
+      border-radius: 5px;
+      border: 2px solid #ffd700;
+      z-index: 999;
+      min-width: 250px;
+      font-size: 12px;
+    }
+
+    #settings-panel h4 {
+      margin: 0 0 10px 0;
+      color: #ffd700;
+      font-size: 14px;
+    }
+
+    .setting-item {
+      margin: 8px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .setting-item label {
+      color: #f0f0f0;
+      margin-right: 10px;
+    }
+
+    .setting-item input[type="range"] {
+      width: 120px;
+    }
+
+    .setting-item .value {
+      color: #ffd700;
+      font-weight: bold;
+      min-width: 40px;
+      text-align: right;
+    }
+
+    .setting-item button {
+      background-color: #ffd700;
+      color: #1a1a1a;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: bold;
+    }
+
+    .setting-item button:hover {
+      background-color: #ffed4e;
+    }
+
+    #toggle-settings {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: #ffd700;
+      border: 2px solid #ffd700;
+      padding: 10px 15px;
+      border-radius: 5px;
+      cursor: pointer;
+      z-index: 998;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    #toggle-settings:hover {
+      background-color: rgba(0, 0, 0, 0.9);
+    }
+
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- Canvas container for Three.js -->
+  <div id="canvas-container"></div>
+
+  <!-- UI Overlay -->
+  <div id="ui-overlay">
+    <h3>Procedural 3D Maze</h3>
+    <p>时间: <span id="game-time" style="color: #ffd700; font-weight: bold;">00:00</span></p>
+    <p>生命值: <span id="health-display" style="color: #ff4444; font-weight: bold;">100</span>/100</p>
+    <div id="health-bar" style="width: 200px; height: 20px; background: #333; border: 2px solid #666; margin: 5px 0;">
+      <div id="health-fill" style="width: 100%; height: 100%; background: linear-gradient(90deg, #ff4444, #ff8844); transition: width 0.3s;"></div>
+    </div>
+    <p>Position: <span id="position">0, 0, 0</span></p>
+    <p>Room: <span id="current-room" style="color: #ffd700; font-weight: bold;">走廊</span></p>
+    <p>FPS: <span id="fps">60</span></p>
+    <p style="font-size: 12px; color: #32cd32;">Pointer: <span id="pointer-status">Not Locked</span></p>
+  </div>
+
+  <!-- Minimap -->
+  <div id="minimap-container">
+    <h4>🗺️ Minimap (Click to Teleport)</h4>
+    <canvas id="minimap" width="400" height="400"></canvas>
+    <div id="minimap-controls" style="font-size: 9px; line-height: 1.3;">
+      <div><span style="color: #32cd32;">●</span> Player <span style="color: #00ff00; font-size: 12px;">★</span> Exit <span style="color: #ff1493;">●</span> Monster</div>
+      <div><span style="color: #ffeb3b;">■</span> Corridor <span style="color: #2196f3;">■</span> Classroom</div>
+      <div><span style="color: #ff5722;">■</span> Office <span style="color: #00bcd4;">■</span> Bathroom</div>
+      <div><span style="color: #9e9e9e;">■</span> Storage <span style="color: #9c27b0;">■</span> Library</div>
+    </div>
+  </div>
+
+  <!-- Instructions overlay -->
+  <div id="instructions">
+    <h1>Procedural 3D Maze</h1>
+    <p>找到绿色的出口逃离迷宫！</p>
+    <ul>
+      <li><strong>WASD</strong> - 移动</li>
+      <li><strong>Mouse</strong> - 视角</li>
+      <li><strong>ESC</strong> - 释放鼠标</li>
+      <li><strong>Tab</strong> - 设置</li>
+    </ul>
+    <button id="start-button">开始游戏</button>
+  </div>
+
+  <!-- Game Over overlay -->
+  <div id="game-over" class="hidden" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: rgba(0, 0, 0, 0.95); padding: 40px; border-radius: 10px; text-align: center; z-index: 300; min-width: 400px; border: 3px solid #ffd700;">
+    <h1 id="game-over-title" style="color: #ffd700; margin-bottom: 20px; font-size: 48px;">🎉 胜利！</h1>
+    <div id="game-over-message" style="color: #fff; font-size: 18px; margin-bottom: 30px;">
+      你成功找到了出口！
+    </div>
+    <div id="game-stats" style="background: rgba(255, 255, 255, 0.1); padding: 20px; border-radius: 5px; margin-bottom: 20px;">
+      <h3 style="color: #ffd700; margin-bottom: 15px;">📊 游戏统计</h3>
+      <p style="margin: 10px 0;"><strong>用时：</strong> <span id="final-time">00:00</span></p>
+      <p style="margin: 10px 0;"><strong>剩余生命值：</strong> <span id="final-health">100</span>/100</p>
+      <p style="margin: 10px 0;"><strong>探索房间数：</strong> <span id="final-rooms">0</span></p>
+      <p style="margin: 10px 0;"><strong>移动步数：</strong> <span id="final-steps">0</span></p>
+    </div>
+    <button id="restart-button" style="background-color: #ffd700; color: #1a1a1a; border: none; padding: 15px 40px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer; margin-right: 10px;">重新开始</button>
+    <button id="menu-button" style="background-color: #666; color: #fff; border: none; padding: 15px 40px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer;">返回主菜单</button>
+  </div>
+
+  <!-- Debug/Cheat Panel -->
+  <button id="toggle-debug" style="position: fixed; top: 20px; right: 280px; background-color: rgba(255, 0, 0, 0.7); color: #fff; border: 2px solid #ff0000; padding: 10px 15px; border-radius: 5px; cursor: pointer; z-index: 998; font-size: 12px; font-weight: bold; display: none;">🔧 Debug</button>
+
+  <div id="debug-panel" style="position: fixed; top: 70px; right: 20px; background-color: rgba(20, 20, 20, 0.95); padding: 15px; border-radius: 5px; border: 3px solid #ff0000; z-index: 999; min-width: 300px; max-width: 350px; font-size: 12px; max-height: 80vh; overflow-y: auto; display: none;">
+    <h4 style="margin: 0 0 15px 0; color: #ff0000; font-size: 16px; text-align: center; border-bottom: 2px solid #ff0000; padding-bottom: 10px;">🔧 DEBUG / CHEAT PANEL</h4>
+
+    <!-- Teleport Section -->
+    <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,0,0,0.1); border-radius: 5px;">
+      <h5 style="color: #ff6666; margin: 0 0 10px 0; font-size: 13px;">📍 Teleport</h5>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 8px;">
+        <button id="debug-tp-spawn" style="padding: 5px; font-size: 11px; background: #4CAF50; border: none; border-radius: 3px; color: white; cursor: pointer;">→ Spawn</button>
+        <button id="debug-tp-exit" style="padding: 5px; font-size: 11px; background: #00ff00; border: none; border-radius: 3px; color: black; cursor: pointer;">→ Exit</button>
+        <button id="debug-tp-random" style="padding: 5px; font-size: 11px; background: #2196F3; border: none; border-radius: 3px; color: white; cursor: pointer;">→ Random</button>
+        <button id="debug-tp-monster" style="padding: 5px; font-size: 11px; background: #ff5722; border: none; border-radius: 3px; color: white; cursor: pointer;">→ Monster</button>
+      </div>
+      <div style="margin-top: 8px;">
+        <input id="debug-tp-x" type="number" placeholder="X" style="width: 45%; padding: 4px; margin-right: 2%; background: #333; color: #fff; border: 1px solid #666; border-radius: 3px;">
+        <input id="debug-tp-y" type="number" placeholder="Y" style="width: 45%; padding: 4px; background: #333; color: #fff; border: 1px solid #666; border-radius: 3px;">
+        <button id="debug-tp-custom" style="width: 100%; margin-top: 5px; padding: 5px; font-size: 11px; background: #9C27B0; border: none; border-radius: 3px; color: white; cursor: pointer;">→ Teleport to (X,Y)</button>
+      </div>
+    </div>
+
+    <!-- Health Section -->
+    <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,0,0,0.1); border-radius: 5px;">
+      <h5 style="color: #ff6666; margin: 0 0 10px 0; font-size: 13px;">❤️ Health Control</h5>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; margin-bottom: 8px;">
+        <button id="debug-health-full" style="padding: 5px; font-size: 11px; background: #4CAF50; border: none; border-radius: 3px; color: white; cursor: pointer;">Full</button>
+        <button id="debug-health-half" style="padding: 5px; font-size: 11px; background: #FF9800; border: none; border-radius: 3px; color: white; cursor: pointer;">50%</button>
+        <button id="debug-health-low" style="padding: 5px; font-size: 11px; background: #f44336; border: none; border-radius: 3px; color: white; cursor: pointer;">10%</button>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
+        <button id="debug-health-plus" style="padding: 5px; font-size: 11px; background: #2196F3; border: none; border-radius: 3px; color: white; cursor: pointer;">+20 HP</button>
+        <button id="debug-health-minus" style="padding: 5px; font-size: 11px; background: #607D8B; border: none; border-radius: 3px; color: white; cursor: pointer;">-20 HP</button>
+      </div>
+      <div style="margin-top: 8px;">
+        <label style="display: flex; align-items: center; cursor: pointer;">
+          <input type="checkbox" id="debug-god-mode" style="margin-right: 8px;">
+          <span style="color: #ffd700; font-weight: bold;">⭐ God Mode (Invincible)</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Monster Model Section -->
+    <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,0,0,0.1); border-radius: 5px;">
+      <h5 style="color: #ff6666; margin: 0 0 10px 0; font-size: 13px;">👹 Monster Model</h5>
+      <div style="margin-bottom: 8px;">
+        <label style="color: #ccc; font-size: 11px; display: block; margin-bottom: 5px;">選擇怪物模型（統一）:</label>
+        <select id="debug-monster-model" style="width: 100%; padding: 8px; font-size: 12px; background: rgba(40,40,40,0.9); color: white; border: 1px solid #666; border-radius: 3px; cursor: pointer;">
+          <option value="models/VascodaGama.dae">VascodaGama (狐狸骷髏)</option>
+          <option value="models/fuzzlefox__cute_stylized_cartoon_fox_character.glb">Fuzzle Fox (Q版狐狸)</option>
+          <option value="models/cute_chick.glb">Cute Chick (小雞)</option>
+          <option value="models/pbr_low-poly_fox_character.glb">Low-poly Fox (低模狐狸)</option>
+        </select>
+      </div>
+      <button id="debug-apply-model" style="width: 100%; padding: 8px; font-size: 12px; background: #9C27B0; border: none; border-radius: 3px; color: white; cursor: pointer; font-weight: bold;">🔄 Apply Model</button>
+      <div style="margin-top: 8px; padding: 6px; background: rgba(100,100,100,0.3); border-radius: 3px;">
+        <p style="color: #aaa; font-size: 10px; margin: 0; line-height: 1.4;">提示：切換模型會即時更新所有怪物</p>
+      </div>
+    </div>
+
+    <!-- Time Section -->
+    <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,0,0,0.1); border-radius: 5px;">
+      <h5 style="color: #ff6666; margin: 0 0 10px 0; font-size: 13px;">⏱️ Time Control</h5>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 8px;">
+        <button id="debug-time-reset" style="padding: 5px; font-size: 11px; background: #4CAF50; border: none; border-radius: 3px; color: white; cursor: pointer;">Reset Timer</button>
+        <button id="debug-time-stop" style="padding: 5px; font-size: 11px; background: #f44336; border: none; border-radius: 3px; color: white; cursor: pointer;">Stop Timer</button>
+        <button id="debug-time-plus" style="padding: 5px; font-size: 11px; background: #2196F3; border: none; border-radius: 3px; color: white; cursor: pointer;">+30 Sec</button>
+        <button id="debug-time-minus" style="padding: 5px; font-size: 11px; background: #607D8B; border: none; border-radius: 3px; color: white; cursor: pointer;">-30 Sec</button>
+      </div>
+    </div>
+
+    <!-- Game State Section -->
+    <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,0,0,0.1); border-radius: 5px;">
+      <h5 style="color: #ff6666; margin: 0 0 10px 0; font-size: 13px;">🎮 Game Control</h5>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
+        <button id="debug-win" style="padding: 5px; font-size: 11px; background: #4CAF50; border: none; border-radius: 3px; color: white; cursor: pointer;">Force Win</button>
+        <button id="debug-lose" style="padding: 5px; font-size: 11px; background: #f44336; border: none; border-radius: 3px; color: white; cursor: pointer;">Force Lose</button>
+      </div>
+    </div>
+
+    <!-- Speed Section -->
+    <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,0,0,0.1); border-radius: 5px;">
+      <h5 style="color: #ff6666; margin: 0 0 10px 0; font-size: 13px;">⚡ Speed Boost</h5>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px;">
+        <button id="debug-speed-1x" style="padding: 5px; font-size: 11px; background: #607D8B; border: none; border-radius: 3px; color: white; cursor: pointer;">1x</button>
+        <button id="debug-speed-2x" style="padding: 5px; font-size: 11px; background: #FF9800; border: none; border-radius: 3px; color: white; cursor: pointer;">2x</button>
+        <button id="debug-speed-5x" style="padding: 5px; font-size: 11px; background: #f44336; border: none; border-radius: 3px; color: white; cursor: pointer;">5x</button>
+      </div>
+    </div>
+
+    <!-- Info Display -->
+    <div style="padding: 10px; background: rgba(0,0,0,0.3); border-radius: 5px; font-size: 10px; color: #aaa;">
+      <div><strong>Current Grid:</strong> <span id="debug-grid-pos">-</span></div>
+      <div><strong>Current Room:</strong> <span id="debug-room-type">-</span></div>
+      <div><strong>Spawn:</strong> <span id="debug-spawn-pos">-</span></div>
+      <div><strong>Exit:</strong> <span id="debug-exit-pos">-</span></div>
+      <div style="margin-top: 5px; color: #ff6666;"><strong>⚠️ For Testing Only</strong></div>
+    </div>
+  </div>
+
+  <!-- Settings Panel -->
+  <button id="toggle-settings" class="hidden">⚙️ Settings</button>
+  <div id="settings-panel" class="hidden">
+    <h4>⚙️ Game Settings</h4>
+
+    <div class="setting-item">
+      <label>Move Speed:</label>
+      <input type="range" id="speed-slider" min="1" max="10" step="0.5" value="4">
+      <span class="value" id="speed-value">4.0</span>
+    </div>
+
+    <div class="setting-item">
+      <label>Mouse Sens:</label>
+      <input type="range" id="sensitivity-slider" min="0.0005" max="0.005" step="0.0005" value="0.002">
+      <span class="value" id="sensitivity-value">0.002</span>
+    </div>
+
+    <div class="setting-item">
+      <label>FOV:</label>
+      <input type="range" id="fov-slider" min="60" max="90" step="5" value="75">
+      <span class="value" id="fov-value">75</span>
+    </div>
+
+    <div class="setting-item">
+      <label>Fog Density:</label>
+      <input type="range" id="fog-slider" min="0" max="0.15" step="0.01" value="0.08">
+      <span class="value" id="fog-value">0.08</span>
+    </div>
+
+    <div class="setting-item">
+      <button id="regenerate-map">🔄 New Map</button>
+    </div>
+  </div>
+
+  <!-- Main game script -->
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

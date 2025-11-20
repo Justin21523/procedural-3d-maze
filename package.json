@@ -1,0 +1,27 @@
+{
+  "name": "procedural-3d-maze",
+  "version": "0.1.0",
+  "description": "A procedurally generated 3D maze prototype with cute monsters, built with Three.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "threejs",
+    "maze",
+    "procedural-generation",
+    "pathfinding",
+    "game",
+    "backrooms"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}
