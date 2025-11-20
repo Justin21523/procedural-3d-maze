@@ -6,6 +6,7 @@
 import { CONFIG } from '../core/config.js';
 import { updateLighting } from '../rendering/lighting.js';
 import { ROOM_CONFIGS } from '../world/tileTypes.js';
+import { VisualEffects } from '../rendering/visualEffects.js';
 
 export class GameLoop {
   /**
@@ -49,6 +50,9 @@ export class GameLoop {
     // Monster damage tracking
     this.lastMonsterDamageTime = 0;
     this.monsterDamageCooldown = 1.0; // 1 second between damage
+
+    // Visual effects
+    this.visualEffects = new VisualEffects();
   }
 
   /**
@@ -135,8 +139,21 @@ export class GameLoop {
       const now = performance.now() / 1000;
       if (now - this.lastMonsterDamageTime > this.monsterDamageCooldown) {
         if (this.monsterManager.checkPlayerCaught(playerPos, 1.5)) {
-          this.gameState.takeDamage(10);
+          const died = this.gameState.takeDamage(10);
           this.lastMonsterDamageTime = now;
+
+          // Visual feedback
+          if (this.visualEffects) {
+            if (died) {
+              // Death effect (stronger)
+              this.visualEffects.deathEffect();
+              this.showGameOver(false);
+            } else {
+              // Damage effect
+              this.visualEffects.monsterCaughtEffect();
+            }
+          }
+
           console.log('💔 Caught by monster! Health:', this.gameState.currentHealth);
         }
       }
@@ -145,6 +162,11 @@ export class GameLoop {
     // Check exit point collision (win condition)
     if (this.exitPoint && this.gameState) {
       if (this.exitPoint.isPlayerNear(playerPos, 2)) {
+        // Visual feedback for victory
+        if (this.visualEffects) {
+          this.visualEffects.victoryFlash();
+        }
+
         this.gameState.win('你成功找到了出口！');
         this.showGameOver(true);
       }
@@ -158,6 +180,11 @@ export class GameLoop {
     // Update lighting (flickering effect)
     if (this.lights) {
       updateLighting(this.lights, dt);
+    }
+
+    // Update visual effects
+    if (this.visualEffects) {
+      this.visualEffects.update(dt, this.sceneManager.camera);
     }
 
     // Update UI

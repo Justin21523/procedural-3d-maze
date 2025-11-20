@@ -80,17 +80,20 @@ export class GameState {
   /**
    * Take damage
    * @param {number} amount - Damage amount
+   * @returns {boolean} True if player died from this damage
    */
   takeDamage(amount) {
     this.currentHealth = Math.max(0, this.currentHealth - amount);
     console.log(`💔 Took ${amount} damage. Health: ${this.currentHealth}/${this.maxHealth}`);
 
-    // Auto-heal when health reaches 0 (for testing)
-    if (this.currentHealth <= 0) {
-      console.log('💚 Auto-healing to full health (testing mode)');
-      this.currentHealth = this.maxHealth;
-      this.isDead = false;
+    // Check if player died
+    if (this.currentHealth <= 0 && !this.isDead) {
+      this.isDead = true;
+      this.lose('你的生命值耗尽了...');
+      return true;
     }
+
+    return false;
   }
 
   /**
