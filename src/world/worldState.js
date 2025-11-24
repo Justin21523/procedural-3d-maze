@@ -17,6 +17,7 @@ export class WorldState {
     this.height = 0;
     this.spawnPoint = null;
     this.monsterSpawns = [];
+    this.missionPoints = [];
   }
 
   /**
@@ -52,9 +53,11 @@ export class WorldState {
 
     // Find a random walkable spawn point for player
     this.spawnPoint = this.findRandomWalkableTile();
-
     // Find spawn points for monsters (future use)
     this.monsterSpawns = this.findMonsterSpawns(CONFIG.MONSTER_COUNT);
+    // Mission points
+    this.missionPoints = this.findMissionPoints(CONFIG.MISSION_POINT_COUNT);
+  
   }
 
   /**
@@ -119,23 +122,34 @@ export class WorldState {
    * @returns {Object} Grid coordinates {x, y}
    */
   findRandomWalkableTile() {
-    const walkableTiles = [];
+    // 優先離邊界有安全距、四周可走的格子，避免出生時被碰撞判定卡住
+    const preferred = [];
+    const fallback = [];
 
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {
-        if (this.isWalkable(x, y)) {
-          walkableTiles.push({ x, y });
+        if (!this.isWalkable(x, y)) continue;
+
+        const hasMargin = this.isWalkableWithMargin(x, y, 1);
+        const awayFromBorder = x > 1 && y > 1 && x < this.width - 2 && y < this.height - 2;
+
+        if (hasMargin && awayFromBorder) {
+          preferred.push({ x, y });
+        } else {
+          fallback.push({ x, y });
         }
       }
     }
 
-    if (walkableTiles.length === 0) {
+    const pool = preferred.length > 0 ? preferred : fallback;
+
+    if (pool.length === 0) {
       console.error('No walkable tiles found!');
       return { x: 1, y: 1 }; // Fallback
     }
 
-    const randomIndex = randomInt(0, walkableTiles.length - 1);
-    return walkableTiles[randomIndex];
+    const randomIndex = randomInt(0, pool.length - 1);
+    return pool[randomIndex];
   }
 
   /**
@@ -149,6 +163,9 @@ export class WorldState {
 
     for (let i = 0; i < attempts && spawns.length < count; i++) {
       const candidate = this.findRandomWalkableTile();
+      if (!this.isWalkableWithMargin(candidate.x, candidate.y, 1)) {
+        continue; // 避開貼牆的出生點
+      }
 
       // Make sure it's not too close to player spawn
       if (this.spawnPoint) {
@@ -196,6 +213,66 @@ export class WorldState {
    */
   getMonsterSpawns() {
     return this.monsterSpawns;
+  }
+
+  /**
+   * Get mission points
+   */
+  getMissionPoints() {
+    return this.missionPoints;
+  }
+
+  /**
+   * Find mission point locations
+   */
+  findMissionPoints(count) {
+    const points = [];
+    const attempts = count * 15;
+
+    for (let i = 0; i < attempts && points.length < count; i++) {
+      const candidate = this.findRandomWalkableTile();
+      if (!this.isWalkableWithMargin(candidate.x, candidate.y, 1)) continue;
+
+      // Keep distance from spawn
+      const dx = candidate.x - this.spawnPoint.x;
+      const dy = candidate.y - this.spawnPoint.y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < 36) continue; // at least 6 tiles away
+
+      // Keep distance from other mission points
+      let tooClose = false;
+      for (const p of points) {
+        const ddx = candidate.x - p.x;
+        const ddy = candidate.y - p.y;
+        if ((ddx * ddx + ddy * ddy) < 16) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) continue;
+
+      points.push(candidate);
+    }
+    return points;
+  }
+
+  /**
+   * Walkable check with一個方形邊界，確保四周都有可走空間
+   * @param {number} x - Grid X
+   * @param {number} y - Grid Y
+   * @param {number} margin - Padding in tiles to remain walkable
+   * @returns {boolean}
+   */
+  isWalkableWithMargin(x, y, margin = 1) {
+    for (let dy = -margin; dy <= margin; dy++) {
+      for (let dx = -margin; dx <= margin; dx++) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= this.width || ny >= this.height) return false;
+        if (!this.isWalkable(nx, ny)) return false;
+      }
+    }
+    return true;
   }
 
   /**

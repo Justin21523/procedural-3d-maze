@@ -20,6 +20,9 @@ export const ROOM_TYPES = {
   BATHROOM: 3,      // 洗手间 - 瓷砖
   STORAGE: 4,       // 储藏室 - 混凝土
   LIBRARY: 5,       // 图书馆 - 书架
+  POOL: 6,          // 游泳池
+  GYM: 7,           // 健身房
+  BEDROOM: 8,       // 卧室/宿舍
 };
 
 /**
@@ -68,6 +71,27 @@ export const ROOM_CONFIGS = {
     floorColor: 0x3d2817,    // 深深的木色 - 明显对比
     ceilingColor: 0xc8b090,
     lighting: { intensity: 0.55, color: 0xffcc80 }, // 温暖的黄橙光
+  },
+  [ROOM_TYPES.POOL]: {
+    name: '游泳池',
+    wallColor: 0x6ecff6,
+    floorColor: 0x1f7ea5,
+    ceilingColor: 0xb8e9ff,
+    lighting: { intensity: 0.85, color: 0xb8e9ff },
+  },
+  [ROOM_TYPES.GYM]: {
+    name: '健身房',
+    wallColor: 0x222222,
+    floorColor: 0x333333,
+    ceilingColor: 0x2a2a2a,
+    lighting: { intensity: 0.6, color: 0xffe6b3 },
+  },
+  [ROOM_TYPES.BEDROOM]: {
+    name: '宿舍',
+    wallColor: 0xe4d7c5,
+    floorColor: 0xc8a97e,
+    ceilingColor: 0xf3e9dc,
+    lighting: { intensity: 0.65, color: 0xfff0d9 },
   },
 };
 

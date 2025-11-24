@@ -15,6 +15,8 @@ import { InputHandler } from './player/input.js';
 import { PlayerController } from './player/playerController.js';
 import { MonsterManager } from './entities/monsterManager.js';
 import { ExitPoint } from './world/exitPoint.js';
+import { MissionPoint } from './world/missionPoint.js';
+import { AutoPilot } from './ai/autoPilot.js';
 import { AudioManager } from './audio/audioManager.js';
 
 /**
@@ -92,7 +94,7 @@ function initGame() {
   console.log('🚪 Exit point created at grid:', exitGridPos);
 
   // Create monster manager
-  const monsterManager = new MonsterManager(sceneManager.getScene(), worldState);
+  const monsterManager = new MonsterManager(sceneManager.getScene(), worldState, player);
   console.log('👹 Monster manager created');
 
   // Load monsters with mixed types
@@ -111,15 +113,34 @@ function initGame() {
       console.error('   Error details:', err.message);
     });
 
+  // Create mission points
+  const missionPoints = worldState.getMissionPoints().map(pos => {
+    const mp = new MissionPoint(pos);
+    sceneManager.getScene().add(mp.getMesh());
+    return mp;
+  });
+  gameState.setMissionTotal(missionPoints.length);
+  console.log(`🎯 Mission points: ${missionPoints.length}`);
+
+  // Create autopilot
+  const autopilot = new AutoPilot(
+    worldState,
+    monsterManager,
+    () => missionPoints,
+    exitPoint,
+    player
+  );
+
   // Create game loop with all systems
-  const gameLoop = new GameLoop(sceneManager, player, minimap, monsterManager, lights, worldState, gameState, exitPoint);
+  const gameLoop = new GameLoop(sceneManager, player, minimap, monsterManager, lights, worldState, gameState, exitPoint, missionPoints, autopilot);
 
   // Render initial minimap (before game starts)
   console.log('🗺️ Rendering initial minimap...');
   minimap.render(
     player.getGridPosition(),
     monsterManager.getMonsterPositions(),
-    exitGridPos
+    exitGridPos,
+    missionPoints.map(mp => mp.getGridPosition())
   );
   console.log('✅ Initial minimap rendered');
 
@@ -135,8 +156,8 @@ function initGame() {
 
     // Check if the position is walkable
     if (worldState.isWalkable(gridX, gridY)) {
-      const worldX = gridX * CONFIG.TILE_SIZE;
-      const worldZ = gridY * CONFIG.TILE_SIZE;
+      const worldX = gridX * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
+      const worldZ = gridY * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
       player.setPosition(worldX, CONFIG.PLAYER_HEIGHT, worldZ);
       console.log(`🎯 Teleported to grid (${gridX}, ${gridY}), world (${worldX.toFixed(1)}, ${worldZ.toFixed(1)})`);
     } else {
@@ -177,11 +198,9 @@ function initGame() {
     console.log('🎬 Starting game loop...');
     gameLoop.start();
 
-    // Request pointer lock AFTER game loop starts
+    // Request pointer lock immediately in the user gesture
     console.log('🔒 Requesting pointer lock...');
-    setTimeout(() => {
-      input.requestPointerLock();
-    }, 100);
+    input.requestPointerLock();
 
     console.log('✅ Game initialization complete!');
   });
@@ -258,7 +277,7 @@ function initGame() {
   });
 
   // Setup settings panel
-  setupSettingsPanel(sceneManager, camera, input, worldState, player, gameLoop, minimap);
+  setupSettingsPanel(sceneManager, camera, input, worldState, player, gameLoop, minimap, gameState);
 
   // Setup debug panel
   setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, monsterManager, sceneManager);
@@ -280,9 +299,12 @@ function initGame() {
 /**
  * Setup settings panel controls
  */
-function setupSettingsPanel(sceneManager, camera, input, worldState, player, gameLoop, minimap) {
+function setupSettingsPanel(sceneManager, camera, input, worldState, player, gameLoop, minimap, gameState) {
   const toggleButton = document.getElementById('toggle-settings');
   const settingsPanel = document.getElementById('settings-panel');
+  const autopilotToggle = document.getElementById('autopilot-toggle');
+  const autopilotDelaySlider = document.getElementById('autopilot-delay');
+  const autopilotDelayValue = document.getElementById('autopilot-delay-value');
 
   const speedSlider = document.getElementById('speed-slider');
   const speedValue = document.getElementById('speed-value');
@@ -297,6 +319,13 @@ function setupSettingsPanel(sceneManager, camera, input, worldState, player, gam
   const fogValue = document.getElementById('fog-value');
 
   const regenerateButton = document.getElementById('regenerate-map');
+  const mazeSizeSlider = document.getElementById('maze-size-slider');
+  const mazeSizeValue = document.getElementById('maze-size-value');
+  const roomDensitySlider = document.getElementById('room-density-slider');
+  const roomDensityValue = document.getElementById('room-density-value');
+  const missionCountSlider = document.getElementById('mission-count-slider');
+  const missionCountValue = document.getElementById('mission-count-value');
+  const lowPerfToggle = document.getElementById('low-perf-toggle');
 
   let settingsVisible = false;
 
@@ -360,6 +389,43 @@ function setupSettingsPanel(sceneManager, camera, input, worldState, player, gam
     sceneManager.getScene().fog.density = value;
   });
 
+  // Maze size slider (force odd numbers)
+  mazeSizeSlider.addEventListener('input', (e) => {
+    const raw = parseInt(e.target.value, 10);
+    const size = raw % 2 === 0 ? raw + 1 : raw;
+    mazeSizeValue.textContent = size;
+    CONFIG.MAZE_WIDTH = size;
+    CONFIG.MAZE_HEIGHT = size;
+  });
+
+  // Room density slider
+  roomDensitySlider.addEventListener('input', (e) => {
+    const value = parseFloat(e.target.value);
+    roomDensityValue.textContent = value.toFixed(1);
+    CONFIG.ROOM_DENSITY = value;
+  });
+
+  // Mission count slider
+  missionCountSlider.addEventListener('input', (e) => {
+    const value = parseInt(e.target.value, 10);
+    missionCountValue.textContent = value;
+    CONFIG.MISSION_POINT_COUNT = value;
+  });
+
+  lowPerfToggle.addEventListener('change', (e) => {
+    CONFIG.LOW_PERF_MODE = e.target.checked;
+  });
+
+  autopilotToggle.addEventListener('change', (e) => {
+    CONFIG.AUTOPILOT_ENABLED = e.target.checked;
+  });
+
+  autopilotDelaySlider.addEventListener('input', (e) => {
+    const value = parseFloat(e.target.value);
+    autopilotDelayValue.textContent = value.toFixed(1);
+    CONFIG.AUTOPILOT_DELAY = value;
+  });
+
   // Regenerate map button
   regenerateButton.addEventListener('click', () => {
     console.log('🔄 Regenerating map...');
@@ -373,23 +439,50 @@ function setupSettingsPanel(sceneManager, camera, input, worldState, player, gam
     // Rebuild scene
     sceneManager.buildWorldFromGrid(worldState);
 
+    // Create new exit point
+    const newExitPos = worldState.getExitPoint();
+    sceneManager.getScene().remove(gameLoop.exitPoint.getMesh());
+    const newExitPoint = new ExitPoint(newExitPos);
+    sceneManager.getScene().add(newExitPoint.getMesh());
+    gameLoop.exitPoint = newExitPoint;
+
+    // Create mission points
+    const missionPoints = worldState.getMissionPoints().map(pos => {
+      const mp = new MissionPoint(pos);
+      sceneManager.getScene().add(mp.getMesh());
+      return mp;
+    });
+    gameState.setMissionTotal(missionPoints.length);
+    gameLoop.missionPoints = missionPoints;
+
     // Reset player position
     const spawnPoint = worldState.getSpawnPoint();
-    const worldSpawn = {
-      x: spawnPoint.x * CONFIG.TILE_SIZE,
-      z: spawnPoint.y * CONFIG.TILE_SIZE
-    };
-    player.setPosition(worldSpawn.x, CONFIG.PLAYER_HEIGHT, worldSpawn.z);
+    player.setPosition(spawnPoint.x * CONFIG.TILE_SIZE, CONFIG.PLAYER_HEIGHT, spawnPoint.y * CONFIG.TILE_SIZE);
+
+    // Reset game state
+    gameState.reset();
 
     // Update minimap
     minimap.updateScale();
-    minimap.render(player.getGridPosition(), []);
+    minimap.render(player.getGridPosition(), [], newExitPos, missionPoints.map(mp => mp.getGridPosition()));
 
     // Restart game loop
     gameLoop.start();
 
     console.log('✅ Map regenerated!');
   });
+
+  // Initialize UI from CONFIG
+  mazeSizeSlider.value = CONFIG.MAZE_WIDTH;
+  mazeSizeValue.textContent = CONFIG.MAZE_WIDTH;
+  roomDensitySlider.value = CONFIG.ROOM_DENSITY;
+  roomDensityValue.textContent = CONFIG.ROOM_DENSITY.toFixed(1);
+  missionCountSlider.value = CONFIG.MISSION_POINT_COUNT;
+  missionCountValue.textContent = CONFIG.MISSION_POINT_COUNT;
+  lowPerfToggle.checked = CONFIG.LOW_PERF_MODE;
+  autopilotToggle.checked = CONFIG.AUTOPILOT_ENABLED || false;
+  autopilotDelaySlider.value = CONFIG.AUTOPILOT_DELAY || 2;
+  autopilotDelayValue.textContent = (CONFIG.AUTOPILOT_DELAY || 2).toFixed(1);
 }
 
 /**

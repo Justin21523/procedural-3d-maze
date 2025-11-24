@@ -23,6 +23,7 @@ export class Minimap {
       player: '#32cd32',
       monster: '#ff1493',
       exit: '#00ff00',  // Bright green for exit
+      mission: '#ffa726', // 任務點顏色（橙色）
       background: '#000000',
     };
 
@@ -34,6 +35,9 @@ export class Minimap {
       [ROOM_TYPES.BATHROOM]: '#00bcd4',   // Cyan
       [ROOM_TYPES.STORAGE]: '#9e9e9e',    // Gray
       [ROOM_TYPES.LIBRARY]: '#9c27b0',    // Purple
+      [ROOM_TYPES.POOL]: '#00acc1',       // Teal
+      [ROOM_TYPES.GYM]: '#4caf50',        // Green
+      [ROOM_TYPES.BEDROOM]: '#bcaaa4',    // Beige
     };
 
     // Calculate scale to fit maze in canvas
@@ -63,11 +67,18 @@ export class Minimap {
 
   /**
    * Render the minimap
-   * @param {Object} playerPosition - Player grid position {x, y}
    * @param {Array} monsters - Array of monster positions (optional)
    * @param {Object} exitPosition - Exit grid position {x, y} (optional)
+   * @param {Array} missionPositions - Array of mission grid positions (optional)
    */
-  render(playerPosition, monsters = [], exitPosition = null) {
+  render(playerPosition, monsters = [], exitPosition = null, missionPositions = []) {
+    // 確保 context 在最前面檢查
+    const ctx = this.ctx;
+    if (!ctx) {
+      console.error('Minimap: Canvas context is null!');
+      return;
+    }
+
     const grid = this.worldState.getGrid();
     if (!grid) {
       console.warn('Minimap: Grid is null, cannot render');
@@ -77,12 +88,6 @@ export class Minimap {
     const roomMap = this.worldState.getRoomMap();
     if (!roomMap) {
       console.error('⚠️ MINIMAP: RoomMap is NULL! Colors will not work!');
-    }
-
-    const ctx = this.ctx;
-    if (!ctx) {
-      console.error('Minimap: Canvas context is null!');
-      return;
     }
 
     const width = grid[0].length;
@@ -239,6 +244,32 @@ export class Minimap {
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+    }
+
+
+    // Draw mission points（未收集）
+    if (missionPositions && missionPositions.length > 0) {
+      missionPositions.forEach(mp => {
+        if (!mp || mp.x === undefined || mp.y === undefined) return;
+        const px = this.offsetX + mp.x * this.tileSize;
+        const py = this.offsetY + mp.y * this.tileSize;
+
+        ctx.fillStyle = this.colors.mission;
+        ctx.beginPath();
+        ctx.arc(
+          px + this.tileSize / 2,
+          py + this.tileSize / 2,
+          Math.max(2, this.tileSize * 0.25),
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+
+        // 白色邊框讓顏色更明顯
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
     }
 
     // Draw player (on top)

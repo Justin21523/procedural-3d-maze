@@ -7,7 +7,10 @@
 import * as THREE from 'three';
 import { Monster } from './monster.js';
 import { ModelLoader } from './modelLoader.js';
+import { createSpriteBillboard } from './monsterSprite.js';
 import { createMonsterMix } from '../ai/monsterTypes.js';
+import { createMonsterBrain } from '../ai/monsterAI.js';
+import { Pathfinding } from '../ai/pathfinding.js';
 import { CONFIG } from '../core/config.js';
 
 export class MonsterManager {
@@ -16,12 +19,22 @@ export class MonsterManager {
    * @param {THREE.Scene} scene - Three.js scene
    * @param {WorldState} worldState - Reference to world state
    */
-  constructor(scene, worldState) {
+  constructor(scene, worldState, playerRef = null) {
     this.scene = scene;
     this.worldState = worldState;
+    this.playerRef = playerRef;
     this.monsters = [];
+    this.brains = new Map();
     this.modelLoader = new ModelLoader();
     this.currentModelPath = CONFIG.MONSTER_MODEL; // Track current model
+    this.pathfinder = new Pathfinding(worldState);
+  }
+
+  setPlayerRef(playerRef) {
+    this.playerRef = playerRef;
+    for (const brain of this.brains.values()) {
+      brain.playerRef = playerRef;
+    }
   }
 
   /**
@@ -45,20 +58,14 @@ export class MonsterManager {
       const monsterTypeMix = createMonsterMix(count);
       console.log(`🎲 Monster type distribution:`, monsterTypeMix.map(t => t.name));
 
-      // Load the unified model once
-      console.log(`\n📦 Loading unified model: ${this.currentModelPath}`);
-      const { model, animations } = await this.modelLoader.loadModelWithAnimations(this.currentModelPath);
-      console.log(`   ✅ Model loaded successfully`);
-
-      // Spawn each monster with the same model (but different AI types)
+      // Spawn each monster using 2D billboard sprites (keeps other objects 3D)
       for (let i = 0; i < count; i++) {
         const typeConfig = monsterTypeMix[i];
         console.log(`\n🦊 Spawning ${typeConfig.name} (${i + 1}/${count})...`);
 
         try {
-          // Clone the unified model for this monster
-          const clonedModel = model.clone(true);
-          await this.spawnMonster(clonedModel, animations, spawnPoints[i], typeConfig);
+          const sprite = createSpriteBillboard(typeConfig.sprite || '/models/monster.png');
+          await this.spawnMonster(sprite, [], spawnPoints[i], typeConfig);
         } catch (error) {
           console.error(`   ❌ Failed to spawn ${typeConfig.name}:`, error.message);
           console.warn(`   ⚠️ Creating placeholder instead`);
@@ -106,6 +113,9 @@ export class MonsterManager {
     console.log(`   Model scale:`, model.scale);
     console.log(`   Model visible (after):`, model.visible);
     console.log(`   Scene children count:`, this.scene.children.length);
+
+    // Create AI brain
+    this.attachBrain(monster, typeConfig);
 
     // Add to monsters array
     this.monsters.push(monster);
@@ -155,6 +165,79 @@ export class MonsterManager {
 
     console.log(`\n📦 Created ${this.monsters.length} placeholder monsters with AI`);
     this.printMonsterSummary();
+  }
+
+  attachBrain(monster, typeConfig) {
+    const aiType = this.resolveAiType(typeConfig);
+    const brainConfig = this.buildBrainConfig(typeConfig);
+    const brain = createMonsterBrain({
+      type: aiType,
+      worldState: this.worldState,
+      pathfinder: this.pathfinder,
+      monster,
+      playerRef: this.playerRef,
+      config: brainConfig
+    });
+    this.brains.set(monster, brain);
+  }
+
+  resolveAiType(typeConfig) {
+    if (typeConfig?.aiType) return typeConfig.aiType;
+    const name = typeConfig?.name?.toLowerCase() || '';
+    if (name.includes('hunt')) return 'hunter';
+    if (name.includes('rush')) return 'speedJitter';
+    if (name.includes('stalk')) return 'teleportStalker';
+    if (name.includes('sentinel') || name.includes('guard')) return 'corridorGuardian';
+    return 'wanderCritter';
+  }
+
+  buildBrainConfig(typeConfig) {
+    const stats = typeConfig?.stats || {};
+    const behavior = typeConfig?.behavior || {};
+    return {
+      visionRange: stats.visionRange,
+      chaseTimeout: behavior.chaseMemory ? behavior.chaseMemory / 1000 : undefined,
+      chaseCooldown: behavior.chaseCooldown ? behavior.chaseCooldown / 1000 : undefined,
+      searchRadius: behavior.searchRadius,
+      preferredMode: behavior.preferredMode
+    };
+  }
+
+  applyBrainCommand(monster, command, deltaTime) {
+    const move = command?.move || { x: 0, y: 0 };
+    const speed = monster.getSpeed ? monster.getSpeed(command?.sprint) : CONFIG.MONSTER_SPEED;
+    const dx = move.x * speed * deltaTime;
+    const dz = move.y * speed * deltaTime;
+
+    if (!Number.isFinite(dx) || !Number.isFinite(dz)) {
+      return;
+    }
+
+    const current = monster.getWorldPosition?.();
+    if (current) {
+      const targetPos = current.clone().add(new THREE.Vector3(dx, 0, dz));
+      const tileSize = CONFIG.TILE_SIZE || 1;
+      const targetGrid = {
+        x: Math.floor(targetPos.x / tileSize),
+        y: Math.floor(targetPos.z / tileSize)
+      };
+
+      let canMove = true;
+      if (this.worldState && typeof this.worldState.isWalkable === 'function') {
+        canMove = this.worldState.isWalkable(targetGrid.x, targetGrid.y);
+      }
+
+      if (canMove && monster.setWorldPosition) {
+        monster.setWorldPosition(targetPos);
+      }
+    }
+
+    if (typeof command?.lookYaw === 'number' && command.lookYaw !== 0) {
+      const currentYaw = monster.getYaw ? monster.getYaw() : 0;
+      if (monster.setYaw) {
+        monster.setYaw(currentYaw + command.lookYaw);
+      }
+    }
   }
 
   /**
@@ -241,6 +324,9 @@ export class MonsterManager {
 
       const monster = new Monster(group, spawnPoints[i], this.worldState);
 
+      // Attach default AI
+      this.attachBrain(monster, null);
+
       // CRITICAL: Add to scene BEFORE pushing to monsters array
       this.scene.add(group);
       console.log(`   ✅ Added to scene at world position:`, group.position);
@@ -262,9 +348,23 @@ export class MonsterManager {
    * @param {number} deltaTime - Time since last frame
    * @param {THREE.Vector3} playerPosition - Player position
    */
-  update(deltaTime, playerPosition) {
+  update(deltaTime) {
+    const dt = deltaTime ?? 0;
     for (const monster of this.monsters) {
-      monster.update(deltaTime, playerPosition);
+      // Keep grid in sync with any external changes
+      if (monster.syncGridFromWorld) {
+        monster.syncGridFromWorld();
+      }
+
+      const brain = this.brains.get(monster);
+      if (!brain) continue;
+
+      const command = brain.tick(dt) || { move: { x: 0, y: 0 }, lookYaw: 0, sprint: false };
+      this.applyBrainCommand(monster, command, dt);
+
+      if (monster.updateAnimation) {
+        monster.updateAnimation(dt);
+      }
     }
   }
 
@@ -344,6 +444,9 @@ export class MonsterManager {
     console.log(`   Creating Monster instance with typeConfig:`, typeConfig?.name);
     const monster = new Monster(group, spawnPosition, this.worldState, typeConfig);
 
+    // AI brain
+    this.attachBrain(monster, typeConfig);
+
     console.log(`   Adding to scene...`);
     this.scene.add(group);
     console.log(`   Scene children count:`, this.scene.children.length);
@@ -379,6 +482,7 @@ export class MonsterManager {
       this.scene.remove(monster.getModel());
     }
     this.monsters = [];
+    this.brains.clear();
     console.log('🗑️ All monsters removed');
   }
 
@@ -402,21 +506,15 @@ export class MonsterManager {
         // Clone new model
         const newModel = model.clone(true);
 
-        // Copy position and rotation from old model
-        newModel.position.copy(oldModel.position);
-        newModel.rotation.copy(oldModel.rotation);
-        newModel.scale.copy(oldModel.scale);
-
-        // Remove old model from scene
+        // 先移除舊模型
         this.scene.remove(oldModel);
 
-        // Add new model to scene
+        // ★ 交給 Monster 自己做縮放 & 對齊
+        monster.setModel(newModel);
+
+        // 再把新模型加回場景
         this.scene.add(newModel);
 
-        // Update monster's model reference
-        monster.model = newModel;
-
-        // Setup animations for new model
         if (animations && animations.length > 0) {
           monster.setupAnimations(animations);
         }

@@ -1,5 +1,10 @@
 # 测试说明
 
+开始前请先启动 dev server（建议固定埠以配合下方连结）：
+```
+npm run dev -- --host --port 3002
+```
+
 ## 🔧 我修复的问题
 
 1. ✅ **THREE.Vector3 未导入** - 在 behaviorProfiles.js 中添加了 `import * as THREE from 'three'`

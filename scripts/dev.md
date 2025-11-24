@@ -32,6 +32,8 @@ npm install
 npm run dev
 ```
 
+- 若需配合測試文件的既定連結，可指定埠並開啟對外：`npm run dev -- --host --port 3002`
+
 執行後會看到類似以下輸出：
 
 ```
@@ -45,7 +47,7 @@ npm run dev
 
 打開瀏覽器並前往：
 ```
-http://localhost:3000
+http://localhost:3000 （或你指定的埠，例如 3002）
 ```
 
 你應該會看到遊戲畫面與「Click to Start」按鈕。
@@ -59,6 +61,16 @@ http://localhost:3000
    - **滑鼠** - 轉視角
    - **Shift** - 衝刺
    - **ESC** - 暫停 / 釋放滑鼠
+
+---
+
+## 手動驗證流程（Manual Validation）
+
+在 dev server 運行時依序檢查：
+
+1. **AI 匯入檢查**：`http://localhost:3002/test-ai.html`（若用其他埠請自行替換） → 預期綠色「All modules loaded successfully」訊息。
+2. **主程式診斷**：開啟 `diagnostic.html` → 按「Test Main Game」→ 預期 `main.js loaded successfully`。
+3. **遊戲驗證**：開啟 `/` 首頁 → 點擊「Click to Start」取得 Pointer Lock → 確認迷你地圖渲染、怪物生成日誌與移動操作正常。若效能不足，可在 `src/core/config.js` 降低 `MAZE_WIDTH/MAZE_HEIGHT` 或 `CONFIG.MONSTER_COUNT`。
 
 ---
 

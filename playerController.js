@@ -166,29 +166,18 @@ export class PlayerController {
    * Allow external (autopilot) control injection
    */
   applyExternalControl(cmd, deltaTime = 1 / CONFIG.TARGET_FPS) {
-    const baseSpeed = CONFIG.PLAYER_SPEED;
-    const speed = cmd?.sprint ? baseSpeed * 1.2 : baseSpeed;
-
-    // 優先使用世界座標移動向量，讓 autopilot 不受 yaw 影響
-    if (cmd?.moveWorld) {
-      const mv = new THREE.Vector3(cmd.moveWorld.x, 0, cmd.moveWorld.z);
-      if (mv.lengthSq() > 0) {
-        mv.normalize().multiplyScalar(speed * deltaTime);
-        this.externalMove = mv;
-      }
-    } else if (cmd?.move) {
+    if (cmd?.move) {
       const mv = new THREE.Vector3();
+      // Use target yaw (absolute) if provided, else current camera yaw
       const yaw = typeof cmd.lookYaw === 'number' ? cmd.lookYaw : this.camera.getYaw();
       const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       mv.addScaledVector(forward, cmd.move.y);
       mv.addScaledVector(right, cmd.move.x);
-      if (mv.lengthSq() > 0) {
-        mv.normalize().multiplyScalar(speed * deltaTime);
-        this.externalMove = mv;
-      }
+      const speed = cmd.sprint ? CONFIG.PLAYER_SPEED * 1.2 : CONFIG.PLAYER_SPEED;
+      mv.normalize().multiplyScalar(speed * deltaTime);
+      this.externalMove = mv;
     }
-
     if (cmd?.lookYaw !== undefined && cmd.lookYaw !== null) {
       this.externalLookYaw = cmd.lookYaw;
     }
@@ -203,43 +192,17 @@ export class PlayerController {
       return;
     }
 
-    const targetX = this.position.x + moveVector.x;
-    const targetZ = this.position.z + moveVector.z;
-
-    // 1. 先嘗試完整位移
-    if (this.canMoveTo(targetX, targetZ)) {
-      this.position.x = targetX;
-      this.position.z = targetZ;
-      return;
+    // Try X movement
+    const newPosX = this.position.x + moveVector.x;
+    if (this.canMoveTo(newPosX, this.position.z)) {
+      this.position.x = newPosX;
     }
 
-    // 2. 滑牆：嘗試單軸移動，優先較大軸
-    let moved = false;
-    if (Math.abs(moveVector.x) > Math.abs(moveVector.z)) {
-      const newPosX = this.position.x + moveVector.x;
-      if (this.canMoveTo(newPosX, this.position.z)) {
-        this.position.x = newPosX;
-        moved = true;
-      }
-      const newPosZ = this.position.z + moveVector.z;
-      if (this.canMoveTo(this.position.x, newPosZ)) {
-        this.position.z = newPosZ;
-        moved = true;
-      }
-    } else {
-      const newPosZ = this.position.z + moveVector.z;
-      if (this.canMoveTo(this.position.x, newPosZ)) {
-        this.position.z = newPosZ;
-        moved = true;
-      }
-      const newPosX = this.position.x + moveVector.x;
-      if (this.canMoveTo(newPosX, this.position.z)) {
-        this.position.x = newPosX;
-        moved = true;
-      }
+    // Try Z movement
+    const newPosZ = this.position.z + moveVector.z;
+    if (this.canMoveTo(this.position.x, newPosZ)) {
+      this.position.z = newPosZ;
     }
-
-    // 3. 完全卡住就交給外部卡住偵測處理
   }
 
   /**
@@ -260,7 +223,7 @@ export class PlayerController {
 
     // Check corners and edges of player collision radius
     // This prevents clipping into walls with 8-point check
-    const radius = CONFIG.PLAYER_RADIUS * 0.9; // 略縮 hitbox，減少貼牆抖動
+    const radius = CONFIG.PLAYER_RADIUS;
     const offsets = [
       // Corners
       { x: radius, z: radius },

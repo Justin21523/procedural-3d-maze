@@ -1,3 +1,5 @@
+import { CONFIG } from '../core/config.js';
+
 /**
  * Behavior Tree System
  * Hierarchical AI decision-making structure
