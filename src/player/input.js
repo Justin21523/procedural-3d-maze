@@ -7,6 +7,7 @@ export class InputHandler {
   constructor() {
     // Keyboard state
     this.keys = {};
+    this.lastInputTime = performance.now();
 
     // Mouse state
     this.mouseDelta = { x: 0, y: 0 };
@@ -26,6 +27,7 @@ export class InputHandler {
     // Keyboard events
     window.addEventListener('keydown', (e) => {
       this.keys[e.code] = true;
+      this.lastInputTime = performance.now();
 
       // Debug: Log first key press
       if (this.firstKeyPress) {
@@ -42,6 +44,7 @@ export class InputHandler {
 
     window.addEventListener('keyup', (e) => {
       this.keys[e.code] = false;
+      this.lastInputTime = performance.now();
     });
 
     // Mouse movement
@@ -49,6 +52,7 @@ export class InputHandler {
       if (this.pointerLocked) {
         this.mouseDelta.x = e.movementX;
         this.mouseDelta.y = e.movementY;
+        this.lastInputTime = performance.now();
       }
     });
 
@@ -73,7 +77,11 @@ export class InputHandler {
    * Should be called on user interaction (e.g., button click)
    */
   requestPointerLock() {
-    document.body.requestPointerLock();
+    try {
+      document.body.requestPointerLock();
+    } catch (err) {
+      console.error('❌ Pointer lock request failed:', err);
+    }
   }
 
   /**
@@ -112,6 +120,14 @@ export class InputHandler {
    */
   isPointerLocked() {
     return this.pointerLocked;
+  }
+
+  /**
+   * Seconds since the last keyboard or mouse input.
+   * Used to determine when autopilot can take over.
+   */
+  getIdleTimeSeconds() {
+    return (performance.now() - this.lastInputTime) / 1000;
   }
 
   /**

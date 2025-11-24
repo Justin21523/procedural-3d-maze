@@ -303,8 +303,11 @@ export function generateRoomProps(roomType, gridX, gridY, grid) {
   const worldX = gridX * CONFIG.TILE_SIZE;
   const worldZ = gridY * CONFIG.TILE_SIZE;
 
+  // 性能模式：直接不擺放裝飾
+  if (CONFIG.LOW_PERF_MODE) return props;
+
   // Random chance to place props (higher for non-corridor rooms)
-  const placementChance = (roomType === ROOM_TYPES.CORRIDOR) ? 0.15 : 0.35;
+  const placementChance = (roomType === ROOM_TYPES.CORRIDOR) ? 0.15 : 0.5;
   if (Math.random() > placementChance) return props;
 
   switch (roomType) {
@@ -346,6 +349,84 @@ export function generateRoomProps(roomType, gridX, gridY, grid) {
         props.push(createBookshelf(worldX, worldZ, Math.random() * Math.PI * 2));
       }
       break;
+
+    case ROOM_TYPES.POOL: {
+      // Pool edge (simple blue plane) + lifebuoy
+      const poolMaterial = new THREE.MeshStandardMaterial({
+        color: 0x2196f3,
+        roughness: 0.4,
+        metalness: 0.1
+      });
+      const pool = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.2, 1.2), poolMaterial);
+      pool.position.set(worldX, 0.1, worldZ);
+      pool.castShadow = false;
+      pool.receiveShadow = true;
+      props.push(pool);
+
+      const buoyMaterial = new THREE.MeshStandardMaterial({ color: 0xff7043, roughness: 0.6 });
+      const buoy = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.07, 8, 16), buoyMaterial);
+      buoy.position.set(worldX, 0.4, worldZ);
+      buoy.rotation.x = Math.PI / 2;
+      props.push(buoy);
+      break;
+    }
+
+    case ROOM_TYPES.GYM: {
+      // Treadmill-like block + dumbbell rack
+      const treadmillMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.8 });
+      const treadmill = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.3, 0.6), treadmillMat);
+      treadmill.position.set(worldX, 0.15, worldZ);
+      treadmill.castShadow = true;
+      treadmill.receiveShadow = true;
+      props.push(treadmill);
+
+      const rackMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.7 });
+      const rack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.2, 0.2), rackMat);
+      rack.position.set(worldX, 0.4, worldZ + 0.6);
+      rack.castShadow = true;
+      rack.receiveShadow = true;
+      props.push(rack);
+
+      for (let i = 0; i < 4; i++) {
+        const bell = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.4, 8), rackMat);
+        bell.position.set(worldX - 0.3 + i * 0.2, 0.5, worldZ + 0.6);
+        bell.rotation.z = Math.PI / 2;
+        bell.castShadow = true;
+        props.push(bell);
+      }
+      break;
+    }
+
+    case ROOM_TYPES.BEDROOM: {
+      // Simple bed + nightstand
+      const bedMat = new THREE.MeshStandardMaterial({ color: 0xc8a97e, roughness: 0.6 });
+      const mattressMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.8 });
+
+      const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.3, 0.9), bedMat);
+      bedFrame.position.set(worldX, 0.15, worldZ);
+      bedFrame.castShadow = true;
+      bedFrame.receiveShadow = true;
+      props.push(bedFrame);
+
+      const mattress = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.2, 0.8), mattressMat);
+      mattress.position.set(worldX, 0.35, worldZ);
+      mattress.castShadow = true;
+      mattress.receiveShadow = true;
+      props.push(mattress);
+
+      const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.25), mattressMat);
+      pillow.position.set(worldX - 0.4, 0.45, worldZ);
+      pillow.castShadow = true;
+      props.push(pillow);
+
+      const tableMat = new THREE.MeshStandardMaterial({ color: 0x8d6e63, roughness: 0.7 });
+      const nightStand = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), tableMat);
+      nightStand.position.set(worldX + 0.9, 0.2, worldZ + 0.3);
+      nightStand.castShadow = true;
+      nightStand.receiveShadow = true;
+      props.push(nightStand);
+      break;
+    }
   }
 
   return props;

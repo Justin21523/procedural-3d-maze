@@ -11,32 +11,46 @@ import * as THREE from 'three';
  * @param {THREE.Scene} scene - The Three.js scene to add lights to
  */
 export function setupLighting(scene) {
-  // Ambient light - provides base illumination
-  // Yellowish tint for that "old office" feel
-  const ambientLight = new THREE.AmbientLight(0xffffcc, 0.5);
+  // 環境光：給整體一點黃白色 base light
+  const ambientLight = new THREE.AmbientLight(0xffffcc, 0.3);
   scene.add(ambientLight);
 
-  // Directional light - simulates overhead lighting
-  const directionalLight = new THREE.DirectionalLight(0xffffdd, 0.6);
-  directionalLight.position.set(0, 10, 0);
+  // 半球光：模擬來自上方的冷色 + 下方反射的暗色
+  const hemiLight = new THREE.HemisphereLight(0xffffee, 0x202020, 0.25);
+  hemiLight.position.set(0, 20, 0);
+  scene.add(hemiLight);
+
+  // 主要方向光，模擬頂上的一排日光燈
+  const directionalLight = new THREE.DirectionalLight(0xffffdd, 0.7);
+  directionalLight.position.set(5, 12, 2);
+
+  // 陰影設定（不要太大，避免 FPS 掉太兇）
+  directionalLight.castShadow = true;
+  directionalLight.shadow.mapSize.set(1024, 1024);
+  directionalLight.shadow.camera.near = 0.5;
+  directionalLight.shadow.camera.far = 50;
+  directionalLight.shadow.bias = -0.0005;
+
   scene.add(directionalLight);
 
-  // Create flickering controller
+  // Flicker controller（沿用舊邏輯）
   const flickerData = {
     time: 0,
-    nextFlicker: Math.random() * 5 + 3, // 3-8 seconds
+    nextFlicker: Math.random() * 5 + 3, // 3-8 秒一次
     isFlickering: false,
     flickerDuration: 0,
-    originalIntensity: 0.6,
-    baseIntensity: 0.5,
+    originalIntensity: directionalLight.intensity,
+    baseIntensity: ambientLight.intensity
   };
 
   return {
     ambientLight,
+    hemiLight,
     directionalLight,
     flickerData,
   };
 }
+
 
 /**
  * Update lighting (call every frame for flickering effect)
@@ -46,32 +60,31 @@ export function setupLighting(scene) {
 export function updateLighting(lights, deltaTime) {
   if (!lights || !lights.flickerData) return;
 
-  const { directionalLight, ambientLight, flickerData } = lights;
+  const { directionalLight, ambientLight, hemiLight, flickerData } = lights;
 
   flickerData.time += deltaTime;
 
-  // Check if it's time to flicker
   if (!flickerData.isFlickering && flickerData.time >= flickerData.nextFlicker) {
     flickerData.isFlickering = true;
-    flickerData.flickerDuration = Math.random() * 0.3 + 0.1; // 0.1-0.4 seconds
+    flickerData.flickerDuration = Math.random() * 0.3 + 0.1;
     flickerData.time = 0;
   }
 
-  // Apply flicker effect
   if (flickerData.isFlickering) {
-    // Random intensity variation during flicker
-    const flicker = Math.random() * 0.5 + 0.3; // 0.3-0.8
+    const flicker = Math.random() * 0.5 + 0.3;
+
     directionalLight.intensity = flickerData.originalIntensity * flicker;
     ambientLight.intensity = flickerData.baseIntensity * flicker;
+    if (hemiLight) hemiLight.intensity = 0.25 * flicker;
 
-    // End flicker
     if (flickerData.time >= flickerData.flickerDuration) {
       flickerData.isFlickering = false;
       flickerData.time = 0;
-      flickerData.nextFlicker = Math.random() * 8 + 5; // 5-13 seconds
-      // Restore original intensity
+      flickerData.nextFlicker = Math.random() * 8 + 5;
+
       directionalLight.intensity = flickerData.originalIntensity;
       ambientLight.intensity = flickerData.baseIntensity;
+      if (hemiLight) hemiLight.intensity = 0.25;
     }
   }
 }

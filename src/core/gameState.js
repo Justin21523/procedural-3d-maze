@@ -3,6 +3,8 @@
  * Manages game state including health, timer, objectives, etc.
  */
 
+import { CONFIG } from './config.js';
+
 export class GameState {
   constructor() {
     // Player stats
@@ -28,6 +30,8 @@ export class GameState {
     // Statistics
     this.steps = 0;
     this.roomsVisited = new Set();
+    this.missionsTotal = 0;
+    this.missionsCollected = 0;
 
     console.log('🎮 GameState initialized');
   }
@@ -88,6 +92,14 @@ export class GameState {
 
     // Check if player died
     if (this.currentHealth <= 0 && !this.isDead) {
+      // Debug/test mode：自動復活，血量回滿
+      if (CONFIG.AUTO_REVIVE) {
+        console.log('🛡️ AUTO_REVIVE enabled - restoring health to full');
+        this.currentHealth = this.maxHealth;
+        this.isDead = false;
+        return false;
+      }
+
       this.isDead = true;
       this.lose('你的生命值耗尽了...');
       return true;
@@ -121,6 +133,22 @@ export class GameState {
    */
   visitRoom(roomType) {
     this.roomsVisited.add(roomType);
+  }
+
+  /**
+   * Set mission totals per run
+   */
+  setMissionTotal(count) {
+    this.missionsTotal = count;
+    this.missionsCollected = 0;
+  }
+
+  /**
+   * Collect mission reward
+   */
+  collectMission() {
+    this.missionsCollected = Math.min(this.missionsCollected + 1, this.missionsTotal);
+    console.log(`🎁 Missions: ${this.missionsCollected}/${this.missionsTotal}`);
   }
 
   /**
@@ -183,6 +211,7 @@ export class GameState {
     this.itemsCollected = 0;
     this.steps = 0;
     this.roomsVisited.clear();
+    this.missionsCollected = 0;
     this.startTime = 0;
     this.currentTime = 0;
     this.isRunning = false;
@@ -202,6 +231,7 @@ export class GameState {
       time: this.getElapsedTime(),
       timeFormatted: this.getFormattedTime(),
       steps: this.steps,
+      missions: { collected: this.missionsCollected, total: this.missionsTotal },
       roomsVisited: this.roomsVisited.size,
       itemsCollected: this.itemsCollected,
       itemsTotal: this.itemsTotal,

@@ -4,7 +4,8 @@
  */
 
 import { TILE_TYPES, ROOM_TYPES } from './tileTypes.js';
-
+import { randomInt } from '../utils/math.js';
+import { CONFIG } from '../core/config.js';
 /**
  * Generate a room-based map with large open spaces
  * Creates distinct rooms connected by corridors
@@ -13,256 +14,294 @@ import { TILE_TYPES, ROOM_TYPES } from './tileTypes.js';
  * @param {Object} options - Generation options
  * @returns {Object} Object containing grid and rooms array
  */
-export function generateMazeDFS(width, height, options = {}) {
-  console.log(`Generating room-based map: ${width}×${height}...`);
+export function generateMazeDFS(width, height) {
+  // 建議外面給奇數，這裡再保險修一次
+  if (width % 2 === 0)  width  -= 1;
+  if (height % 2 === 0) height -= 1;
 
-  // Initialize grid with all walls
-  const grid = Array(height).fill(null).map(() =>
-    Array(width).fill(TILE_TYPES.WALL)
+  // 全部先當成牆
+  const grid = Array.from({ length: height }, () =>
+    Array.from({ length: width }, () => TILE_TYPES.WALL)
   );
 
-  // Generate rooms and corridors directly
-  const rooms = generateRooms(width, height);
+  // ==== 1) DFS carve base corridor maze ====
+  carveDFS(grid);
 
-  // Place rooms in the grid
-  rooms.forEach(room => {
-    for (let y = room.y; y < room.y + room.height; y++) {
-      for (let x = room.x; x < room.x + room.width; x++) {
-        if (x >= 0 && x < width && y >= 0 && y < height) {
-          grid[y][x] = TILE_TYPES.FLOOR;
-        }
-      }
-    }
-  });
+  // 加一些額外通道減少死路
+  addExtraConnections(grid, 0.08);
 
-  // Connect rooms with corridors
-  connectRooms(grid, rooms, width, height);
+  // ==== 2) 從走廊長出房間 ====
+  const rooms = carveRoomsFromCorridors(grid);
 
-  console.log(`Generated ${rooms.length} rooms`);
-
-  // Return both grid and room information
   return { grid, rooms };
 }
 
 /**
- * Generate room layouts
- * @param {number} width - Map width
- * @param {number} height - Map height
- * @returns {Array} Array of room objects
+ * 標準 DFS 迷宮演算法，在「奇數格」上 carve
  */
-function generateRooms(width, height) {
-  const rooms = [];
-  const numRooms = Math.floor(Math.random() * 3) + 8; // 8-10 rooms
+function carveDFS(grid) {
+  const height = grid.length;
+  const width = grid[0].length;
 
-  // Define room types
-  const roomTypes = [
+  const stack = [];
+  const visited = new Set();
+
+  function key(x, y) { return `${x},${y}`; }
+
+  // 起點 (1,1)
+  let cx = 1, cy = 1;
+  grid[cy][cx] = TILE_TYPES.FLOOR;
+  stack.push({ x: cx, y: cy });
+  visited.add(key(cx, cy));
+
+  const dirs = [
+    { dx:  2, dy:  0 },
+    { dx: -2, dy:  0 },
+    { dx:  0, dy:  2 },
+    { dx:  0, dy: -2 },
+  ];
+
+  while (stack.length > 0) {
+    const current = stack[stack.length - 1];
+
+    const neighbors = [];
+    for (const d of dirs) {
+      const nx = current.x + d.dx;
+      const ny = current.y + d.dy;
+
+      if (nx <= 0 || ny <= 0 || nx >= width - 1 || ny >= height - 1) continue;
+      if (!visited.has(key(nx, ny))) {
+        neighbors.push({
+          x: nx,
+          y: ny,
+          between: { x: current.x + d.dx / 2, y: current.y + d.dy / 2 }
+        });
+      }
+    }
+
+    if (neighbors.length === 0) {
+      stack.pop();
+      continue;
+    }
+
+    const choice = neighbors[randomInt(0, neighbors.length - 1)];
+    const { x: nx, y: ny, between } = choice;
+
+    // 打通牆
+    grid[between.y][between.x] = TILE_TYPES.FLOOR;
+    grid[ny][nx] = TILE_TYPES.FLOOR;
+
+    visited.add(key(nx, ny));
+    stack.push({ x: nx, y: ny });
+  }
+}
+
+/**
+ * 隨機打掉一些牆，讓迷宮有 loop、不要太 linear
+ */
+function addExtraConnections(grid, chance = 0.05) {
+  const height = grid.length;
+  const width = grid[0].length;
+
+  for (let y = 1; y < height - 1; y += 2) {
+    for (let x = 1; x < width - 1; x += 2) {
+      if (Math.random() > chance) continue;
+
+      const candidates = [];
+      if (x + 2 < width - 1)  candidates.push({ wx: x + 1, wy: y     }); // 向右連
+      if (y + 2 < height - 1) candidates.push({ wx: x,     wy: y + 1 }); // 向下連
+
+      if (candidates.length === 0) continue;
+
+      const c = candidates[randomInt(0, candidates.length - 1)];
+      if (grid[c.wy][c.wx] === TILE_TYPES.WALL) {
+        grid[c.wy][c.wx] = TILE_TYPES.FLOOR;
+      }
+    }
+  }
+}
+
+/**
+ * 從現有走廊 carve 出房間，並用 DOOR 連接
+ */
+function carveRoomsFromCorridors(grid) {
+  const height = grid.length;
+  const width = grid[0].length;
+
+  const rooms = [];
+  // Higher base density so rooms dominate over corridors
+  const baseRooms = Math.floor((width * height) / 250);
+  const density = CONFIG.ROOM_DENSITY || 1.0;
+  const maxRooms = Math.max(20, Math.floor(baseRooms * density));
+  let attempts = 0;
+
+  const dirs = [
+    { dx:  1, dy:  0 },  // room 在東邊
+    { dx: -1, dy:  0 },  // 西
+    { dx:  0, dy:  1 },  // 南
+    { dx:  0, dy: -1 },  // 北
+  ];
+
+  while (rooms.length < maxRooms && attempts < maxRooms * 10) {
+    attempts++;
+
+    // 隨機選一個走廊格當「門的走廊端」
+    const cx = randomInt(1, width - 2);
+    const cy = randomInt(1, height - 2);
+    if (grid[cy][cx] !== TILE_TYPES.FLOOR) continue;
+
+    const dir = dirs[randomInt(0, dirs.length - 1)];
+    const doorX = cx + dir.dx;
+    const doorY = cy + dir.dy;
+
+    // 門的位置必須是牆
+    if (!inBounds(doorX, doorY, width, height)) continue;
+    if (grid[doorY][doorX] !== TILE_TYPES.WALL) continue;
+
+    // 決定房間大小
+    const roomW = randomInt(4, 9);  // 4~8 格寬
+    const roomH = randomInt(4, 8);  // 4~7 格高
+
+    // 根據方向決定房間左上角
+    let x, y;
+    if (dir.dx === 1) {          // 往右長
+      x = doorX + 1;
+      y = doorY - Math.floor(roomH / 2);
+    } else if (dir.dx === -1) {  // 往左長
+      x = doorX - roomW;
+      y = doorY - Math.floor(roomH / 2);
+    } else if (dir.dy === 1) {   // 往下長
+      x = doorX - Math.floor(roomW / 2);
+      y = doorY + 1;
+    } else {                     // 往上長
+      x = doorX - Math.floor(roomW / 2);
+      y = doorY - roomH;
+    }
+
+    if (!canPlaceRoom(grid, x, y, roomW, roomH, {
+      padding: 2,
+      maxExistingFloorRatio: 0.75 // allow significant overlap with thin DFS corridors
+    })) continue;
+
+    // carve 房間內部
+    const tiles = [];
+    for (let j = 0; j < roomH; j++) {
+      for (let i = 0; i < roomW; i++) {
+        const gx = x + i;
+        const gy = y + j;
+        grid[gy][gx] = TILE_TYPES.FLOOR;
+        tiles.push({ x: gx, y: gy });
+      }
+    }
+
+    // 門設為 DOOR
+    grid[doorY][doorX] = TILE_TYPES.DOOR;
+
+    const roomType = pickRoomType();
+    rooms.push({
+      type: roomType,
+      x,
+      y,
+      width: roomW,
+      height: roomH,
+      tiles,
+      doors: [{ x: doorX, y: doorY }],
+      corridor: { x: cx, y: cy }
+    });
+  }
+
+  console.log(`🧱 Carved ${rooms.length} rooms`);
+  return rooms;
+}
+
+
+
+function inBounds(x, y, width, height) {
+  return x > 0 && y > 0 && x < width - 1 && y < height - 1;
+}
+
+/**
+ * 房間區域必須完全是牆（避免吃掉既有走廊 / 房間）
+ */
+function canPlaceRoom(grid, x, y, w, h, options = {}) {
+  const height = grid.length;
+  const width = grid[0].length;
+
+  const padding = options.padding ?? 1; // leave at least 1 tile of wall around rooms
+  const maxExistingFloorRatio = options.maxExistingFloorRatio ?? 0.35; // allow small overlap with corridors
+
+  // Keep a safety margin from outer walls
+  if (x < padding || y < padding) return false;
+  if (x + w >= width - padding || y + h >= height - padding) return false;
+
+  if (!inBounds(x, y, width, height)) return false;
+  if (!inBounds(x + w - 1, y + h - 1, width, height)) return false;
+
+  let existingNonWall = 0;
+
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const gx = x + i;
+      const gy = y + j;
+
+      // Avoid carving through doors (keeps corridors distinct)
+      if (grid[gy][gx] === TILE_TYPES.DOOR) {
+        return false;
+      }
+
+      // Allow carving through some corridors/walkable tiles so rooms can grow out of thin mazes
+      if (grid[gy][gx] !== TILE_TYPES.WALL) {
+        existingNonWall++;
+      }
+    }
+  }
+
+  const area = w * h;
+  const floorRatio = existingNonWall / area;
+  return floorRatio <= maxExistingFloorRatio;
+}
+
+/**
+ * 隨機選一種房間類型
+ */
+function pickRoomType() {
+  const types = [
     ROOM_TYPES.CLASSROOM,
     ROOM_TYPES.OFFICE,
     ROOM_TYPES.BATHROOM,
     ROOM_TYPES.STORAGE,
     ROOM_TYPES.LIBRARY,
+    ROOM_TYPES.POOL,
+    ROOM_TYPES.GYM,
+    ROOM_TYPES.BEDROOM,
   ];
-
-  for (let i = 0; i < numRooms; i++) {
-    let attempts = 0;
-    let room = null;
-
-    // Try to place room without overlap
-    while (attempts < 100) {
-      const roomWidth = Math.floor(Math.random() * 5) + 6;  // 6-10 tiles
-      const roomHeight = Math.floor(Math.random() * 5) + 6; // 6-10 tiles
-      const x = Math.floor(Math.random() * (width - roomWidth - 4)) + 2;
-      const y = Math.floor(Math.random() * (height - roomHeight - 4)) + 2;
-
-      const newRoom = {
-        x,
-        y,
-        width: roomWidth,
-        height: roomHeight,
-        type: roomTypes[Math.floor(Math.random() * roomTypes.length)],
-        centerX: x + Math.floor(roomWidth / 2),
-        centerY: y + Math.floor(roomHeight / 2),
-      };
-
-      // Check for overlap with existing rooms
-      let overlaps = false;
-      for (const existingRoom of rooms) {
-        if (roomsOverlap(newRoom, existingRoom)) {
-          overlaps = true;
-          break;
-        }
-      }
-
-      if (!overlaps) {
-        room = newRoom;
-        break;
-      }
-
-      attempts++;
-    }
-
-    if (room) {
-      rooms.push(room);
-    }
-  }
-
-  return rooms;
+  return types[randomInt(0, types.length - 1)];
 }
 
 /**
- * Check if two rooms overlap (with padding)
+ * 把 rooms 陣列轉成 roomMap[y][x] = ROOM_TYPES.*
  */
-function roomsOverlap(room1, room2) {
-  const padding = 2; // Space between rooms (reduced to fit more rooms)
-  return !(
-    room1.x + room1.width + padding < room2.x ||
-    room2.x + room2.width + padding < room1.x ||
-    room1.y + room1.height + padding < room2.y ||
-    room2.y + room2.height + padding < room1.y
+export function createRoomMapFromRooms(grid, rooms) {
+  const height = grid.length;
+  const width = grid[0].length;
+
+  const roomMap = Array.from({ length: height }, () =>
+    Array.from({ length: width }, () => ROOM_TYPES.CORRIDOR)
   );
-}
 
-/**
- * Connect rooms with corridors
- */
-function connectRooms(grid, rooms, width, height) {
-  // Connect each room to the next one
-  for (let i = 0; i < rooms.length - 1; i++) {
-    const room1 = rooms[i];
-    const room2 = rooms[i + 1];
-
-    createCorridor(grid, room1.centerX, room1.centerY, room2.centerX, room2.centerY, width, height);
-  }
-
-  // Also connect first and last room for better connectivity
-  if (rooms.length > 2) {
-    const first = rooms[0];
-    const last = rooms[rooms.length - 1];
-    createCorridor(grid, first.centerX, first.centerY, last.centerX, last.centerY, width, height);
-  }
-
-  // Add some extra connections for variety
-  for (let i = 0; i < Math.floor(rooms.length / 2); i++) {
-    const r1 = rooms[Math.floor(Math.random() * rooms.length)];
-    const r2 = rooms[Math.floor(Math.random() * rooms.length)];
-    if (r1 !== r2) {
-      createCorridor(grid, r1.centerX, r1.centerY, r2.centerX, r2.centerY, width, height);
+  for (const room of rooms) {
+    for (const tile of room.tiles) {
+      roomMap[tile.y][tile.x] = room.type;
     }
-  }
-}
-
-/**
- * Create an L-shaped corridor between two points
- */
-function createCorridor(grid, x1, y1, x2, y2, width, height) {
-  const corridorWidth = 1; // 1 tile wide for narrow corridors
-
-  // Horizontal corridor
-  const startX = Math.min(x1, x2);
-  const endX = Math.max(x1, x2);
-  for (let x = startX; x <= endX; x++) {
-    for (let dy = 0; dy < corridorWidth; dy++) {
-      const y = y1 + dy;
-      if (x >= 0 && x < width && y >= 0 && y < height) {
-        grid[y][x] = TILE_TYPES.FLOOR;
-      }
+    for (const door of room.doors || []) {
+      // 門也標成該房間類型，方便 minimap / 材質切換
+      roomMap[door.y][door.x] = room.type;
     }
   }
 
-  // Vertical corridor
-  const startY = Math.min(y1, y2);
-  const endY = Math.max(y1, y2);
-  for (let y = startY; y <= endY; y++) {
-    for (let dx = 0; dx < corridorWidth; dx++) {
-      const x = x2 + dx;
-      if (x >= 0 && x < width && y >= 0 && y < height) {
-        grid[y][x] = TILE_TYPES.FLOOR;
-      }
-    }
-  }
-}
+  return roomMap;
+} 
 
-/**
- * Recursively carve paths through the maze using DFS
- * @param {Array<Array<number>>} grid - The maze grid
- * @param {number} x - Current X coordinate
- * @param {number} y - Current Y coordinate
- * @param {number} width - Maze width
- * @param {number} height - Maze height
- */
-function carvePath(grid, x, y, width, height) {
-  // Mark current cell as floor
-  grid[y][x] = TILE_TYPES.FLOOR;
-
-  // Define four directions (North, East, South, West)
-  // Move by 2 to maintain wall-path-wall pattern
-  const directions = [
-    { dx: 0, dy: -2, wallX: 0, wallY: -1 },  // North
-    { dx: 2, dy: 0, wallX: 1, wallY: 0 },    // East
-    { dx: 0, dy: 2, wallX: 0, wallY: 1 },    // South
-    { dx: -2, dy: 0, wallX: -1, wallY: 0 },  // West
-  ];
-
-  // Shuffle directions for randomness
-  shuffleArray(directions);
-
-  // Try each direction
-  for (const dir of directions) {
-    const nx = x + dir.dx;
-    const ny = y + dir.dy;
-
-    // Check if neighbor is within bounds and unvisited
-    if (isInBounds(nx, ny, width, height) && grid[ny][nx] === TILE_TYPES.WALL) {
-      // Carve wall between current cell and neighbor
-      const wallX = x + dir.wallX;
-      const wallY = y + dir.wallY;
-      grid[wallY][wallX] = TILE_TYPES.FLOOR;
-
-      // Recursively visit neighbor
-      carvePath(grid, nx, ny, width, height);
-    }
-  }
-}
-
-/**
- * Check if coordinates are within grid bounds
- * @param {number} x - X coordinate
- * @param {number} y - Y coordinate
- * @param {number} width - Grid width
- * @param {number} height - Grid height
- * @returns {boolean} True if in bounds
- */
-function isInBounds(x, y, width, height) {
-  return x > 0 && x < width - 1 && y > 0 && y < height - 1;
-}
-
-/**
- * Shuffle an array in place (Fisher-Yates algorithm)
- * @param {Array} array - Array to shuffle
- */
-function shuffleArray(array) {
-  for (let i = array.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
-  }
-}
-
-/**
- * Generate a simple test maze (for debugging)
- * Creates a small hardcoded maze
- * @returns {Array<Array<number>>} 2D grid array
- */
-export function generateTestMaze() {
-  return [
-    [0, 0, 0, 0, 0, 0, 0],
-    [0, 1, 1, 1, 0, 1, 0],
-    [0, 1, 0, 1, 0, 1, 0],
-    [0, 1, 0, 1, 1, 1, 0],
-    [0, 1, 0, 0, 0, 1, 0],
-    [0, 1, 1, 1, 1, 1, 0],
-    [0, 0, 0, 0, 0, 0, 0],
-  ];
-}
 
 /**
  * Analyze maze statistics (for debugging)
@@ -272,187 +311,38 @@ export function generateTestMaze() {
 export function analyzeMaze(grid) {
   const height = grid.length;
   const width = grid[0].length;
+
   let floorCount = 0;
   let wallCount = 0;
+  let deadEnds = 0;
+
+  function isWalkable(x, y) {
+    if (x < 0 || y < 0 || x >= width || y >= height) return false;
+    return grid[y][x] !== TILE_TYPES.WALL;
+  }
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      if (grid[y][x] === TILE_TYPES.FLOOR) {
-        floorCount++;
-      } else {
+      if (grid[y][x] === TILE_TYPES.WALL) {
         wallCount++;
+      } else {
+        floorCount++;
+        const neighbors =
+          (isWalkable(x + 1, y) ? 1 : 0) +
+          (isWalkable(x - 1, y) ? 1 : 0) +
+          (isWalkable(x, y + 1) ? 1 : 0) +
+          (isWalkable(x, y - 1) ? 1 : 0);
+
+        if (neighbors === 1) deadEnds++;
       }
     }
   }
-
-  const total = width * height;
-  const floorPercentage = (floorCount / total * 100).toFixed(1);
 
   return {
     width,
     height,
-    total,
     floorCount,
     wallCount,
-    floorPercentage: `${floorPercentage}%`,
+    deadEnds,
   };
-}
-
-/**
- * Create room map from room objects
- * @param {Array<Array<number>>} grid - The maze grid
- * @param {Array} rooms - Array of room objects
- * @returns {Array<Array<number>>} 2D array of room types
- */
-export function createRoomMapFromRooms(grid, rooms) {
-  const height = grid.length;
-  const width = grid[0].length;
-
-  // Initialize room map with CORRIDOR (default for all floor tiles)
-  const roomMap = Array(height).fill(null).map(() =>
-    Array(width).fill(ROOM_TYPES.CORRIDOR)
-  );
-
-  // Assign room types based on actual room positions
-  rooms.forEach(room => {
-    for (let y = room.y; y < room.y + room.height; y++) {
-      for (let x = room.x; x < room.x + room.width; x++) {
-        if (x >= 0 && x < width && y >= 0 && y < height && grid[y][x] === TILE_TYPES.FLOOR) {
-          roomMap[y][x] = room.type;
-        }
-      }
-    }
-  });
-
-  // Log room distribution
-  const roomCounts = {};
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (grid[y][x] === TILE_TYPES.FLOOR) {
-        const type = roomMap[y][x];
-        roomCounts[type] = (roomCounts[type] || 0) + 1;
-      }
-    }
-  }
-
-  console.log('Room distribution:', roomCounts);
-  console.log('Room details:', rooms.map(r => ({
-    type: Object.keys(ROOM_TYPES).find(key => ROOM_TYPES[key] === r.type),
-    size: `${r.width}×${r.height}`,
-    position: `(${r.x}, ${r.y})`
-  })));
-
-  return roomMap;
-}
-
-/**
- * Generate a room-based map with large open spaces (DEPRECATED - use createRoomMapFromRooms)
- * Creates distinct rooms connected by corridors
- * @param {Array<Array<number>>} grid - The maze grid
- * @returns {Array<Array<number>>} 2D array of room types
- */
-export function generateRoomMap(grid) {
-  const height = grid.length;
-  const width = grid[0].length;
-
-  // Initialize room map with CORRIDOR (default)
-  const roomMap = Array(height).fill(null).map(() =>
-    Array(width).fill(ROOM_TYPES.CORRIDOR)
-  );
-
-  // Define room types to use (excluding corridor which is default)
-  const availableRoomTypes = [
-    ROOM_TYPES.CLASSROOM,
-    ROOM_TYPES.OFFICE,
-    ROOM_TYPES.BATHROOM,
-    ROOM_TYPES.STORAGE,
-    ROOM_TYPES.LIBRARY,
-  ];
-
-  // Create larger rectangular rooms by clearing walls
-  const numRooms = Math.floor(Math.random() * 4) + 6; // 6-9 rooms
-  const createdRooms = [];
-
-  for (let i = 0; i < numRooms; i++) {
-    // Larger room size (8-15 tiles)
-    const roomWidth = Math.floor(Math.random() * 8) + 8;
-    const roomHeight = Math.floor(Math.random() * 8) + 8;
-
-    // Random position with more spacing
-    const startX = Math.floor(Math.random() * (width - roomWidth - 4)) + 2;
-    const startY = Math.floor(Math.random() * (height - roomHeight - 4)) + 2;
-
-    // Random room type
-    const roomType = availableRoomTypes[Math.floor(Math.random() * availableRoomTypes.length)];
-
-    // Clear the room area - make it all walkable floor
-    for (let y = startY; y < startY + roomHeight && y < height - 1; y++) {
-      for (let x = startX; x < startX + roomWidth && x < width - 1; x++) {
-        grid[y][x] = TILE_TYPES.FLOOR; // Clear walls to create open space
-        roomMap[y][x] = roomType;
-      }
-    }
-
-    createdRooms.push({
-      type: roomType,
-      x: startX,
-      y: startY,
-      width: roomWidth,
-      height: roomHeight
-    });
-  }
-
-  // Create corridors connecting rooms
-  for (let i = 0; i < createdRooms.length - 1; i++) {
-    const room1 = createdRooms[i];
-    const room2 = createdRooms[i + 1];
-
-    // Center of each room
-    const x1 = Math.floor(room1.x + room1.width / 2);
-    const y1 = Math.floor(room1.y + room1.height / 2);
-    const x2 = Math.floor(room2.x + room2.width / 2);
-    const y2 = Math.floor(room2.y + room2.height / 2);
-
-    // Create L-shaped corridor
-    // Horizontal corridor
-    const startX = Math.min(x1, x2);
-    const endX = Math.max(x1, x2);
-    for (let x = startX; x <= endX; x++) {
-      if (y1 >= 0 && y1 < height) {
-        grid[y1][x] = TILE_TYPES.FLOOR;
-        if (x >= 0 && x < width - 1 && y1 < height - 1) {
-          grid[y1 + 1][x] = TILE_TYPES.FLOOR; // Make corridor 2 tiles wide
-        }
-      }
-    }
-
-    // Vertical corridor
-    const startY = Math.min(y1, y2);
-    const endY = Math.max(y1, y2);
-    for (let y = startY; y <= endY; y++) {
-      if (x2 >= 0 && x2 < width && y < height) {
-        grid[y][x2] = TILE_TYPES.FLOOR;
-        if (x2 < width - 1 && y < height) {
-          grid[y][x2 + 1] = TILE_TYPES.FLOOR; // Make corridor 2 tiles wide
-        }
-      }
-    }
-  }
-
-  // Log room distribution
-  const roomCounts = {};
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const type = roomMap[y][x];
-      roomCounts[type] = (roomCounts[type] || 0) + 1;
-    }
-  }
-
-  console.log('Room distribution:', roomCounts);
-  console.log('Created rooms:', createdRooms.map(r => ({
-    type: Object.keys(ROOM_TYPES).find(key => ROOM_TYPES[key] === r.type),
-    size: `${r.width}x${r.height}`
-  })));
-
-  return roomMap;
 }

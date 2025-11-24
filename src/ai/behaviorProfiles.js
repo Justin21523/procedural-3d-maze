@@ -7,6 +7,7 @@
  */
 
 import * as THREE from 'three';
+import { CONFIG } from '../core/config.js';
 import {
   BehaviorTree,
   Selector,
@@ -45,124 +46,277 @@ export function createMonsterBehaviorTree(monster, typeConfig) {
  * Create close-range chase behavior (only chase if very close)
  */
 function createCloseRangeChase(monster, config) {
-  return new Sequence('CloseRangeChase', [
-    // Check if player is very close
-    new Condition('IsPlayerVeryClose', (ctx) => {
-      const distance = monster.position.distanceTo(ctx.playerPosition);
-      return distance < 8; // Only chase if within 8 units
-    }),
-
-    // Check if can see player
+  return new Sequence('ChaseOnSight', [
+    // 只要看得到玩家就追，距離限制交給 monster.stats.visionRange
     new Condition('CanSeePlayer', (ctx) => {
       return monster.canSeePlayer(ctx.playerPosition);
     }),
 
-    // Chase player
-    new Action('ChaseNearbyPlayer', (ctx) => {
+    new Action('ChasePlayerOnSight', (ctx) => {
       monster.state = 'CHASE';
+      // 跑步動畫，沒有就用走路
       monster.playAnimation('run') || monster.playAnimation('walk');
+
+      // 這邊先用你原本的 moveTowards，之後要再接 A* 追擊也可以
       monster.moveTowards(ctx.playerPosition, ctx.deltaTime);
       return NodeStatus.RUNNING;
     })
   ]);
 }
 
-/**
- * Create Frontier-based Exploration Behavior
- *
- * v4.0.0: Complete rewrite using Frontier-based Exploration algorithm
- * - Systematically finds boundaries between known/unknown space
- * - No more if-else logic for corridors/rooms/junctions
- * - Intelligent target selection based on information gain
- * - Proper algorithm used in robotics research
- */
+
 function createExplorationBehavior(monster, config) {
-  // Initialize frontier explorer if not exists
+  // 初始化 Frontier explorer（只建一次）
   if (!monster.frontierExplorer) {
     monster.frontierExplorer = new FrontierExplorer(monster.worldState, {
-      scanRadius: 30,
-      explorationRadius: 3,
-      memoryDuration: 600000, // 10 minutes
-      minFrontierClusters: 3,
+      scanRadius: 60,      // 降低掃描半徑以減少運算
+      explorationRadius: 0,
+      memoryDuration: 60000,
+      minFrontierClusters: 1,
       debug: false
     });
   }
 
-  return new Action('FrontierExploration', (ctx) => {
+  const tileSize = CONFIG.TILE_SIZE;
+  const MAX_TARGET_AGE = 10000; // 10 秒後強制換目標
+
+  return new Action('Frontier+DFS_Exploration', (ctx) => {
+    const now = Date.now();
+
     monster.state = 'EXPLORE';
     monster.playAnimation('walk');
 
-    const tileSize = 2;
+    // 記錄拜訪（你原本的記憶系統）
+    if (monster.recordVisit) {
+      monster.recordVisit();
+    }
 
-    // Mark current position as explored
+    // 把當前格子標記成已探索（Frontier 用）
     monster.frontierExplorer.markExplored(monster.gridX, monster.gridY);
 
-    // Check if we need a new target
-    const needNewTarget = !monster.explorationTarget ||
-                          monster.position.distanceTo(monster.explorationTarget) < 3;
+    // 決定要不要換新目標
+    const hasTarget = !!monster.explorationTarget;
+    const targetIsClose =
+      hasTarget && monster.position.distanceTo(monster.explorationTarget) < 3;
+    const targetTooOld =
+      hasTarget &&
+      monster.explorationTargetSetTime &&
+      now - monster.explorationTargetSetTime > MAX_TARGET_AGE;
+
+    const needNewTarget = !hasTarget || targetIsClose || targetTooOld;
 
     if (needNewTarget) {
-      // Get current movement direction for consistency
-      const currentDir = monster.actualMovementDirection ?
-        new THREE.Vector2(monster.actualMovementDirection.dx, monster.actualMovementDirection.dy) :
-        null;
+      // 先清掉現有路徑與目標
+      monster.currentPath = [];
+      monster.explorationTarget = null;
 
-      // Use Frontier Explorer to find best target
-      const frontier = monster.frontierExplorer.selectBestFrontier(
-        monster.gridX,
-        monster.gridY,
-        currentDir
-      );
+      // 盡量沿著目前移動方向延伸探索（給 Frontier 用）
+      const currentDir = monster.actualMovementDirection
+        ? new THREE.Vector2(monster.actualMovementDirection.dx, monster.actualMovementDirection.dy)
+        : null;
 
-      if (frontier) {
-        // Use A* to find path to frontier
-        const path = monster.pathfinding.findPath(
-          {x: monster.gridX, y: monster.gridY},
-          {x: frontier.x, y: frontier.y},
-          monster.worldState
+      // =====================
+      // 0) 先問 stack DFS 要去哪
+      // =====================
+      let dfsTarget = null;
+      if (monster.getNextStackTarget) {
+        dfsTarget = monster.getNextStackTarget();
+      }
+
+      if (dfsTarget) {
+        // 用 A* 去這個 DFS 目標
+        let path = monster.pathfinding.findPath(
+          { x: monster.gridX, y: monster.gridY },
+          { x: dfsTarget.x, y: dfsTarget.y }
         );
 
         if (path && path.length > 0) {
-          // Set path directly
+          path = monster.pathfinding.smoothPath(path);
           monster.currentPath = path;
-
-          // Set exploration target to frontier
           monster.explorationTarget = new THREE.Vector3(
-            frontier.x * tileSize,
+            dfsTarget.x * tileSize + tileSize / 2,
             monster.position.y,
-            frontier.y * tileSize
+            dfsTarget.y * tileSize + tileSize / 2
+          );
+          monster.explorationTargetSetTime = now;
+
+          console.log(
+            `🧱 DFS target: (${dfsTarget.x}, ${dfsTarget.y}) pathLen=${path.length}`
+          );
+        } else {
+          // 去不了這個 DFS 目標，標成 stuck，讓 DFS 下次不要再選到
+          if (monster.recordStuckPosition) {
+            monster.recordStuckPosition(dfsTarget.x, dfsTarget.y);
+          }
+          dfsTarget = null;
+        }
+      }
+
+      // =====================
+      // 1) DFS 沒給出目標 → 再用 Frontier 找新的區域
+      // =====================
+      if (!monster.explorationTarget) {
+        const frontier = monster.frontierExplorer.selectBestFrontier(
+          monster.gridX,
+          monster.gridY,
+          currentDir
+        );
+
+        if (frontier) {
+          let path = monster.pathfinding.findPath(
+            { x: monster.gridX, y: monster.gridY },
+            { x: frontier.x, y: frontier.y }
           );
 
-          console.log(`🎯 Frontier target: (${frontier.x}, ${frontier.y}) score=${frontier.score.toFixed(1)}`);
-        } else {
-          // Can't reach frontier - mark as explored and try again next frame
-          monster.frontierExplorer.markExplored(frontier.x, frontier.y);
-          monster.explorationTarget = null;
+          if (path && path.length > 0) {
+            path = monster.pathfinding.smoothPath(path);
+
+            monster.currentPath = path;
+            monster.explorationTarget = new THREE.Vector3(
+              frontier.x * tileSize + tileSize / 2,
+              monster.position.y,
+              frontier.y * tileSize + tileSize / 2
+            );
+            monster.explorationTargetSetTime = now;
+
+            console.log(
+              `🎯 Frontier target: (${frontier.x}, ${frontier.y}) pathLen=${path.length} score=${frontier.score.toFixed(1)}`
+            );
+          } else {
+            // 這個 frontier 到不了，直接當作已探索，避免下次又選到
+            monster.frontierExplorer.markExplored(frontier.x, frontier.y);
+          }
         }
-      } else {
-        // No frontiers found - explore randomly
-        console.log('⚠️ No frontiers, random exploration');
-        const randomAngle = Math.random() * Math.PI * 2;
-        monster.explorationTarget = new THREE.Vector3(
-          monster.position.x + Math.cos(randomAngle) * tileSize * 20,
-          monster.position.y,
-          monster.position.z + Math.sin(randomAngle) * tileSize * 20
-        );
+      }
+
+      // =====================
+      // 2) Frontier 也沒東西 → random reachable
+      // =====================
+      if (!monster.explorationTarget) {
+        console.log('⚠️ No usable DFS/Frontiers, falling back to random reachable target');
+
+        const randomTile = monster.worldState.findRandomWalkableTile();
+        if (randomTile) {
+          let randomPath = monster.pathfinding.findPath(
+            { x: monster.gridX, y: monster.gridY },
+            { x: randomTile.x, y: randomTile.y }
+          );
+
+          if (randomPath && randomPath.length > 0) {
+            randomPath = monster.pathfinding.smoothPath(randomPath);
+
+            monster.currentPath = randomPath;
+            monster.explorationTarget = new THREE.Vector3(
+              randomTile.x * tileSize + tileSize / 2,
+              monster.position.y,
+              randomTile.y * tileSize + tileSize / 2
+            );
+            monster.explorationTargetSetTime = now;
+
+            console.log(
+              `🎲 Random exploration target: (${randomTile.x}, ${randomTile.y}) pathLen=${randomPath.length}`
+            );
+          }
+        }
+      }
+
+      // =====================
+      // 3) 再不行 → 就近遊走
+      // =====================
+      if (!monster.explorationTarget) {
+        const tryDirs = [
+          { dx: 1, dy: 0 },
+          { dx: -1, dy: 0 },
+          { dx: 0, dy: 1 },
+          { dx: 0, dy: -1 },
+          { dx: 1, dy: 1 },
+          { dx: -1, dy: 1 },
+          { dx: 1, dy: -1 },
+          { dx: -1, dy: -1 },
+        ];
+
+        for (const dir of tryDirs) {
+          const tx = monster.gridX + dir.dx * 3;
+          const ty = monster.gridY + dir.dy * 3;
+          if (monster.worldState.isWalkableWithMargin?.(tx, ty, 1) || monster.worldState.isWalkable(tx, ty)) {
+            monster.explorationTarget = new THREE.Vector3(
+              tx * tileSize + tileSize / 2,
+              monster.position.y,
+              ty * tileSize + tileSize / 2
+            );
+            monster.explorationTargetSetTime = now;
+            console.log(`🚶 Fallback short-walk target: (${tx}, ${ty})`);
+            break;
+          }
+        }
+      }
+
+      // =====================
+      // 4) 最後手段：強迫去很遠的地方
+      // =====================
+      if (!monster.explorationTarget) {
+        const farTarget = pickFarWalkable(monster);
+        if (farTarget) {
+          const path = monster.pathfinding.findPath(
+            { x: monster.gridX, y: monster.gridY },
+            { x: farTarget.x, y: farTarget.y }
+          );
+
+          if (path && path.length > 0) {
+            monster.currentPath = monster.pathfinding.smoothPath(path);
+            monster.explorationTarget = new THREE.Vector3(
+              farTarget.x * tileSize + tileSize / 2,
+              monster.position.y,
+              farTarget.y * tileSize + tileSize / 2
+            );
+            monster.explorationTargetSetTime = now;
+            console.log(`🧭 Forced far target: (${farTarget.x}, ${farTarget.y}) pathLen=${path.length}`);
+          }
+        }
       }
     }
 
-    // Follow A* path if available
+    // 真正做移動的地方
     if (monster.currentPath && monster.currentPath.length > 0) {
       monster.followPath(ctx.deltaTime);
-    }
-    // Otherwise move directly to target
-    else if (monster.explorationTarget) {
+    } else if (monster.explorationTarget) {
+      // 理論上很少會走到這裡，但保留 direct move 作為最後 fallback
       monster.moveTowards(monster.explorationTarget, ctx.deltaTime);
     }
 
     return NodeStatus.RUNNING;
   });
 }
+
+
+
+/**
+ * Pick a far walkable tile (farthest of random samples) to force long-range exploration
+ */
+function pickFarWalkable(monster) {
+  const candidates = [];
+  const width = monster.worldState.width;
+  const height = monster.worldState.height;
+
+  // Sample 100 random walkable tiles and pick the farthest from current
+  for (let i = 0; i < 100; i++) {
+    const tile = monster.worldState.findRandomWalkableTile();
+    if (!tile) continue;
+    // Skip recent stuck positions
+    if (monster.isStuckPosition && monster.isStuckPosition(tile.x, tile.y)) continue;
+
+    const dx = tile.x - monster.gridX;
+    const dy = tile.y - monster.gridY;
+    const distSq = dx * dx + dy * dy;
+    candidates.push({ ...tile, distSq });
+  }
+
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => b.distSq - a.distSq);
+  return candidates[0];
+}
+
 
 /**
  * Create idle behavior
