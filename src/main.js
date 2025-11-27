@@ -119,6 +119,10 @@ function initGame() {
     minimapCanvas.style.width = `${clamped}px`;
     minimapCanvas.style.height = `${clamped}px`;
     minimap.resize(clamped);
+    if (minimapZoomSlider) {
+      const zoom = parseFloat(minimapZoomSlider.value) || minimap.zoom || 1;
+      minimap.setZoom(zoom);
+    }
     minimapSizeValue.textContent = `${clamped}px`;
     minimap.render(
       player.getGridPosition(),

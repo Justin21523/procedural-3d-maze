@@ -190,7 +190,8 @@ export class GameLoop {
       if (autopilotControlling && cmd) {
         // Mouse look this frame: keep autopilot movement but don't override view
         if (hasPlayerLook) {
-          externalCommand = { ...cmd, lookYaw: 0 };
+          const { lookYaw, ...rest } = cmd;
+          externalCommand = rest;
         } else {
           externalCommand = cmd;
         }
