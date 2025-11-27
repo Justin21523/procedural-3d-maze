@@ -12,7 +12,7 @@ export const MonsterTypes = {
     aiType: 'roomHunter',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
-    spriteFramesPath: '/models/moonman-sequence',
+    spriteFramesPath: '../assets/moonman-sequence',
     spriteFrameRate: 10,
 
     // Physical stats
@@ -60,7 +60,7 @@ export const MonsterTypes = {
     aiType: 'wanderCritter',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
-    spriteFramesPath: '/models/moonman-sequence',
+    spriteFramesPath: '../assets/moonman-sequence',
     spriteFrameRate: 8,
 
     stats: {
@@ -103,7 +103,7 @@ export const MonsterTypes = {
     aiType: 'corridorGuardian',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
-    spriteFramesPath: '/models/moonman-sequence',
+    spriteFramesPath: '../assets/moonman-sequence',
     spriteFrameRate: 6,
 
     stats: {
@@ -147,7 +147,7 @@ export const MonsterTypes = {
     aiType: 'teleportStalker',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
-    spriteFramesPath: '/models/moonman-sequence',
+    spriteFramesPath: '../assets/moonman-sequence',
     spriteFrameRate: 9,
 
     stats: {
@@ -191,7 +191,7 @@ export const MonsterTypes = {
     aiType: 'speedJitter',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
-    spriteFramesPath: '/models/moonman-sequence',
+    spriteFramesPath: '../assets/moonman-sequence',
     spriteFrameRate: 12,
 
     stats: {
@@ -233,7 +233,7 @@ export const MonsterTypes = {
     name: 'GREETER',
     aiType: 'shyGreeter',
     sprite: '/models/greeter.png',
-    spriteFramesPath: '/models/moonman-sequence',
+    spriteFramesPath: '../assets/moonman-sequence',
     spriteFrameRate: 7,
     color: 0x33ccff,
 

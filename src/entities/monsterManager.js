@@ -78,7 +78,7 @@ export class MonsterManager {
         try {
           const spriteResult = createSpriteBillboard({
             path: typeConfig.sprite || '/models/monster.png',
-            framesFolder: typeConfig.spriteFramesPath ?? '/models/moonman-sequence',
+            framesFolder: typeConfig.spriteFramesPath ?? '../assets/moonman-sequence',
             frameRate: typeConfig.spriteFrameRate ?? 8,
             randomStart: true,
             clipLengthRange: { min: 20, max: 60 },

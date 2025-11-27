@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 
-// Try to discover frames under public/models/moonman-sequence.
-// If Vite cannot glob public assets, we'll fall back to single-texture mode.
-const moonmanFrames = import.meta.glob('/models/moonman-sequence/*.png', {
+// Discover frames bundled under src/assets (Vite can glob these).
+const moonmanFrames = import.meta.glob('../assets/moonman-sequence/*.png', {
   import: 'default',
   eager: true
 });
@@ -18,7 +17,7 @@ function resolveFrameUrls(options) {
     return options.frames;
   }
 
-  if (options.framesFolder === '/models/moonman-sequence') {
+  if (options.framesFolder === '/models/moonman-sequence' || options.framesFolder === '../assets/moonman-sequence') {
     const sorted = sortFrameEntries(Object.entries(moonmanFrames));
     if (sorted.length > 0) {
       return sorted.map(([, url]) => url);
