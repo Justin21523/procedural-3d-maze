@@ -166,12 +166,11 @@ export class GameLoop {
 
       hasPlayerLook = mouseDelta.x !== 0 || mouseDelta.y !== 0;
 
-      // Idle timer only considers movement keys; mouse look keeps autopilot steering
-      if (hasPlayerMove) {
-        this.autopilotIdleSeconds = 0;
-      } else {
-        this.autopilotIdleSeconds += dt;
-      }
+      // Idle timer counts all input (keyboard + mouse)
+      const idle = this.player.input.getIdleTimeSeconds
+        ? this.player.input.getIdleTimeSeconds()
+        : 0;
+      this.autopilotIdleSeconds = idle;
     } else {
       this.autopilotIdleSeconds = 0;
     }
@@ -180,8 +179,8 @@ export class GameLoop {
       allowAutopilot &&
       this.autopilotIdleSeconds >= (CONFIG.AUTOPILOT_DELAY || 0);
 
-    // Only hand over movement when autopilot is enabled and player isn't pressing WASD/Shift
-    const autopilotControlling = allowAutopilotNow && !hasPlayerMove;
+    // Only hand over movement when autopilot is enabled and player isn't providing input
+    const autopilotControlling = allowAutopilotNow && !hasPlayerMove && !hasPlayerLook;
 
     if (this.autopilot) {
       this.autopilot.setEnabled(allowAutopilot);
