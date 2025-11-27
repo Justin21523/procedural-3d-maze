@@ -330,6 +330,14 @@ export class PlayerController {
   }
 
   /**
+   * Force a gentle nudge if external systems detect prolonged immobility.
+   */
+  forceUnstuck() {
+    this.tryUnstuck(new THREE.Vector3(0.05, 0, 0));
+    this.separateFromWalls();
+  }
+
+  /**
    * Can the player occupy the given world coordinates?
    * @param {number} worldX
    * @param {number} worldZ

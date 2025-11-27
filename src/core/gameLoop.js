@@ -48,6 +48,8 @@ export class GameLoop {
     this.fps = CONFIG.TARGET_FPS;
     this.lastFpsUpdate = 0;
     this.targetFrameTime = 1000 / CONFIG.TARGET_FPS; // Target time per frame in ms
+    this.lastProgressPos = null;
+    this.noProgressTimer = 0;
 
     // UI elements
     this.positionElement = document.getElementById('position');
@@ -214,6 +216,31 @@ export class GameLoop {
     playerPos = this.player.getPosition();
     this.separatePlayerFromWalls(playerPos);
     playerPos = this.player.getPosition();
+
+    // Detect prolonged no-progress while input or autopilot is active
+    const isDriven = this.autopilotActive || hasPlayerMove;
+    if (!this.lastProgressPos) {
+      this.lastProgressPos = playerPos.clone();
+    }
+    const distSinceLast = this.lastProgressPos ? playerPos.distanceTo(this.lastProgressPos) : 0;
+    if (isDriven && distSinceLast < 0.05) {
+      this.noProgressTimer += dt;
+      if (this.noProgressTimer > 2.0) {
+        if (this.player?.forceUnstuck) {
+          this.player.forceUnstuck();
+          playerPos = this.player.getPosition();
+        }
+        if (this.autopilot?.resetPath) {
+          this.autopilot.resetPath();
+        }
+        this.lastProgressPos = playerPos.clone();
+        this.noProgressTimer = 0;
+        console.log('⚠️ No-progress detected, nudging player free.');
+      }
+    } else {
+      this.noProgressTimer = 0;
+      this.lastProgressPos = playerPos.clone();
+    }
 
     // Check monster collision (damage player)
     if (this.monsterManager && this.gameState) {

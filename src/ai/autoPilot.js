@@ -72,6 +72,12 @@ export class AutoPilot {
     }
   }
 
+  resetPath() {
+    this.currentPath = [];
+    this.currentTarget = null;
+    this.lastPlanTime = 0;
+  }
+
   /**
    * Compute avoidance grid: mark tiles near monsters as blocked
    */
