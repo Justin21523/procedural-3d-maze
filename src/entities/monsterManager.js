@@ -41,7 +41,19 @@ export class MonsterManager {
    * Initialize monsters with mixed types
    * @param {number} count - Number of monsters to spawn
    */
-  async initialize(count = 1) {
+  async initializeForLevel(levelConfig = null) {
+    const requested = levelConfig?.monsters?.count ?? CONFIG.MONSTER_COUNT;
+    const typeWeights = levelConfig?.monsters?.typeWeights || null;
+    return this.initialize(requested, typeWeights, levelConfig);
+  }
+
+  /**
+   * Initialize monsters with mixed types
+   * @param {number} count - Number of monsters to spawn
+   * @param {Object|null} weights - Optional type weights for mix
+   * @param {Object|null} levelConfig - Level configuration for scaling
+   */
+  async initialize(count = 1, weights = null, levelConfig = null) {
     console.log(`🎮 Initializing ${count} monsters with mixed types...`);
 
     try {
@@ -55,7 +67,7 @@ export class MonsterManager {
       }
 
       // Create a mix of monster types
-      const monsterTypeMix = createMonsterMix(count);
+      const monsterTypeMix = createMonsterMix(count, weights);
       console.log(`🎲 Monster type distribution:`, monsterTypeMix.map(t => t.name));
 
       // Spawn each monster using 2D billboard sprites (keeps other objects 3D)
@@ -65,11 +77,11 @@ export class MonsterManager {
 
         try {
           const sprite = createSpriteBillboard(typeConfig.sprite || '/models/monster.png');
-          await this.spawnMonster(sprite, [], spawnPoints[i], typeConfig);
+          await this.spawnMonster(sprite, [], spawnPoints[i], typeConfig, levelConfig);
         } catch (error) {
           console.error(`   ❌ Failed to spawn ${typeConfig.name}:`, error.message);
           console.warn(`   ⚠️ Creating placeholder instead`);
-          this.spawnPlaceholderMonster(spawnPoints[i], typeConfig);
+          this.spawnPlaceholderMonster(spawnPoints[i], typeConfig, levelConfig);
         }
       }
 
@@ -91,14 +103,14 @@ export class MonsterManager {
    * @param {Object} spawnPosition - Grid position {x, y}
    * @param {Object} typeConfig - Monster type configuration
    */
-  async spawnMonster(model, animations, spawnPosition, typeConfig = null) {
+  async spawnMonster(model, animations, spawnPosition, typeConfig = null, levelConfig = null) {
     const typeName = typeConfig?.name || 'Generic';
     console.log(`\n🎭 Creating ${typeName} at grid (${spawnPosition.x}, ${spawnPosition.y})`);
     console.log('   Model children count:', model.children.length);
     console.log('   Model type:', model.type);
     console.log('   Model visible (before):', model.visible);
 
-    const monster = new Monster(model, spawnPosition, this.worldState, typeConfig);
+    const monster = new Monster(model, spawnPosition, this.worldState, typeConfig, levelConfig);
 
     // Setup animations
     if (animations && animations.length > 0) {
@@ -115,7 +127,7 @@ export class MonsterManager {
     console.log(`   Scene children count:`, this.scene.children.length);
 
     // Create AI brain
-    this.attachBrain(monster, typeConfig);
+    this.attachBrain(monster, typeConfig, levelConfig);
 
     // Add to monsters array
     this.monsters.push(monster);
@@ -167,9 +179,9 @@ export class MonsterManager {
     this.printMonsterSummary();
   }
 
-  attachBrain(monster, typeConfig) {
+  attachBrain(monster, typeConfig, levelConfig = null) {
     const aiType = this.resolveAiType(typeConfig);
-    const brainConfig = this.buildBrainConfig(typeConfig);
+    const brainConfig = this.buildBrainConfig(typeConfig, levelConfig);
     const brain = createMonsterBrain({
       type: aiType,
       worldState: this.worldState,
@@ -191,15 +203,17 @@ export class MonsterManager {
     return 'wanderCritter';
   }
 
-  buildBrainConfig(typeConfig) {
+  buildBrainConfig(typeConfig, levelConfig) {
     const stats = typeConfig?.stats || {};
     const behavior = typeConfig?.behavior || {};
+    const allowSprintTypes = levelConfig?.monsters?.allowSprintTypes || [];
     return {
       visionRange: stats.visionRange,
       chaseTimeout: behavior.chaseMemory ? behavior.chaseMemory / 1000 : undefined,
       chaseCooldown: behavior.chaseCooldown ? behavior.chaseCooldown / 1000 : undefined,
       searchRadius: behavior.searchRadius,
-      preferredMode: behavior.preferredMode
+      preferredMode: behavior.preferredMode,
+      allowSprint: allowSprintTypes.includes(typeConfig?.name)
     };
   }
 
@@ -390,14 +404,28 @@ export class MonsterManager {
    * @param {number} catchDistance - Distance for catching player
    * @returns {boolean} True if caught
    */
+  /**
+   * Check if player is caught by any monster
+   * @param {THREE.Vector3} playerPosition - Player world position
+   * @param {number} catchDistance - Distance threshold
+   * @returns {{hit: boolean, monster: Monster|null}}
+   */
   checkPlayerCaught(playerPosition, catchDistance = 1) {
+    let nearest = null;
+    let nearestDist = Infinity;
+
     for (const monster of this.monsters) {
       const distance = monster.getWorldPosition().distanceTo(playerPosition);
-      if (distance < catchDistance) {
-        return true;
+      if (distance < catchDistance && distance < nearestDist) {
+        nearest = monster;
+        nearestDist = distance;
       }
     }
-    return false;
+
+    return {
+      hit: !!nearest,
+      monster: nearest
+    };
   }
 
   /**
@@ -405,7 +433,7 @@ export class MonsterManager {
    * @param {Object} spawnPosition - Grid position {x, y}
    * @param {Object} typeConfig - Monster type configuration
    */
-  spawnPlaceholderMonster(spawnPosition, typeConfig) {
+  spawnPlaceholderMonster(spawnPosition, typeConfig, levelConfig = null) {
     const typeName = typeConfig?.name || 'Generic';
     console.log(`\n🔶 Creating placeholder ${typeName} at (${spawnPosition.x}, ${spawnPosition.y})`);
 
@@ -442,10 +470,10 @@ export class MonsterManager {
     group.add(rightEye);
 
     console.log(`   Creating Monster instance with typeConfig:`, typeConfig?.name);
-    const monster = new Monster(group, spawnPosition, this.worldState, typeConfig);
+    const monster = new Monster(group, spawnPosition, this.worldState, typeConfig, levelConfig);
 
     // AI brain
-    this.attachBrain(monster, typeConfig);
+    this.attachBrain(monster, typeConfig, levelConfig);
 
     console.log(`   Adding to scene...`);
     this.scene.add(group);

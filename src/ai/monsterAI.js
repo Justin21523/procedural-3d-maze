@@ -34,6 +34,7 @@ export class BaseMonsterBrain {
       45_000;
 
     this.enabled = true;
+    this.allowSprint = config.allowSprint ?? true;
   }
 
   setEnabled(enabled) {
@@ -342,6 +343,7 @@ export class BaseMonsterBrain {
   computeSprint(distToTarget, distToPlayer) {
     void distToTarget;
     void distToPlayer;
+    if (!this.allowSprint) return false;
     return false;
   }
 

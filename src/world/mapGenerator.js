@@ -14,7 +14,7 @@ import { CONFIG } from '../core/config.js';
  * @param {Object} options - Generation options
  * @returns {Object} Object containing grid and rooms array
  */
-export function generateMazeDFS(width, height) {
+export function generateMazeDFS(width, height, options = {}) {
   // 建議外面給奇數，這裡再保險修一次
   if (width % 2 === 0)  width  -= 1;
   if (height % 2 === 0) height -= 1;
@@ -28,10 +28,11 @@ export function generateMazeDFS(width, height) {
   carveDFS(grid);
 
   // 加一些額外通道減少死路
-  addExtraConnections(grid, 0.08);
+  const extraChance = options.extraConnectionChance ?? 0.08;
+  addExtraConnections(grid, extraChance);
 
   // ==== 2) 從走廊長出房間 ====
-  const rooms = carveRoomsFromCorridors(grid);
+  const rooms = carveRoomsFromCorridors(grid, options);
 
   return { grid, rooms };
 }
@@ -124,14 +125,14 @@ function addExtraConnections(grid, chance = 0.05) {
 /**
  * 從現有走廊 carve 出房間，並用 DOOR 連接
  */
-function carveRoomsFromCorridors(grid) {
+function carveRoomsFromCorridors(grid, options = {}) {
   const height = grid.length;
   const width = grid[0].length;
 
   const rooms = [];
   // Higher base density so rooms dominate over corridors
   const baseRooms = Math.floor((width * height) / 250);
-  const density = CONFIG.ROOM_DENSITY || 1.0;
+  const density = options.roomDensity ?? CONFIG.ROOM_DENSITY ?? 1.0;
   const maxRooms = Math.max(20, Math.floor(baseRooms * density));
   let attempts = 0;
 

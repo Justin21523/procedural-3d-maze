@@ -6,14 +6,28 @@ import { CONFIG } from '../core/config.js';
  * All decision making lives in src/ai/monsterAI.js.
  */
 export class Monster {
-  constructor(model, spawnGrid = { x: 0, y: 0 }, worldState = null, typeConfig = {}) {
+  constructor(model, spawnGrid = { x: 0, y: 0 }, worldState = null, typeConfig = {}, levelConfig = null) {
     this.model = model;
     this.worldState = worldState;
     this.typeConfig = typeConfig || {};
     this.stats = this.typeConfig.stats || {};
 
-    this.speed = this.stats.speed ?? CONFIG.MONSTER_SPEED;
-    this.visionRange = this.stats.visionRange ?? CONFIG.MONSTER_VISION_RANGE;
+    const speedFactor = this.stats.speedFactor ?? 1.0;
+    const levelSpeed =
+      levelConfig?.monsters?.speedMultiplier ??
+      CONFIG.MONSTER_LEVEL_SPEED_MULT ??
+      1.0;
+
+    this.baseSpeed =
+      CONFIG.PLAYER_SPEED *
+      (CONFIG.MONSTER_BASE_SPEED_FACTOR ?? 0.8) *
+      speedFactor *
+      levelSpeed;
+
+    this.speed = this.baseSpeed;
+
+    const visionMult = levelConfig?.monsters?.visionMultiplier ?? 1.0;
+    this.visionRange = (this.stats.visionRange ?? CONFIG.MONSTER_VISION_RANGE) * visionMult;
     this.visionFOV = this.stats.visionFOV ?? CONFIG.MONSTER_FOV;
     this.scale = this.stats.scale ?? CONFIG.MONSTER_SCALE_MULTIPLIER;
 
@@ -129,8 +143,8 @@ export class Monster {
   }
 
   getSpeed(isSprinting = false) {
-    const sprintMultiplier = isSprinting ? 1.4 : 1.0;
-    return this.speed * sprintMultiplier;
+    const sprintMultiplier = isSprinting ? (CONFIG.MONSTER_SPRINT_MULTIPLIER || 1.6) : 1.0;
+    return this.baseSpeed * sprintMultiplier;
   }
 
   setModel(newModel) {
