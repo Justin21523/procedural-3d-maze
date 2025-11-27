@@ -70,9 +70,15 @@ export class PlayerController {
     const mouseDelta = this.input.consumeMouseDelta();
     this.camera.updateRotation(mouseDelta.x, mouseDelta.y);
 
-    // Autopilot absolute yaw (if any) comes after manual look
+    // Autopilot absolute yaw (if any) comes after manual look, smoothed
     if (this.externalLookYaw !== null) {
-      this.camera.setYaw(this.externalLookYaw);
+      const currentYaw = this.camera.getYaw();
+      let delta = this.externalLookYaw - currentYaw;
+      // Wrap to [-PI, PI]
+      delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+      const maxStep = (CONFIG.AUTOPILOT_TURN_SPEED || 3) * deltaTime;
+      const applied = Math.max(-maxStep, Math.min(maxStep, delta));
+      this.camera.setYaw(currentYaw + applied);
       this.externalLookYaw = null;
     }
 

@@ -37,6 +37,8 @@ function initGame() {
   const minimapToggle = document.getElementById('minimap-toggle');
   const minimapSizeSlider = document.getElementById('minimap-size');
   const minimapSizeValue = document.getElementById('minimap-size-value');
+  const minimapZoomSlider = document.getElementById('minimap-zoom');
+  const minimapZoomValue = document.getElementById('minimap-zoom-value');
   const levelLabel = document.getElementById('level-label');
   const levelPrevBtn = document.getElementById('level-prev');
   const levelNextBtn = document.getElementById('level-next');
@@ -205,6 +207,22 @@ function initGame() {
       const size = parseInt(e.target.value, 10);
       applyMinimapSize(size);
     });
+  }
+
+  if (minimapZoomSlider) {
+    minimapZoomSlider.addEventListener('input', (e) => {
+      const zoom = parseFloat(e.target.value) || 1.0;
+      minimap.setZoom(zoom);
+      minimapZoomValue.textContent = `${zoom.toFixed(1)}x`;
+      minimap.render(
+        player.getGridPosition(),
+        monsterManager.getMonsterPositions(),
+        exitPoint.getGridPosition(),
+        missionPoints.map(mp => mp.getGridPosition())
+      );
+    });
+    minimapZoomValue.textContent = `${parseFloat(minimapZoomSlider.value || '1.4').toFixed(1)}x`;
+    minimap.setZoom(parseFloat(minimapZoomSlider.value || '1.4'));
   }
 
   if (minimapToggle) {

@@ -15,6 +15,7 @@ export class Minimap {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.worldState = worldState;
+    this.zoom = 1.4;
 
     // Colors
     this.colors = {
@@ -55,6 +56,15 @@ export class Minimap {
   }
 
   /**
+   * Set zoom multiplier for tile size.
+   * @param {number} zoom
+   */
+  setZoom(zoom) {
+    this.zoom = Math.max(0.5, zoom);
+    this.updateScale();
+  }
+
+  /**
    * Update scale based on maze size
    */
   updateScale() {
@@ -65,10 +75,11 @@ export class Minimap {
     const height = grid.length;
 
     // Calculate pixel size for each tile
-    this.tileSize = Math.floor(Math.min(
+    const base = Math.min(
       this.canvas.width / width,
       this.canvas.height / height
-    ));
+    );
+    this.tileSize = Math.max(1, Math.floor(base * this.zoom));
 
     // Calculate offsets to center the maze
     this.offsetX = (this.canvas.width - width * this.tileSize) / 2;
