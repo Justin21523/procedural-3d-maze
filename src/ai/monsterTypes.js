@@ -12,6 +12,8 @@ export const MonsterTypes = {
     aiType: 'roomHunter',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
+    spriteFramesPath: '/models/moonman-sequence',
+    spriteFrameRate: 10,
 
     // Physical stats
     stats: {
@@ -58,6 +60,8 @@ export const MonsterTypes = {
     aiType: 'wanderCritter',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
+    spriteFramesPath: '/models/moonman-sequence',
+    spriteFrameRate: 8,
 
     stats: {
       speedFactor: 0.8,        // 低於基準
@@ -99,6 +103,8 @@ export const MonsterTypes = {
     aiType: 'corridorGuardian',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
+    spriteFramesPath: '/models/moonman-sequence',
+    spriteFrameRate: 6,
 
     stats: {
       speedFactor: 1.0,        // 巡邏基準
@@ -141,6 +147,8 @@ export const MonsterTypes = {
     aiType: 'teleportStalker',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
+    spriteFramesPath: '/models/moonman-sequence',
+    spriteFrameRate: 9,
 
     stats: {
       speedFactor: 1.1,
@@ -183,6 +191,8 @@ export const MonsterTypes = {
     aiType: 'speedJitter',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
+    spriteFramesPath: '/models/moonman-sequence',
+    spriteFrameRate: 12,
 
     stats: {
       speedFactor: 1.0,        // 基準，靠衝刺／jitter 拉高
@@ -224,7 +234,7 @@ export const MonsterTypes = {
     aiType: 'shyGreeter',
     sprite: '/models/greeter.png',
     spriteFramesPath: '/models/moonman-sequence',
-    spriteFrameRate: 10,
+    spriteFrameRate: 7,
     color: 0x33ccff,
 
     stats: {
