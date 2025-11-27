@@ -1,6 +1,6 @@
 /**
  * Player controller
- * Manages player movement, collision detection, and camera synchronization
+ * Handles movement, collision, and camera sync with optional autopilot input.
  */
 
 import * as THREE from 'three';
@@ -9,12 +9,11 @@ import { worldToGrid, gridToWorld } from '../utils/math.js';
 
 export class PlayerController {
   /**
-   * Create the player controller
-   * @param {WorldState} worldState - Reference to world state for collision checking
-   * @param {FirstPersonCamera} camera - Reference to camera controller
-   * @param {InputHandler} input - Reference to input handler
-   * @param {GameState} gameState - Game state manager (optional)
-   * @param {AudioManager} audioManager - Audio manager (optional)
+   * @param {WorldState} worldState
+   * @param {FirstPersonCamera} camera
+   * @param {InputHandler} input
+   * @param {GameState} gameState
+   * @param {AudioManager} audioManager
    */
   constructor(worldState, camera, input, gameState = null, audioManager = null) {
     this.worldState = worldState;
@@ -23,21 +22,22 @@ export class PlayerController {
     this.gameState = gameState;
     this.audioManager = audioManager;
 
-    // Player position in world coordinates
+    // Position & movement state
     this.position = new THREE.Vector3(0, CONFIG.PLAYER_HEIGHT, 0);
     this.velocity = new THREE.Vector3(0, 0, 0);
-
-    // Movement tracking
-    this.lastPosition = new THREE.Vector3();
-    this.distanceMoved = 0;
-    this.stepDistance = 2; // Distance for one footstep sound
-    this.lastGridX = -1;
-    this.lastGridY = -1;
-    this.footstepTimer = 0; // Timer for footstep sounds
     this.externalMove = null;
     this.externalLookYaw = null;
 
-    // Initialize at spawn point
+    // Tracking
+    this.lastPosition = new THREE.Vector3();
+    this.distanceMoved = 0;
+    this.stepDistance = 2;
+    this.lastGridX = -1;
+    this.lastGridY = -1;
+    this.footstepTimer = 0;
+    this.stuckTimer = 0;
+
+    // Spawn at a safe tile center
     const spawnPoint = worldState.getSpawnPoint();
     const worldSpawn = gridToWorld(spawnPoint.x, spawnPoint.y, CONFIG.TILE_SIZE);
     this.position.set(
@@ -45,66 +45,62 @@ export class PlayerController {
       CONFIG.PLAYER_HEIGHT,
       worldSpawn.z + CONFIG.TILE_SIZE / 2
     );
-
-    // Update camera to spawn position
     this.camera.updatePosition(this.position.x, this.position.y, this.position.z);
   }
 
   /**
-   * Update player state (called every frame)
-   * @param {number} deltaTime - Time since last frame in seconds
+   * Frame update; merges mouse look and optional external command.
+   * @param {number} deltaTime
+   * @param {boolean} autopilotActive
+   * @param {Object|null} externalCommand
    */
-  update(deltaTime, autopilotActive = false) {
-    // 只要 autopilot 啟動，就允許無 pointer lock 的移動
+  update(deltaTime, autopilotActive = false, externalCommand = null) {
+    // Allow autopilot movement even without pointer lock
     if (!this.input.isPointerLocked() && !autopilotActive) {
       return;
     }
 
-    // Save last position for step tracking
+    if (externalCommand) {
+      this.applyExternalControl(externalCommand, deltaTime);
+    }
+
     this.lastPosition.copy(this.position);
 
-    // Update camera rotation from mouse input
+    // Player look always honored first
     const mouseDelta = this.input.consumeMouseDelta();
     this.camera.updateRotation(mouseDelta.x, mouseDelta.y);
 
-    // Apply external look BEFORE computing movement so forward/right use the correct yaw
+    // Autopilot absolute yaw (if any) comes after manual look
     if (this.externalLookYaw !== null) {
       this.camera.setYaw(this.externalLookYaw);
       this.externalLookYaw = null;
     }
 
-    // Calculate movement
-    const moveVector = this.externalMove ? this.externalMove.clone() : this.calculateMovement(deltaTime);
+    const moveVector = this.externalMove
+      ? this.externalMove.clone()
+      : this.calculateMovement(deltaTime);
 
-    // Apply movement with collision detection
     this.applyMovement(moveVector);
-
-    // Track steps and room exploration
     this.updateStatistics();
-
-    // Sync camera position
     this.camera.updatePosition(this.position.x, this.position.y, this.position.z);
 
-    // Clear one-frame external control
+    // Clear one-frame external move
     this.externalMove = null;
   }
 
   /**
-   * Update statistics (steps and room exploration)
+   * Track steps and visited rooms for stats/footsteps.
    */
   updateStatistics() {
-    // Track movement distance for steps and footsteps
     const distance = this.position.distanceTo(this.lastPosition);
     if (distance > 0) {
       this.distanceMoved += distance;
 
-      // Count a step every stepDistance units
       if (this.distanceMoved >= this.stepDistance) {
         if (this.gameState) {
           this.gameState.addStep();
         }
 
-        // Play footstep sound
         if (this.audioManager) {
           const isRunning = this.input.isSprinting();
           this.audioManager.playFootstep(isRunning);
@@ -116,60 +112,52 @@ export class PlayerController {
 
     if (!this.gameState) return;
 
-    // Track room exploration
     const gridPos = this.getGridPosition();
     if (gridPos.x !== this.lastGridX || gridPos.y !== this.lastGridY) {
       this.lastGridX = gridPos.x;
       this.lastGridY = gridPos.y;
-
-      // Visit room
       const roomType = this.worldState.getRoomType(gridPos.x, gridPos.y);
       this.gameState.visitRoom(roomType);
     }
   }
 
   /**
-   * Calculate movement vector based on input
-   * @param {number} deltaTime - Time since last frame
-   * @returns {THREE.Vector3} Movement vector
+   * Calculate player-driven movement vector.
+   * @param {number} deltaTime
+   * @returns {THREE.Vector3}
    */
   calculateMovement(deltaTime) {
     const moveInput = this.input.getMovementInput();
-
     if (moveInput.x === 0 && moveInput.y === 0) {
       return new THREE.Vector3(0, 0, 0);
     }
 
-    // Get camera directions (flattened to XZ plane)
     const forward = this.camera.getForwardVector();
     const right = this.camera.getRightVector();
 
-    // Calculate move direction in world space
     const moveDirection = new THREE.Vector3();
     moveDirection.addScaledVector(forward, moveInput.y);
     moveDirection.addScaledVector(right, moveInput.x);
     moveDirection.normalize();
 
-    // Apply speed (with optional sprint)
     let speed = CONFIG.PLAYER_SPEED;
     if (this.input.isSprinting()) {
-      speed *= 1.5; // Sprint multiplier
+      speed *= 1.5;
     }
 
-    // Scale by deltaTime for frame-independent movement
     moveDirection.multiplyScalar(speed * deltaTime);
-
     return moveDirection;
   }
 
   /**
-   * Allow external (autopilot) control injection
+   * Apply external (autopilot) command as one-frame movement/look.
+   * @param {Object} cmd
+   * @param {number} deltaTime
    */
   applyExternalControl(cmd, deltaTime = 1 / CONFIG.TARGET_FPS) {
     const baseSpeed = CONFIG.PLAYER_SPEED;
     const speed = cmd?.sprint ? baseSpeed * 1.2 : baseSpeed;
 
-    // 優先使用世界座標移動向量，讓 autopilot 不受 yaw 影響
     if (cmd?.moveWorld) {
       const mv = new THREE.Vector3(cmd.moveWorld.x, 0, cmd.moveWorld.z);
       if (mv.lengthSq() > 0) {
@@ -195,25 +183,27 @@ export class PlayerController {
   }
 
   /**
-   * Apply movement with collision detection
-   * @param {THREE.Vector3} moveVector - Desired movement vector
+   * Move with collision; includes sliding and wall separation to reduce sticking.
+   * @param {THREE.Vector3} moveVector
    */
   applyMovement(moveVector) {
     if (moveVector.lengthSq() === 0) {
       return;
     }
 
+    const beforePos = this.position.clone();
     const targetX = this.position.x + moveVector.x;
     const targetZ = this.position.z + moveVector.z;
 
-    // 1. 先嘗試完整位移
+    // 1) Try full move
     if (this.canMoveTo(targetX, targetZ)) {
       this.position.x = targetX;
       this.position.z = targetZ;
+      this.separateFromWalls();
       return;
     }
 
-    // 2. 滑牆：嘗試單軸移動，優先較大軸
+    // 2) Axis-aligned slide (favor larger axis)
     let moved = false;
     if (Math.abs(moveVector.x) > Math.abs(moveVector.z)) {
       const newPosX = this.position.x + moveVector.x;
@@ -239,35 +229,125 @@ export class PlayerController {
       }
     }
 
-    // 3. 完全卡住就交給外部卡住偵測處理
+    // 3) If barely moved, attempt small nudge to get unstuck
+    const movedDistance = this.position.distanceTo(beforePos);
+    if (movedDistance < 0.0001) {
+      this.tryUnstuck(moveVector);
+    } else {
+      this.stuckTimer = 0;
+    }
+
+    // 4) Final separation from nearby walls/corners
+    this.separateFromWalls();
   }
 
   /**
-   * Check if player can move to a world position
-   * Uses simple grid-based collision with a small radius
-   * @param {number} worldX - Target world X position
-   * @param {number} worldZ - Target world Z position
-   * @returns {boolean} True if position is walkable, false otherwise
+   * Resolve small overlaps between player circle and nearby walls.
+   */
+  separateFromWalls() {
+    if (!this.worldState || !this.worldState.isWalkable) {
+      return;
+    }
+
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const radius = CONFIG.PLAYER_RADIUS;
+    const gridPos = this.getGridPosition();
+
+    let centerX = this.position.x;
+    let centerZ = this.position.z;
+
+    for (let gy = gridPos.y - 1; gy <= gridPos.y + 1; gy++) {
+      for (let gx = gridPos.x - 1; gx <= gridPos.x + 1; gx++) {
+        if (this.worldState.isWalkable(gx, gy)) {
+          continue;
+        }
+
+        const tileMinX = gx * tileSize;
+        const tileMaxX = tileMinX + tileSize;
+        const tileMinZ = gy * tileSize;
+        const tileMaxZ = tileMinZ + tileSize;
+
+        const nearestX = Math.max(tileMinX, Math.min(centerX, tileMaxX));
+        const nearestZ = Math.max(tileMinZ, Math.min(centerZ, tileMaxZ));
+
+        const dx = centerX - nearestX;
+        const dz = centerZ - nearestZ;
+        const distSq = dx * dx + dz * dz;
+
+        if (distSq === 0 || distSq >= radius * radius) {
+          continue;
+        }
+
+        const dist = Math.sqrt(distSq) || 0.0001;
+        const overlap = (radius - dist) * 1.05;
+        const nx = dx / dist;
+        const nz = dz / dist;
+
+        const newX = centerX + nx * overlap;
+        const newZ = centerZ + nz * overlap;
+
+        if (this.canMoveTo(newX, newZ)) {
+          this.position.x = newX;
+          this.position.z = newZ;
+          centerX = newX;
+          centerZ = newZ;
+        }
+      }
+    }
+  }
+
+  /**
+   * Lightweight unstuck: probe nearby offsets or teleport to closest walkable tile.
+   * @param {THREE.Vector3} moveVector
+   */
+  tryUnstuck(moveVector) {
+    this.stuckTimer += 1;
+    const offsets = [
+      new THREE.Vector3(0.05, 0, 0),
+      new THREE.Vector3(-0.05, 0, 0),
+      new THREE.Vector3(0, 0, 0.05),
+      new THREE.Vector3(0, 0, -0.05),
+      new THREE.Vector3(moveVector.x * 0.1, 0, moveVector.z * 0.1),
+    ];
+
+    for (const off of offsets) {
+      const nx = this.position.x + off.x;
+      const nz = this.position.z + off.z;
+      if (this.canMoveTo(nx, nz)) {
+        this.position.x = nx;
+        this.position.z = nz;
+        return;
+      }
+    }
+
+    // Fallback: snap to nearest walkable tile center if available
+    const grid = this.getGridPosition();
+    if (this.worldState && this.worldState.isWalkable(grid.x, grid.y)) {
+      const center = gridToWorld(grid.x, grid.y, CONFIG.TILE_SIZE);
+      this.position.x = center.x + CONFIG.TILE_SIZE / 2;
+      this.position.z = center.z + CONFIG.TILE_SIZE / 2;
+    }
+  }
+
+  /**
+   * Can the player occupy the given world coordinates?
+   * @param {number} worldX
+   * @param {number} worldZ
+   * @returns {boolean}
    */
   canMoveTo(worldX, worldZ) {
-    // Convert to grid coordinates
     const gridPos = worldToGrid(worldX, worldZ, CONFIG.TILE_SIZE);
 
-    // Check center position
     if (!this.worldState.isWalkable(gridPos.x, gridPos.y)) {
       return false;
     }
 
-    // Check corners and edges of player collision radius
-    // This prevents clipping into walls with 8-point check
-    const radius = CONFIG.PLAYER_RADIUS * 0.9; // 略縮 hitbox，減少貼牆抖動
+    const radius = CONFIG.PLAYER_RADIUS * 0.9;
     const offsets = [
-      // Corners
       { x: radius, z: radius },
       { x: radius, z: -radius },
       { x: -radius, z: radius },
       { x: -radius, z: -radius },
-      // Edges (cardinal directions)
       { x: radius, z: 0 },
       { x: -radius, z: 0 },
       { x: 0, z: radius },
@@ -290,26 +370,24 @@ export class PlayerController {
   }
 
   /**
-   * Get current player position
-   * @returns {THREE.Vector3} Current position
+   * @returns {THREE.Vector3} current world position clone
    */
   getPosition() {
     return this.position.clone();
   }
 
   /**
-   * Get current grid position
-   * @returns {Object} Grid coordinates {x, y}
+   * @returns {{x:number,y:number}} current grid position
    */
   getGridPosition() {
     return worldToGrid(this.position.x, this.position.z, CONFIG.TILE_SIZE);
   }
 
   /**
-   * Set player position (teleport)
-   * @param {number} x - World X position
-   * @param {number} y - World Y position
-   * @param {number} z - World Z position
+   * Teleport player to world coordinates.
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
    */
   setPosition(x, y, z) {
     this.position.set(x, y, z);

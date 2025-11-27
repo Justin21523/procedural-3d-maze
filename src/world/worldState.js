@@ -24,13 +24,17 @@ export class WorldState {
    * Initialize world with procedurally generated maze (Phase 2)
    * Uses DFS-based maze generation algorithm
    */
-  initialize() {
+  initialize(levelConfig = null) {
     // Generate maze using DFS algorithm
-    const width = CONFIG.MAZE_WIDTH;
-    const height = CONFIG.MAZE_HEIGHT;
+    const mazeCfg = levelConfig?.maze || {};
+    const width = mazeCfg.width ?? CONFIG.MAZE_WIDTH;
+    const height = mazeCfg.height ?? CONFIG.MAZE_HEIGHT;
 
     console.log(`Generating maze: ${width}×${height}...`);
-    const result = generateMazeDFS(width, height);
+    const result = generateMazeDFS(width, height, {
+      roomDensity: mazeCfg.roomDensity,
+      extraConnectionChance: mazeCfg.extraConnectionChance
+    });
     this.grid = result.grid;
     this.rooms = result.rooms;
 
@@ -54,9 +58,11 @@ export class WorldState {
     // Find a random walkable spawn point for player
     this.spawnPoint = this.findRandomWalkableTile();
     // Find spawn points for monsters (future use)
-    this.monsterSpawns = this.findMonsterSpawns(CONFIG.MONSTER_COUNT);
+    const monsterCount = levelConfig?.monsters?.count ?? CONFIG.MONSTER_COUNT;
+    this.monsterSpawns = this.findMonsterSpawns(monsterCount);
     // Mission points
-    this.missionPoints = this.findMissionPoints(CONFIG.MISSION_POINT_COUNT);
+    const missionCount = levelConfig?.missions?.missionPointCount ?? CONFIG.MISSION_POINT_COUNT;
+    this.missionPoints = this.findMissionPoints(missionCount);
   
   }
 
@@ -303,5 +309,26 @@ export class WorldState {
     const randomIndex = randomInt(0, Math.max(0, topTen - 1));
 
     return { x: walkableTiles[randomIndex].x, y: walkableTiles[randomIndex].y };
+  }
+
+  /**
+   * Grid-based line of sight check
+   */
+  hasLineOfSight(a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const steps = Math.ceil(distance);
+
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = Math.round(a.x + dx * t);
+      const y = Math.round(a.y + dy * t);
+
+      if (!this.isWalkable(x, y)) {
+        return false;
+      }
+    }
+    return true;
   }
 }

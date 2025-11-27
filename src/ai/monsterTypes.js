@@ -15,7 +15,7 @@ export const MonsterTypes = {
 
     // Physical stats
     stats: {
-      speed: 3.6,              // 140% of base speed (更多主動探索)
+      speedFactor: 1.1,        // 相對於玩家基礎速度 * MONSTER_BASE_SPEED_FACTOR
       visionRange: 18,         // Units
       visionFOV: Math.PI * 140 / 180,  // 140 degrees
       hearingRange: 12,        // Units (detects sprinting player)
@@ -60,7 +60,7 @@ export const MonsterTypes = {
     sprite: '/models/monster.png',
 
     stats: {
-      speed: 2.6,              // 85% of base speed
+      speedFactor: 0.8,        // 低於基準
       visionRange: 10,
       visionFOV: Math.PI / 2,  // 90 degrees
       hearingRange: 5,         // Poor hearing
@@ -101,7 +101,7 @@ export const MonsterTypes = {
     sprite: '/models/monster.png',
 
     stats: {
-      speed: 3.2,              // 更快巡邏
+      speedFactor: 1.0,        // 巡邏基準
       visionRange: 20,         // Very long sight
       visionFOV: Math.PI * 160 / 180,  // 160 degrees (nearly 180)
       hearingRange: 15,
@@ -143,7 +143,7 @@ export const MonsterTypes = {
     sprite: '/models/monster.png',
 
     stats: {
-      speed: 3.6,
+      speedFactor: 1.1,
       visionRange: 22,         // Excellent vision
       visionFOV: Math.PI * 100 / 180,  // 100 degrees (focused)
       hearingRange: 18,        // Excellent hearing
@@ -185,7 +185,7 @@ export const MonsterTypes = {
     sprite: '/models/monster.png',
 
     stats: {
-      speed: 5.0,              // 持續高動能
+      speedFactor: 1.0,        // 基準，靠衝刺／jitter 拉高
       visionRange: 12,
       visionFOV: Math.PI * 110 / 180,
       hearingRange: 8,
@@ -214,6 +214,30 @@ export const MonsterTypes = {
       emissiveColor: 0xff6600,  // Orange glow
       emissiveIntensity: 0.4
     }
+  },
+
+  /**
+   * GREETER - Friendly-ish guide that keeps some distance
+   */
+  GREETER: {
+    name: 'GREETER',
+    aiType: 'shyGreeter',
+    sprite: '/models/greeter.png',
+    color: 0x33ccff,
+
+    stats: {
+      speedFactor: 0.6,
+      visionRange: 12,
+      visionFOV: Math.PI * 160 / 180,
+      hearingRange: 6,
+      scale: 0.9,
+    },
+
+    behavior: {
+      greetDistance: 4,
+      avoidPlayerDistance: 2,
+      memoryDuration: 4000,
+    },
   }
 };
 
@@ -241,25 +265,40 @@ export function getMonsterType(typeName) {
  * @param {number} count - Total number of monsters
  * @returns {Array<Object>} Array of monster type configurations
  */
-export function createMonsterMix(count) {
+export function createMonsterMix(count, weights = null) {
   const mix = [];
 
-  // Ensure at least one of each main type if count >= 3
-  if (count >= 3) {
-    mix.push(MonsterTypes.HUNTER);
-    mix.push(MonsterTypes.WANDERER);
-    mix.push(MonsterTypes.SENTINEL);
+  if (!weights) {
+    // Legacy behavior: ensure at least one of each main type if count >= 3
+    if (count >= 3) {
+      mix.push(MonsterTypes.HUNTER);
+      mix.push(MonsterTypes.WANDERER);
+      mix.push(MonsterTypes.SENTINEL);
+    }
+    while (mix.length < count) {
+      mix.push(getRandomMonsterType());
+    }
+    for (let i = mix.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [mix[i], mix[j]] = [mix[j], mix[i]];
+    }
+    return mix;
   }
 
-  // Fill remaining slots randomly
-  while (mix.length < count) {
-    mix.push(getRandomMonsterType());
-  }
+  const entries = Object.entries(weights);
+  const sum = entries.reduce((acc, [, w]) => acc + w, 0) || 1;
+  const normalized = entries.map(([name, w]) => [name, w / sum]);
 
-  // Shuffle array
-  for (let i = mix.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [mix[i], mix[j]] = [mix[j], mix[i]];
+  for (let i = 0; i < count; i++) {
+    const r = Math.random();
+    let acc = 0;
+    for (const [name, p] of normalized) {
+      acc += p;
+      if (r <= acc) {
+        mix.push(MonsterTypes[name] || MonsterTypes.HUNTER);
+        break;
+      }
+    }
   }
 
   return mix;

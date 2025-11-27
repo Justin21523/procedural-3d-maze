@@ -18,6 +18,7 @@ import { ExitPoint } from './world/exitPoint.js';
 import { MissionPoint } from './world/missionPoint.js';
 import { AutoPilot } from './ai/autoPilot.js';
 import { AudioManager } from './audio/audioManager.js';
+import { LEVEL_CONFIGS } from './core/levelConfigs.js';
 
 /**
  * Initialize and start the game
@@ -44,9 +45,22 @@ function initGame() {
     console.log(`  minimap size: ${minimapCanvas.width}x${minimapCanvas.height}`);
   }
 
+  // 多關卡狀態
+  let currentLevelIndex = 0;
+  let levelConfig = LEVEL_CONFIGS[currentLevelIndex];
+  let missionPoints = [];
+  let exitPoint = null;
+  let autopilot = null;
+  let levelLoading = Promise.resolve();
+  let lastOutcome = null;
+
+  // 預設每關自動駕駛開啟（使用者仍可隨時用鍵鼠接管）
+  CONFIG.AUTOPILOT_ENABLED = true;
+  CONFIG.AUTOPILOT_DELAY = 0;
+
   // Create world state
   const worldState = new WorldState();
-  worldState.initialize();
+  worldState.initialize(levelConfig);
   console.log('World initialized with procedurally generated maze');
 
   // Create scene manager
@@ -89,7 +103,7 @@ function initGame() {
 
   // Create exit point at a far location from spawn
   const exitGridPos = worldState.getExitPoint();
-  const exitPoint = new ExitPoint(exitGridPos);
+  exitPoint = new ExitPoint(exitGridPos);
   sceneManager.getScene().add(exitPoint.getMesh());
   console.log('🚪 Exit point created at grid:', exitGridPos);
 
@@ -99,11 +113,11 @@ function initGame() {
 
   // Load monsters with mixed types
   console.log('🎮 Loading monsters with mixed types...');
-  const MONSTER_COUNT = CONFIG.MONSTER_COUNT;
+  const MONSTER_COUNT = levelConfig?.monsters?.count ?? CONFIG.MONSTER_COUNT;
   console.log(`📊 Spawning ${MONSTER_COUNT} monsters`);
 
   // Initialize monsters with mixed types (Hunter, Wanderer, Sentinel, etc.)
-  monsterManager.initialize(MONSTER_COUNT)
+  monsterManager.initializeForLevel(levelConfig)
     .then(() => {
       console.log(`✅ ${MONSTER_COUNT} monsters initialized successfully!`);
       console.log(`   Monster manager has ${monsterManager.getMonsters().length} monsters`);
@@ -114,7 +128,7 @@ function initGame() {
     });
 
   // Create mission points
-  const missionPoints = worldState.getMissionPoints().map(pos => {
+  missionPoints = worldState.getMissionPoints().map(pos => {
     const mp = new MissionPoint(pos);
     sceneManager.getScene().add(mp.getMesh());
     return mp;
@@ -122,17 +136,18 @@ function initGame() {
   gameState.setMissionTotal(missionPoints.length);
   console.log(`🎯 Mission points: ${missionPoints.length}`);
 
-  // Create autopilot
-  const autopilot = new AutoPilot(
+  // Autopilot placeholder（會在 loadLevel 時重新建立）
+  autopilot = new AutoPilot(
     worldState,
     monsterManager,
     () => missionPoints,
     exitPoint,
-    player
+    player,
+    levelConfig
   );
 
-  // Create game loop with all systems
-  const gameLoop = new GameLoop(sceneManager, player, minimap, monsterManager, lights, worldState, gameState, exitPoint, missionPoints, autopilot);
+  // Create game loop with all systems（autopilot 實體可後續更新）
+  let gameLoop = new GameLoop(sceneManager, player, minimap, monsterManager, lights, worldState, gameState, exitPoint, missionPoints, autopilot);
 
   // Render initial minimap (before game starts)
   console.log('🗺️ Rendering initial minimap...');
@@ -143,6 +158,117 @@ function initGame() {
     missionPoints.map(mp => mp.getGridPosition())
   );
   console.log('✅ Initial minimap rendered');
+
+  /**
+   * 重新載入指定關卡
+   * @param {number} levelIndex
+   * @param {Object} options
+   * @param {boolean} options.startLoop - 是否立刻開跑
+   * @param {boolean} options.resetGameState - 是否重置血量/計時
+   */
+  async function loadLevel(levelIndex, { startLoop = false, resetGameState = true } = {}) {
+    levelLoading = (async () => {
+      currentLevelIndex = (levelIndex + LEVEL_CONFIGS.length) % LEVEL_CONFIGS.length;
+      levelConfig = LEVEL_CONFIGS[currentLevelIndex];
+      console.log(`🔄 Loading level: ${levelConfig.name}`);
+      lastOutcome = null;
+
+      // 重置自動駕駛預設
+      CONFIG.AUTOPILOT_ENABLED = true;
+      CONFIG.AUTOPILOT_DELAY = 0;
+
+      // 停止當前遊戲迴圈
+      gameLoop.stop();
+      gameLoop.resetRoundState();
+
+      // 更新血量上限
+      if (resetGameState && gameState) {
+        const maxHp = Math.round(100 * (levelConfig.player?.maxHealthMultiplier ?? 1));
+        gameState.maxHealth = maxHp;
+      }
+
+      // 重建世界
+      worldState.initialize(levelConfig);
+      sceneManager.buildWorldFromGrid(worldState);
+
+      // 重建出口
+      const newExitPos = worldState.getExitPoint();
+      if (exitPoint) {
+        sceneManager.getScene().remove(exitPoint.getMesh());
+      }
+      exitPoint = new ExitPoint(newExitPos);
+      sceneManager.getScene().add(exitPoint.getMesh());
+      gameLoop.exitPoint = exitPoint;
+
+      // 任務點
+      missionPoints = worldState.getMissionPoints().map(pos => {
+        const mp = new MissionPoint(pos);
+        sceneManager.getScene().add(mp.getMesh());
+        return mp;
+      });
+      gameState.setMissionTotal(missionPoints.length);
+      gameLoop.missionPoints = missionPoints;
+
+      // 重置玩家位置
+      const spawnPoint = worldState.getSpawnPoint();
+      player.setPosition(
+        spawnPoint.x * CONFIG.TILE_SIZE,
+        CONFIG.PLAYER_HEIGHT,
+        spawnPoint.y * CONFIG.TILE_SIZE
+      );
+
+      // 重置遊戲狀態
+      if (resetGameState) {
+        gameState.reset();
+        gameState.currentHealth = gameState.maxHealth;
+      }
+
+      // 隱藏 overlay，保持連續遊戲
+      document.getElementById('game-over').classList.add('hidden');
+      document.getElementById('instructions').classList.add('hidden');
+
+      // 重建怪物
+      monsterManager.clear();
+      await monsterManager.initializeForLevel(levelConfig);
+
+      // 重建自動駕駛
+      autopilot = new AutoPilot(
+        worldState,
+        monsterManager,
+        () => missionPoints,
+        exitPoint,
+        player,
+        levelConfig
+      );
+      gameLoop.autopilot = autopilot;
+      gameLoop.autopilotActive = CONFIG.AUTOPILOT_ENABLED;
+
+      // 更新 minimap
+      minimap.updateScale();
+      minimap.render(
+        player.getGridPosition(),
+        monsterManager.getMonsterPositions(),
+        newExitPos,
+        missionPoints.map(mp => mp.getGridPosition())
+      );
+
+      if (startLoop) {
+        gameState.startTimer();
+        gameLoop.start();
+      }
+    })();
+
+    return levelLoading;
+  }
+
+  // 自動銜接關卡
+  gameLoop.onWin = async () => {
+    lastOutcome = 'win';
+    await loadLevel(currentLevelIndex + 1, { startLoop: true, resetGameState: true });
+  };
+  gameLoop.onLose = () => {
+    lastOutcome = 'lose';
+  };
 
   // Setup minimap click to teleport
   minimapCanvas.addEventListener('click', (e) => {
@@ -181,7 +307,7 @@ function initGame() {
   });
 
   // Setup start button
-  startButton.addEventListener('click', () => {
+  startButton.addEventListener('click', async () => {
     console.log('🎮 Start button clicked!');
 
     // Hide instructions
@@ -196,6 +322,7 @@ function initGame() {
 
     // Start game loop FIRST (important!)
     console.log('🎬 Starting game loop...');
+    await levelLoading;
     gameLoop.start();
 
     // Request pointer lock immediately in the user gesture
@@ -218,43 +345,18 @@ function initGame() {
   const restartButton = document.getElementById('restart-button');
   const menuButton = document.getElementById('menu-button');
 
-  restartButton.addEventListener('click', () => {
+  restartButton.addEventListener('click', async () => {
     console.log('🔄 Restarting game...');
 
     // Hide game over screen
     document.getElementById('game-over').classList.add('hidden');
 
-    // Stop game loop
-    gameLoop.stop();
+    const targetIndex = lastOutcome === 'win'
+      ? (currentLevelIndex + 1) % LEVEL_CONFIGS.length
+      : currentLevelIndex;
+    lastOutcome = null;
 
-    // Regenerate world
-    worldState.initialize();
-
-    // Rebuild scene
-    sceneManager.buildWorldFromGrid(worldState);
-
-    // Create new exit point
-    const newExitPos = worldState.getExitPoint();
-    sceneManager.getScene().remove(exitPoint.getMesh());
-    const newExitPoint = new ExitPoint(newExitPos);
-    sceneManager.getScene().add(newExitPoint.getMesh());
-    gameLoop.exitPoint = newExitPoint;
-
-    // Reset player position
-    const spawnPoint = worldState.getSpawnPoint();
-    player.setPosition(spawnPoint.x * CONFIG.TILE_SIZE, CONFIG.PLAYER_HEIGHT, spawnPoint.y * CONFIG.TILE_SIZE);
-
-    // Reset game state
-    gameState.reset();
-
-    // Update minimap
-    minimap.updateScale();
-    minimap.render(player.getGridPosition(), monsterManager.getMonsterPositions());
-
-    // Restart game loop
-    gameLoop.start();
-    gameState.startTimer();
-
+    await loadLevel(targetIndex, { startLoop: true, resetGameState: true });
     console.log('✅ Game restarted!');
   });
 
@@ -427,48 +529,9 @@ function setupSettingsPanel(sceneManager, camera, input, worldState, player, gam
   });
 
   // Regenerate map button
-  regenerateButton.addEventListener('click', () => {
+  regenerateButton.addEventListener('click', async () => {
     console.log('🔄 Regenerating map...');
-
-    // Stop game loop
-    gameLoop.stop();
-
-    // Regenerate world
-    worldState.initialize();
-
-    // Rebuild scene
-    sceneManager.buildWorldFromGrid(worldState);
-
-    // Create new exit point
-    const newExitPos = worldState.getExitPoint();
-    sceneManager.getScene().remove(gameLoop.exitPoint.getMesh());
-    const newExitPoint = new ExitPoint(newExitPos);
-    sceneManager.getScene().add(newExitPoint.getMesh());
-    gameLoop.exitPoint = newExitPoint;
-
-    // Create mission points
-    const missionPoints = worldState.getMissionPoints().map(pos => {
-      const mp = new MissionPoint(pos);
-      sceneManager.getScene().add(mp.getMesh());
-      return mp;
-    });
-    gameState.setMissionTotal(missionPoints.length);
-    gameLoop.missionPoints = missionPoints;
-
-    // Reset player position
-    const spawnPoint = worldState.getSpawnPoint();
-    player.setPosition(spawnPoint.x * CONFIG.TILE_SIZE, CONFIG.PLAYER_HEIGHT, spawnPoint.y * CONFIG.TILE_SIZE);
-
-    // Reset game state
-    gameState.reset();
-
-    // Update minimap
-    minimap.updateScale();
-    minimap.render(player.getGridPosition(), [], newExitPos, missionPoints.map(mp => mp.getGridPosition()));
-
-    // Restart game loop
-    gameLoop.start();
-
+    await loadLevel(currentLevelIndex, { startLoop: true, resetGameState: true });
     console.log('✅ Map regenerated!');
   });
 

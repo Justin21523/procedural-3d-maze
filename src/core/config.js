@@ -14,14 +14,17 @@ export const CONFIG = {
   // Player settings
   PLAYER_SPEED: 4,       // Movement speed (units per second)
   PLAYER_HEIGHT: 1.7,    // Camera height (eye level)
-  PLAYER_RADIUS: 0.4,    // Collision radius (increased for better collision)
+  PLAYER_RADIUS: 0.35,   // Collision radius (slightly reduced to avoid sticking on corners)
   MOUSE_SENSITIVITY: 0.002,
 
   // Monster settings
   MONSTER_BASE_HEIGHT: 1.8,// 怪物「基準身高」（未加 type scale） 
   MONSTER_SCALE_MULTIPLIER: 1.5, // 回到較大可視尺寸
-  MONSTER_COUNT: 12,              // 調回 8 隻
-  MONSTER_SPEED: 9,              // Base monster movement speed (VERY FAST continuous exploration)
+  MONSTER_COUNT: 12,              // 預設怪物數量（可被關卡覆寫）
+  MONSTER_BASE_SPEED_FACTOR: 0.8, // 怪物基準速度 = 玩家速度 * 此係數
+  MONSTER_SPRINT_MULTIPLIER: 1.6, // 怪物短衝刺倍率
+  MONSTER_LEVEL_SPEED_MULT: 1.0,  // 依關卡縮放的倍率預設值
+  MONSTER_SPEED: 9,              // 舊參數（保留向後相容）
   MONSTER_VISION_RANGE: 15,      // Base vision range (varies by type)
   MONSTER_FOV: Math.PI * 2 / 3,  // Base field of view (120 degrees)
   MONSTER_MODEL: '/models/VascodaGama.dae', // Default monster model (can be changed in UI)
@@ -50,4 +53,8 @@ export const CONFIG = {
   AUTOPILOT_DELAY: 0,       // 不等待，除非玩家有輸入才暫停
   AUTOPILOT_REPLAN_INTERVAL: 0.5,
   AUTOPILOT_AVOID_RADIUS: 0,
+  AUTOPILOT_TURN_SPEED: 3.0, // 每秒最大轉向（rad），避免抖頭
+
+  // Player collision radius (in tiles)
+  PLAYER_COLLISION_RADIUS: 0.35,
 };

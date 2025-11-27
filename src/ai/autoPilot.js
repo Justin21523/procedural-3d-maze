@@ -7,7 +7,7 @@ import { CONFIG } from '../core/config.js';
  * based on mission points, exit, and monster avoidance.
  */
 export class AutoPilot {
-  constructor(worldState, monsterManager, missionPointsRef, exitPointRef, playerController) {
+  constructor(worldState, monsterManager, missionPointsRef, exitPointRef, playerController, levelConfig = null) {
     this.worldState = worldState;
     this.monsterManager = monsterManager;
     this.missionPointsRef = missionPointsRef; // function or array reference
@@ -20,9 +20,11 @@ export class AutoPilot {
     this.targetType = 'mission'; // mission | exit | explore
     this.lastPlanTime = 0;
     // 規劃頻率（秒）— 可以用 CONFIG 覆蓋
-    this.planInterval = CONFIG.AUTOPILOT_REPLAN_INTERVAL || 0.6;
+    const apCfg = levelConfig?.autopilot || {};
+    const defaultPlanInterval = CONFIG.AUTOPILOT_REPLAN_INTERVAL ?? 0.6;
+    this.planInterval = apCfg.replanInterval ?? defaultPlanInterval;
     // 避怪半徑（格）
-    this.avoidDistance = CONFIG.AUTOPILOT_AVOID_RADIUS ?? 5;
+    this.avoidDistance = apCfg.avoidRadius ?? CONFIG.AUTOPILOT_AVOID_RADIUS ?? 5;
     this.enabled = false;
 
     // 探索記憶：避免一直在同一區域打轉
@@ -36,6 +38,8 @@ export class AutoPilot {
     // 卡住偵測
     this.lastGrid = null;
     this.stuckTimer = 0;
+    this.stuckThreshold = apCfg.stuckSeconds ?? 1.2;
+    this.noProgressThreshold = apCfg.noProgressSeconds ?? 0.8;
     this.lastWorldPos = null;
     this.noProgressTimer = 0;
   }
@@ -329,8 +333,8 @@ export class AutoPilot {
     this.lastWorldPos = currentWorld;
 
     const shouldResetPath =
-      this.stuckTimer > 1.2 ||
-      this.noProgressTimer > 0.8;
+      this.stuckTimer > this.stuckThreshold ||
+      this.noProgressTimer > this.noProgressThreshold;
 
     if (shouldResetPath) {
       this.currentPath = [];

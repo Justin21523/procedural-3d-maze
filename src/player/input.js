@@ -115,6 +115,14 @@ export class InputHandler {
   }
 
   /**
+   * Peek current mouse delta without resetting (for input detection)
+   * @returns {Object} Mouse delta {x, y}
+   */
+  peekMouseDelta() {
+    return { ...this.mouseDelta };
+  }
+
+  /**
    * Check if pointer is locked
    * @returns {boolean} True if locked, false otherwise
    */
