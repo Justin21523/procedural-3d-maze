@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+// Try to discover frames under public/models/moonman-sequence.
+// If Vite cannot glob public assets, we'll fall back to single-texture mode.
 const moonmanFrames = import.meta.glob('/models/moonman-sequence/*.png', {
   import: 'default',
   eager: true
@@ -18,7 +20,14 @@ function resolveFrameUrls(options) {
 
   if (options.framesFolder === '/models/moonman-sequence') {
     const sorted = sortFrameEntries(Object.entries(moonmanFrames));
-    return sorted.map(([, url]) => url);
+    if (sorted.length > 0) {
+      return sorted.map(([, url]) => url);
+    }
+  }
+
+  if (typeof options.framesFolder === 'string') {
+    // Future: could glob other folders if needed
+    return [];
   }
 
   if (typeof options.path === 'string') {
@@ -37,7 +46,11 @@ function resolveFrameUrls(options) {
 export function createSpriteBillboard(config = '/models/monster.png') {
   const loader = new THREE.TextureLoader();
   const options = typeof config === 'string' ? { path: config } : (config || {});
-  const frameUrls = resolveFrameUrls(options);
+  let frameUrls = resolveFrameUrls(options);
+  if (!frameUrls || frameUrls.length === 0) {
+    frameUrls = [options.path || '/models/monster.png'];
+  }
+
   const textures = frameUrls.map(url => {
     const tex = loader.load(
       url,
@@ -51,6 +64,21 @@ export function createSpriteBillboard(config = '/models/monster.png') {
     tex.wrapT = THREE.ClampToEdgeWrapping;
     return tex;
   });
+
+  // Optionally clip to a random sub-range for variety
+  if (textures.length > 1 && options.clipLengthRange) {
+    const min = Math.max(1, options.clipLengthRange.min || 1);
+    const max = Math.max(min, options.clipLengthRange.max || textures.length);
+    const length = Math.min(textures.length, Math.floor(Math.random() * (max - min + 1)) + min);
+    const start = Math.floor(Math.random() * textures.length);
+    const clipped = [];
+    for (let i = 0; i < length; i++) {
+      clipped.push(textures[(start + i) % textures.length]);
+    }
+    frameUrls = clipped.map((_, idx) => `clip-${idx}`);
+    textures.length = 0;
+    textures.push(...clipped);
+  }
 
   const material = new THREE.SpriteMaterial({
     map: textures[0],
