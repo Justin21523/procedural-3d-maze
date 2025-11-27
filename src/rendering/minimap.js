@@ -178,6 +178,14 @@ export class Minimap {
       }
     }
 
+    const unit = this.tileSize;
+    const playerRadius = Math.max(3, Math.min(unit * 0.4, 7));
+    const playerIndicator = Math.max(3, Math.min(unit * 0.5, 10));
+    const monsterRadius = Math.max(3, Math.min(unit * 0.35, 6));
+    const missionRadius = Math.max(2, Math.min(unit * 0.25, 5));
+    const exitOuterRadius = Math.max(5, Math.min(unit * 0.5, 10));
+    const exitInnerRadius = Math.max(3, Math.min(exitOuterRadius * 0.5, 6));
+
     // Draw monsters
     if (!this.monstersLoggedOnce && monsters.length > 0) {
       console.log('👹 Minimap drawing monsters:', monsters.length, monsters);
@@ -195,7 +203,7 @@ export class Minimap {
         ctx.arc(
           px + this.tileSize / 2,
           py + this.tileSize / 2,
-          this.tileSize / 2,  // Full size
+          monsterRadius,
           0,
           Math.PI * 2
         );
@@ -215,7 +223,7 @@ export class Minimap {
 
       // Draw pulsing glow
       const pulseTime = Date.now() / 500;
-      const pulseSize = this.tileSize * (0.6 + Math.sin(pulseTime) * 0.2);
+      const pulseSize = exitOuterRadius * (1.0 + Math.sin(pulseTime) * 0.15);
 
       // Outer glow
       const gradient = ctx.createRadialGradient(
@@ -246,8 +254,8 @@ export class Minimap {
       ctx.lineWidth = 2;
       ctx.beginPath();
       const starPoints = 5;
-      const outerRadius = this.tileSize * 0.4;
-      const innerRadius = this.tileSize * 0.2;
+      const outerRadius = exitOuterRadius;
+      const innerRadius = exitInnerRadius;
       const centerX = px + this.tileSize / 2;
       const centerY = py + this.tileSize / 2;
 
@@ -280,7 +288,7 @@ export class Minimap {
         ctx.arc(
           px + this.tileSize / 2,
           py + this.tileSize / 2,
-          Math.max(2, this.tileSize * 0.25),
+          missionRadius,
           0,
           Math.PI * 2
         );
@@ -304,7 +312,7 @@ export class Minimap {
       ctx.arc(
         px + this.tileSize / 2,
         py + this.tileSize / 2,
-        this.tileSize / 2,
+        playerRadius,
         0,
         Math.PI * 2
       );
@@ -317,7 +325,7 @@ export class Minimap {
       ctx.moveTo(px + this.tileSize / 2, py + this.tileSize / 2);
       ctx.lineTo(
         px + this.tileSize / 2,
-        py + this.tileSize / 2 - this.tileSize / 2
+        py + this.tileSize / 2 - playerIndicator
       );
       ctx.stroke();
     }
