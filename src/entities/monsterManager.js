@@ -229,21 +229,9 @@ export class MonsterManager {
 
     const current = monster.getWorldPosition?.();
     if (current) {
-      const targetPos = current.clone().add(new THREE.Vector3(dx, 0, dz));
-      const tileSize = CONFIG.TILE_SIZE || 1;
-      const targetGrid = {
-        x: Math.floor(targetPos.x / tileSize),
-        y: Math.floor(targetPos.z / tileSize)
-      };
-
-      let canMove = true;
-      if (this.worldState && typeof this.worldState.isWalkable === 'function') {
-        canMove = this.worldState.isWalkable(targetGrid.x, targetGrid.y);
-      }
-
-      if (canMove && monster.setWorldPosition) {
-        monster.setWorldPosition(targetPos);
-      }
+      const desiredDelta = new THREE.Vector3(dx, 0, dz);
+      const targetPos = current.clone().add(desiredDelta);
+      this.tryMoveMonster(monster, current, targetPos, desiredDelta);
     }
 
     if (typeof command?.lookYaw === 'number' && command.lookYaw !== 0) {
@@ -252,6 +240,71 @@ export class MonsterManager {
         monster.setYaw(currentYaw + command.lookYaw);
       }
     }
+  }
+
+  tryMoveMonster(monster, currentPos, targetPos, deltaVec) {
+    if (this.canMonsterMoveTo(targetPos.x, targetPos.z)) {
+      monster.setWorldPosition(targetPos);
+      return true;
+    }
+
+    let moved = false;
+    if (Math.abs(deltaVec.x) > Math.abs(deltaVec.z)) {
+      const posX = currentPos.clone().add(new THREE.Vector3(deltaVec.x, 0, 0));
+      if (this.canMonsterMoveTo(posX.x, posX.z)) {
+        monster.setWorldPosition(posX);
+        moved = true;
+      }
+      const posZ = currentPos.clone().add(new THREE.Vector3(0, 0, deltaVec.z));
+      if (this.canMonsterMoveTo(posZ.x, posZ.z)) {
+        monster.setWorldPosition(posZ);
+        moved = true;
+      }
+    } else {
+      const posZ = currentPos.clone().add(new THREE.Vector3(0, 0, deltaVec.z));
+      if (this.canMonsterMoveTo(posZ.x, posZ.z)) {
+        monster.setWorldPosition(posZ);
+        moved = true;
+      }
+      const posX = currentPos.clone().add(new THREE.Vector3(deltaVec.x, 0, 0));
+      if (this.canMonsterMoveTo(posX.x, posX.z)) {
+        monster.setWorldPosition(posX);
+        moved = true;
+      }
+    }
+    return moved;
+  }
+
+  canMonsterMoveTo(worldX, worldZ) {
+    if (!this.worldState || !this.worldState.isWalkable) return true;
+
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const gridX = Math.floor(worldX / tileSize);
+    const gridY = Math.floor(worldZ / tileSize);
+
+    if (!this.worldState.isWalkable(gridX, gridY)) return false;
+
+    const radius = (CONFIG.PLAYER_RADIUS || 0.35) * 0.9;
+    const offsets = [
+      { x: radius, z: radius },
+      { x: radius, z: -radius },
+      { x: -radius, z: radius },
+      { x: -radius, z: -radius },
+      { x: radius, z: 0 },
+      { x: -radius, z: 0 },
+      { x: 0, z: radius },
+      { x: 0, z: -radius },
+    ];
+
+    for (const offset of offsets) {
+      const gx = Math.floor((worldX + offset.x) / tileSize);
+      const gy = Math.floor((worldZ + offset.z) / tileSize);
+      if (!this.worldState.isWalkable(gx, gy)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /**
