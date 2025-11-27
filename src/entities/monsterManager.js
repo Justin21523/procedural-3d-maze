@@ -76,8 +76,15 @@ export class MonsterManager {
         console.log(`\n🦊 Spawning ${typeConfig.name} (${i + 1}/${count})...`);
 
         try {
-          const sprite = createSpriteBillboard(typeConfig.sprite || '/models/monster.png');
-          await this.spawnMonster(sprite, [], spawnPoints[i], typeConfig, levelConfig);
+          const spriteResult = createSpriteBillboard({
+            path: typeConfig.sprite || '/models/monster.png',
+            framesFolder: typeConfig.spriteFramesPath,
+            frameRate: typeConfig.spriteFrameRate ?? 8,
+            randomStart: true,
+            scale: { x: 1.5, y: 2.5 }
+          });
+          const spriteGroup = spriteResult.group || spriteResult;
+          await this.spawnMonster(spriteGroup, [], spawnPoints[i], typeConfig, levelConfig, spriteResult.updateAnimation);
         } catch (error) {
           console.error(`   ❌ Failed to spawn ${typeConfig.name}:`, error.message);
           console.warn(`   ⚠️ Creating placeholder instead`);
@@ -103,7 +110,7 @@ export class MonsterManager {
    * @param {Object} spawnPosition - Grid position {x, y}
    * @param {Object} typeConfig - Monster type configuration
    */
-  async spawnMonster(model, animations, spawnPosition, typeConfig = null, levelConfig = null) {
+  async spawnMonster(model, animations, spawnPosition, typeConfig = null, levelConfig = null, spriteUpdater = null) {
     const typeName = typeConfig?.name || 'Generic';
     console.log(`\n🎭 Creating ${typeName} at grid (${spawnPosition.x}, ${spawnPosition.y})`);
     console.log('   Model children count:', model.children.length);
@@ -116,6 +123,14 @@ export class MonsterManager {
     if (animations && animations.length > 0) {
       console.log(`   Setting up ${animations.length} animations`);
       monster.setupAnimations(animations);
+    }
+
+    if (spriteUpdater) {
+      const prev = monster.updateAnimation?.bind(monster);
+      monster.updateAnimation = (dt) => {
+        prev?.(dt);
+        spriteUpdater(dt);
+      };
     }
 
     // Add to scene

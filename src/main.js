@@ -78,6 +78,15 @@ function initGame() {
     }
   }
 
+  function applyGameOverButtons(isWin) {
+    if (nextLevelButton) {
+      nextLevelButton.style.display = isWin ? 'inline-block' : 'none';
+    }
+    if (restartButton) {
+      restartButton.textContent = isWin ? '重玩本关' : '重新开始';
+    }
+  }
+
   // 預設每關自動駕駛開啟（使用者仍可隨時用鍵鼠接管）
   CONFIG.AUTOPILOT_ENABLED = true;
   CONFIG.AUTOPILOT_DELAY = 0;
@@ -341,13 +350,14 @@ function initGame() {
     return levelLoading;
   }
 
-  // 自動銜接關卡
-  gameLoop.onWin = async () => {
+  // 通關後等待使用者確認
+  gameLoop.onWin = () => {
     lastOutcome = 'win';
-    await loadLevel(currentLevelIndex + 1, { startLoop: true, resetGameState: true });
+    applyGameOverButtons(true);
   };
   gameLoop.onLose = () => {
     lastOutcome = 'lose';
+    applyGameOverButtons(false);
   };
 
   // Level control UI
@@ -455,6 +465,7 @@ function initGame() {
 
   // Setup game over screen buttons
   const restartButton = document.getElementById('restart-button');
+  const nextLevelButton = document.getElementById('next-level-button');
   const menuButton = document.getElementById('menu-button');
 
   restartButton.addEventListener('click', async () => {
@@ -463,14 +474,20 @@ function initGame() {
     // Hide game over screen
     document.getElementById('game-over').classList.add('hidden');
 
-    const targetIndex = lastOutcome === 'win'
-      ? (currentLevelIndex + 1) % LEVEL_CONFIGS.length
-      : currentLevelIndex;
     lastOutcome = null;
-
-    await loadLevel(targetIndex, { startLoop: true, resetGameState: true });
-    console.log('✅ Game restarted!');
+    await loadLevel(currentLevelIndex, { startLoop: true, resetGameState: true });
+    console.log('✅ Level restarted!');
   });
+
+  if (nextLevelButton) {
+    nextLevelButton.addEventListener('click', async () => {
+      console.log('⏭️ Proceeding to next level...');
+      document.getElementById('game-over').classList.add('hidden');
+      lastOutcome = null;
+      await loadLevel(currentLevelIndex + 1, { startLoop: true, resetGameState: true });
+      console.log('✅ Loaded next level');
+    });
+  }
 
   menuButton.addEventListener('click', () => {
     console.log('📋 Returning to menu...');

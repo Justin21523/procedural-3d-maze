@@ -223,6 +223,8 @@ export const MonsterTypes = {
     name: 'GREETER',
     aiType: 'shyGreeter',
     sprite: '/models/greeter.png',
+    spriteFramesPath: '/models/moonman-sequence',
+    spriteFrameRate: 10,
     color: 0x33ccff,
 
     stats: {
