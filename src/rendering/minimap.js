@@ -93,6 +93,9 @@ export class Minimap {
    * @param {Array} missionPositions - Array of mission grid positions (optional)
    */
   render(playerPosition, monsters = [], exitPosition = null, missionPositions = []) {
+    // Recompute scale each draw to reflect any size/zoom changes
+    this.updateScale();
+
     // 確保 context 在最前面檢查
     const ctx = this.ctx;
     if (!ctx) {
