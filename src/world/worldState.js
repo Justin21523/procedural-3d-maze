@@ -73,6 +73,9 @@ export class WorldState {
    * @returns {boolean} True if walkable, false otherwise
    */
   isWalkable(x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return false;
+    }
     // Out of bounds check
     if (x < 0 || y < 0 || y >= this.height || x >= this.width) {
       return false;
@@ -315,6 +318,9 @@ export class WorldState {
    * Grid-based line of sight check
    */
   hasLineOfSight(a, b) {
+    if (!a || !b || !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(b.x) || !Number.isFinite(b.y)) {
+      return false;
+    }
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const distance = Math.sqrt(dx * dx + dy * dy);

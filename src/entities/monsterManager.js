@@ -229,6 +229,9 @@ export class MonsterManager {
 
     const current = monster.getWorldPosition?.();
     if (current) {
+      if (!Number.isFinite(current.x) || !Number.isFinite(current.z)) {
+        return;
+      }
       const desiredDelta = new THREE.Vector3(dx, 0, dz);
       const targetPos = current.clone().add(desiredDelta);
       this.tryMoveMonster(monster, current, targetPos, desiredDelta);
@@ -282,6 +285,7 @@ export class MonsterManager {
     const gridX = Math.floor(worldX / tileSize);
     const gridY = Math.floor(worldZ / tileSize);
 
+    if (!Number.isFinite(gridX) || !Number.isFinite(gridY)) return false;
     if (!this.worldState.isWalkable(gridX, gridY)) return false;
 
     const radius = (CONFIG.PLAYER_RADIUS || 0.35) * 0.9;
