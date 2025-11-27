@@ -46,3 +46,6 @@ test.html
 *_backup.*
 *_v2.*
 *_final.*
+
+# Large art assets: keep out of git
+public/models/
