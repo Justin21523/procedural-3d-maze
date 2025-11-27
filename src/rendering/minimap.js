@@ -45,6 +45,16 @@ export class Minimap {
   }
 
   /**
+   * Resize canvas and recalc scale.
+   * @param {number} size
+   */
+  resize(size) {
+    this.canvas.width = size;
+    this.canvas.height = size;
+    this.updateScale();
+  }
+
+  /**
    * Update scale based on maze size
    */
   updateScale() {

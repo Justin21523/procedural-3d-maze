@@ -34,6 +34,16 @@ function initGame() {
   const instructionsOverlay = document.getElementById('instructions');
   const startButton = document.getElementById('start-button');
   const minimapCanvas = document.getElementById('minimap');
+  const minimapToggle = document.getElementById('minimap-toggle');
+  const minimapSizeSlider = document.getElementById('minimap-size');
+  const minimapSizeValue = document.getElementById('minimap-size-value');
+  const levelLabel = document.getElementById('level-label');
+  const levelPrevBtn = document.getElementById('level-prev');
+  const levelNextBtn = document.getElementById('level-next');
+  const levelJumpInput = document.getElementById('level-jump-input');
+  const levelJumpBtn = document.getElementById('level-jump-btn');
+  const restartLevelBtn = document.getElementById('restart-level');
+  const restartFirstBtn = document.getElementById('restart-first');
 
   // Debug: Check if elements exist
   console.log('DOM Elements check:');
@@ -53,6 +63,18 @@ function initGame() {
   let autopilot = null;
   let levelLoading = Promise.resolve();
   let lastOutcome = null;
+  let minimapHidden = false;
+
+  function updateLevelUI() {
+    const label = `${levelConfig.name} (L${currentLevelIndex + 1}/${LEVEL_CONFIGS.length})`;
+    if (levelLabel) {
+      levelLabel.textContent = label;
+    }
+    if (levelJumpInput) {
+      levelJumpInput.max = LEVEL_CONFIGS.length;
+      levelJumpInput.value = currentLevelIndex + 1;
+    }
+  }
 
   // 預設每關自動駕駛開啟（使用者仍可隨時用鍵鼠接管）
   CONFIG.AUTOPILOT_ENABLED = true;
@@ -88,6 +110,21 @@ function initGame() {
   console.log('Creating minimap with canvas:', minimapCanvas);
   const minimap = new Minimap(minimapCanvas, worldState);
   console.log('Minimap created');
+  function applyMinimapSize(size) {
+    const clamped = Math.max(140, Math.min(320, size));
+    minimapCanvas.width = clamped;
+    minimapCanvas.height = clamped;
+    minimapCanvas.style.width = `${clamped}px`;
+    minimapCanvas.style.height = `${clamped}px`;
+    minimap.resize(clamped);
+    minimapSizeValue.textContent = `${clamped}px`;
+    minimap.render(
+      player.getGridPosition(),
+      monsterManager?.getMonsterPositions() || [],
+      exitPoint?.getGridPosition() || null,
+      missionPoints.map(mp => mp.getGridPosition())
+    );
+  }
 
   // Create input handler
   const input = new InputHandler();
@@ -158,6 +195,26 @@ function initGame() {
     missionPoints.map(mp => mp.getGridPosition())
   );
   console.log('✅ Initial minimap rendered');
+  updateLevelUI();
+
+  // Minimap controls
+  if (minimapSizeSlider) {
+    minimapSizeSlider.value = minimapCanvas.width;
+    minimapSizeValue.textContent = `${minimapCanvas.width}px`;
+    minimapSizeSlider.addEventListener('input', (e) => {
+      const size = parseInt(e.target.value, 10);
+      applyMinimapSize(size);
+    });
+  }
+
+  if (minimapToggle) {
+    minimapToggle.addEventListener('click', () => {
+      minimapHidden = !minimapHidden;
+      minimapCanvas.style.display = minimapHidden ? 'none' : 'block';
+      document.getElementById('minimap-controls').style.display = minimapHidden ? 'none' : 'block';
+      minimapToggle.textContent = minimapHidden ? 'Show' : 'Hide';
+    });
+  }
 
   /**
    * 重新載入指定關卡
@@ -172,6 +229,7 @@ function initGame() {
       levelConfig = LEVEL_CONFIGS[currentLevelIndex];
       console.log(`🔄 Loading level: ${levelConfig.name}`);
       lastOutcome = null;
+      updateLevelUI();
 
       // 重置自動駕駛預設
       CONFIG.AUTOPILOT_ENABLED = true;
@@ -269,6 +327,38 @@ function initGame() {
   gameLoop.onLose = () => {
     lastOutcome = 'lose';
   };
+
+  // Level control UI
+  if (levelPrevBtn) {
+    levelPrevBtn.addEventListener('click', async () => {
+      await loadLevel(currentLevelIndex - 1, { startLoop: true, resetGameState: true });
+    });
+  }
+
+  if (levelNextBtn) {
+    levelNextBtn.addEventListener('click', async () => {
+      await loadLevel(currentLevelIndex + 1, { startLoop: true, resetGameState: true });
+    });
+  }
+
+  if (levelJumpBtn && levelJumpInput) {
+    levelJumpBtn.addEventListener('click', async () => {
+      const target = Math.max(1, Math.min(LEVEL_CONFIGS.length, parseInt(levelJumpInput.value, 10) || 1));
+      await loadLevel(target - 1, { startLoop: true, resetGameState: true });
+    });
+  }
+
+  if (restartLevelBtn) {
+    restartLevelBtn.addEventListener('click', async () => {
+      await loadLevel(currentLevelIndex, { startLoop: true, resetGameState: true });
+    });
+  }
+
+  if (restartFirstBtn) {
+    restartFirstBtn.addEventListener('click', async () => {
+      await loadLevel(0, { startLoop: true, resetGameState: true });
+    });
+  }
 
   // Setup minimap click to teleport
   minimapCanvas.addEventListener('click', (e) => {
