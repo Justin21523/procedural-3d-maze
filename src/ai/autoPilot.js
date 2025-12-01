@@ -48,6 +48,9 @@ export class AutoPilot {
     this.nudgeTimer = 0;
     this.nudgeDir = null;
     this.nudgeDuration = 0.4;
+    this.lastWorldPos = null;
+    this.noProgressTimer = 0;
+    this.noProgressThreshold = apCfg.noProgressSeconds ?? 0.8;
   }
 
   setEnabled(enabled) {
@@ -280,6 +283,8 @@ export class AutoPilot {
       return cmd;
     }
 
+    this.updateNoProgress(deltaTime);
+
     this.plan(playerPos);
 
     if (!this.currentPath || this.currentPath.length === 0) {
@@ -400,7 +405,7 @@ export class AutoPilot {
   triggerNudge() {
     const angle = Math.random() * Math.PI * 2;
     this.nudgeDir = { x: Math.cos(angle), y: Math.sin(angle) };
-    this.nudgeTimer = this.nudgeDuration;
+    this.nudgeTimer = this.nudgeDuration * 1.5;
     this.resetPath();
   }
 
@@ -411,6 +416,29 @@ export class AutoPilot {
         this.nudgeDir = null;
         this.nudgeTimer = 0;
       }
+    }
+  }
+
+  updateNoProgress(deltaTime) {
+    const world = {
+      x: this.playerController.position.x,
+      z: this.playerController.position.z
+    };
+    if (!this.lastWorldPos) {
+      this.lastWorldPos = { ...world };
+      return;
+    }
+    const moved = Math.hypot(world.x - this.lastWorldPos.x, world.z - this.lastWorldPos.z);
+    this.lastWorldPos = { ...world };
+
+    if (moved < 0.05) {
+      this.noProgressTimer += deltaTime;
+      if (this.noProgressTimer > this.noProgressThreshold) {
+        this.triggerNudge();
+        this.noProgressTimer = 0;
+      }
+    } else {
+      this.noProgressTimer = 0;
     }
   }
 }
