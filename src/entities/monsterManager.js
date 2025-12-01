@@ -276,6 +276,13 @@ export class MonsterManager {
     const avoidRadius = 1.2 * (CONFIG.TILE_SIZE || 1);
     const avoidForce = new THREE.Vector3(0, 0, 0);
     let count = 0;
+    let doorYield = 1.0;
+
+    // Doorway yield: if on a door and another monster is closer to center, slow down a bit
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const gx = Math.floor(pos.x / tileSize);
+    const gy = Math.floor(pos.z / tileSize);
+    const onDoor = this.worldState?.getTile && this.worldState.getTile(gx, gy) === 2;
 
     for (const other of this.monsters) {
       if (other === monster) continue;
@@ -287,6 +294,20 @@ export class MonsterManager {
       away.normalize().multiplyScalar((avoidRadius - dist) / avoidRadius);
       avoidForce.add(away);
       count++;
+
+      if (onDoor) {
+        const otherDistToDoorCenter = Math.hypot(
+          op.x - (gx + 0.5) * tileSize,
+          op.z - (gy + 0.5) * tileSize
+        );
+        const selfDist = Math.hypot(
+          pos.x - (gx + 0.5) * tileSize,
+          pos.z - (gy + 0.5) * tileSize
+        );
+        if (otherDistToDoorCenter < selfDist) {
+          doorYield = 0.55; // slow down to let the other pass
+        }
+      }
     }
 
     // Lightly avoid player as well
@@ -305,10 +326,10 @@ export class MonsterManager {
       avoidForce.divideScalar(count);
       const desired = new THREE.Vector3(move.x, 0, move.y);
       desired.add(avoidForce.multiplyScalar(0.6)).normalize();
-      return { x: desired.x, y: desired.z };
+      return { x: desired.x * doorYield, y: desired.z * doorYield };
     }
 
-    return move;
+    return { x: move.x * doorYield, y: move.y * doorYield };
   }
 
   tryMoveMonster(monster, currentPos, targetPos, deltaVec) {

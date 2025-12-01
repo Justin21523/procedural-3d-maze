@@ -452,6 +452,10 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
     this.nudgeTimer = 0;
     this.nudgeDir = null;
     this.nudgeDuration = 0.4;
+    this.lastWorldPos = null;
+    this.noProgressTimer = 0;
+    this.noProgressThreshold = config.noProgressSeconds ?? 0.9;
+    this.avoidTiles = new Map(); // key -> expire timestamp
   }
 
   roomCenter(room) {
@@ -653,9 +657,11 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
       this.lastGrid = { ...monsterGrid };
       this.stuckTimer = 0;
       this.stagnateTimer = 0;
+      this.noProgressTimer = 0;
     } else {
       this.stuckTimer += deltaTime;
       this.stagnateTimer += deltaTime;
+      this.updateNoProgress(monsterGrid, deltaTime);
       if (this.stuckTimer > this.stuckThreshold) {
         this.currentPath = [];
         this.currentTarget = null;
@@ -700,6 +706,34 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
       return { move, lookYaw: this.computeLookYawToPlayer(), sprint: false };
     }
     return { move, lookYaw, sprint: false };
+  }
+
+  updateNoProgress(monsterGrid, deltaTime) {
+    const world = this.getMonsterWorldPosition();
+    if (!this.lastWorldPos) {
+      this.lastWorldPos = { ...world };
+      return;
+    }
+    const moved = Math.hypot(world.x - this.lastWorldPos.x, world.z - this.lastWorldPos.z);
+    this.lastWorldPos = { ...world };
+
+    const targetKey = this.currentTarget ? this.posKey(this.currentTarget) : null;
+    const sameTarget = targetKey && targetKey === this.lastTargetKey;
+
+    if (sameTarget && moved < 0.04) {
+      this.noProgressTimer += deltaTime;
+      if (this.noProgressTimer > this.noProgressThreshold) {
+        this.recordAvoidTile(monsterGrid, 3.0);
+        this.currentPath = [];
+        this.currentTarget = null;
+        this.lastPlanTime = 0;
+        this.noProgressTimer = 0;
+        this.nudgeDir = { x: Math.cos(Math.random() * Math.PI * 2), y: Math.sin(Math.random() * Math.PI * 2) };
+        this.nudgeTimer = this.nudgeDuration * 2;
+      }
+    } else {
+      this.noProgressTimer = 0;
+    }
   }
 
   followPathLikeAutopilot(monsterGrid) {
@@ -752,10 +786,28 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
   triggerNudge() {
     const angle = Math.random() * Math.PI * 2;
     this.nudgeDir = { x: Math.cos(angle), y: Math.sin(angle) };
-    this.nudgeTimer = this.nudgeDuration;
+    this.nudgeTimer = this.nudgeDuration * 1.5;
     this.currentPath = [];
     this.currentTarget = null;
     this.lastPlanTime = 0;
+  }
+
+  recordAvoidTile(gridPos, ttl = 3.0) {
+    const key = this.posKey(gridPos);
+    const expires = Date.now() + ttl * 1000;
+    this.avoidTiles.set(key, expires);
+    for (const [k, ts] of this.avoidTiles.entries()) {
+      if (ts < Date.now()) this.avoidTiles.delete(k);
+    }
+  }
+
+  buildAvoidanceMask() {
+    const mask = new Set();
+    for (const [key, ts] of this.avoidTiles.entries()) {
+      if (ts < Date.now()) continue;
+      mask.add(key);
+    }
+    return mask.size > 0 ? mask : null;
   }
 }
 
