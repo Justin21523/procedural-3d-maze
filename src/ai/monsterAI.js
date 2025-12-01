@@ -456,6 +456,7 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
     this.noProgressTimer = 0;
     this.noProgressThreshold = config.noProgressSeconds ?? 0.9;
     this.avoidTiles = new Map(); // key -> expire timestamp
+    this.stallNudgeMultiplier = 2.0;
   }
 
   roomCenter(room) {
@@ -729,7 +730,7 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
         this.lastPlanTime = 0;
         this.noProgressTimer = 0;
         this.nudgeDir = { x: Math.cos(Math.random() * Math.PI * 2), y: Math.sin(Math.random() * Math.PI * 2) };
-        this.nudgeTimer = this.nudgeDuration * 2;
+        this.nudgeTimer = this.nudgeDuration * this.stallNudgeMultiplier;
       }
     } else {
       this.noProgressTimer = 0;
