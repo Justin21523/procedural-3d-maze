@@ -257,11 +257,11 @@ export class BaseMonsterBrain {
     let path = null;
     if (this.pathfinder && typeof this.pathfinder.findPath === 'function') {
       const avoidMask = this.buildAvoidanceMask();
-      path = this.pathfinder.findPath(monsterGrid, this.currentTarget, true, avoidMask);
+      path = this.tryFindPathWithFallbacks(monsterGrid, this.currentTarget, avoidMask);
 
       if ((!path || path.length === 0) && avoidMask) {
         // Fallback: ignore avoidance if it completely blocks path
-        path = this.pathfinder.findPath(monsterGrid, this.currentTarget, true, null);
+        path = this.tryFindPathWithFallbacks(monsterGrid, this.currentTarget, null);
       }
 
       if (path && path.length > 0 && typeof this.pathfinder.smoothPath === 'function') {
@@ -270,6 +270,26 @@ export class BaseMonsterBrain {
     }
 
     this.currentPath = path && path.length > 0 ? path : [];
+  }
+
+  tryFindPathWithFallbacks(monsterGrid, target, avoidMask) {
+    let path = this.pathfinder.findPath(monsterGrid, target, true, avoidMask);
+    if (path && path.length > 0) return path;
+
+    // Try alternate room centers if available
+    if (this.worldState?.rooms && this.worldState.rooms.length > 0) {
+      const candidates = [];
+      for (let i = 0; i < 3; i++) {
+        const room = this.worldState.rooms[Math.floor(Math.random() * this.worldState.rooms.length)];
+        const center = this.roomCenter(room);
+        candidates.push(center);
+      }
+      for (const c of candidates) {
+        path = this.pathfinder.findPath(monsterGrid, c, true, avoidMask);
+        if (path && path.length > 0) return path;
+      }
+    }
+    return path;
   }
 
   /**
@@ -525,7 +545,7 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
   pickRoomHopTarget(monsterGrid, nowTs) {
     if (!this.worldState?.rooms || this.worldState.rooms.length === 0) return null;
 
-    const samples = Math.min(50, this.worldState.rooms.length);
+    const samples = Math.min(80, this.worldState.rooms.length);
     let best = null;
     for (let i = 0; i < samples; i++) {
       const room = this.worldState.rooms[Math.floor(Math.random() * this.worldState.rooms.length)];
