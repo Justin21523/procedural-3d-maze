@@ -28,6 +28,10 @@ export class MonsterManager {
     this.modelLoader = new ModelLoader();
     this.currentModelPath = CONFIG.MONSTER_MODEL; // Track current model
     this.pathfinder = new Pathfinding(worldState);
+    this.deathEffects = [];
+    this.pendingRespawns = [];
+    this.respawnDelay = CONFIG.MONSTER_RESPAWN_DELAY ?? 0.6;
+    this.levelConfig = null;
   }
 
   setPlayerRef(playerRef) {
@@ -42,6 +46,7 @@ export class MonsterManager {
    * @param {number} count - Number of monsters to spawn
    */
   async initializeForLevel(levelConfig = null) {
+    this.levelConfig = levelConfig;
     const requested = levelConfig?.monsters?.count ?? CONFIG.MONSTER_COUNT;
     const typeWeights = levelConfig?.monsters?.typeWeights || null;
     return this.initialize(requested, typeWeights, levelConfig);
@@ -54,6 +59,7 @@ export class MonsterManager {
    * @param {Object|null} levelConfig - Level configuration for scaling
    */
   async initialize(count = 1, weights = null, levelConfig = null) {
+    this.levelConfig = levelConfig;
     console.log(`🎮 Initializing ${count} monsters with mixed types...`);
 
     try {
@@ -216,7 +222,7 @@ export class MonsterManager {
     if (name.includes('rush')) return 'speedJitter';
     if (name.includes('stalk')) return 'teleportStalker';
     if (name.includes('sentinel') || name.includes('guard')) return 'corridorGuardian';
-    return 'wanderCritter';
+    return 'autopilotWanderer';
   }
 
   buildBrainConfig(typeConfig, levelConfig) {
@@ -437,6 +443,9 @@ export class MonsterManager {
    */
   update(deltaTime) {
     const dt = deltaTime ?? 0;
+    this.updateDeathEffects(dt);
+    this.updateRespawns(dt);
+
     for (const monster of this.monsters) {
       // Keep grid in sync with any external changes
       if (monster.syncGridFromWorld) {
@@ -469,6 +478,188 @@ export class MonsterManager {
    */
   getMonsters() {
     return this.monsters;
+  }
+
+  /**
+   * Called when a projectile hits a monster.
+   * @param {Monster} monster
+   * @param {THREE.Vector3} hitPosition
+   */
+  handleProjectileHit(monster, hitPosition = null) {
+    if (!monster) return;
+    this.killMonster(monster, hitPosition);
+  }
+
+  killMonster(monster, hitPosition = null) {
+    const typeConfig = monster.typeConfig || null;
+    this.createFragmentEffect(monster, hitPosition);
+
+    monster.isDead = true;
+    const model = monster.getModel?.();
+    if (model) {
+      this.scene.remove(model);
+    }
+
+    const idx = this.monsters.indexOf(monster);
+    if (idx !== -1) {
+      this.monsters.splice(idx, 1);
+    }
+    this.brains.delete(monster);
+
+    this.pendingRespawns.push({
+      timer: this.respawnDelay,
+      typeConfig
+    });
+  }
+
+  createFragmentEffect(monster, hitPosition = null) {
+    const pos = monster.getWorldPosition ? monster.getWorldPosition() : null;
+    if (!pos) return;
+
+    const pieceCount = 12;
+    const group = new THREE.Group();
+    const velocities = [];
+    const color = monster.typeConfig?.appearance?.emissiveColor || 0xff4444;
+
+    for (let i = 0; i < pieceCount; i++) {
+      const geo = new THREE.BoxGeometry(0.25, 0.25, 0.25);
+      const mat = new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 0.4,
+        transparent: true,
+        opacity: 1,
+        roughness: 0.6,
+        metalness: 0.1
+      });
+
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(pos);
+      mesh.position.x += (Math.random() - 0.5) * 0.6;
+      mesh.position.y += (Math.random() - 0.2) * 0.6;
+      mesh.position.z += (Math.random() - 0.5) * 0.6;
+      group.add(mesh);
+
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 6,
+        Math.random() * 4 + 2,
+        (Math.random() - 0.5) * 6
+      );
+      if (hitPosition) {
+        const away = mesh.position.clone().sub(hitPosition).setY(0.3).normalize();
+        vel.addScaledVector(away, 2);
+      }
+      velocities.push(vel);
+    }
+
+    this.scene.add(group);
+    this.deathEffects.push({
+      group,
+      velocities,
+      life: 1.2,
+      maxLife: 1.2
+    });
+  }
+
+  updateDeathEffects(dt) {
+    for (let i = this.deathEffects.length - 1; i >= 0; i--) {
+      const fx = this.deathEffects[i];
+      fx.life -= dt;
+      const progress = Math.max(0, fx.life / fx.maxLife);
+
+      fx.group.children.forEach((mesh, index) => {
+        const vel = fx.velocities[index];
+        vel.y -= 9.8 * 0.4 * dt;
+        mesh.position.addScaledVector(vel, dt);
+        mesh.rotation.x += dt * 6;
+        mesh.rotation.y += dt * 5;
+
+        if (mesh.material) {
+          mesh.material.opacity = progress;
+        }
+      });
+
+      if (fx.life <= 0) {
+        this.scene.remove(fx.group);
+        this.deathEffects.splice(i, 1);
+      }
+    }
+  }
+
+  updateRespawns(dt) {
+    for (let i = this.pendingRespawns.length - 1; i >= 0; i--) {
+      const entry = this.pendingRespawns[i];
+      entry.timer -= dt;
+      if (entry.timer <= 0) {
+        const typeConfig = entry.typeConfig || createMonsterMix(1)[0];
+        this.spawnReplacement(typeConfig);
+        this.pendingRespawns.splice(i, 1);
+      }
+    }
+  }
+
+  async spawnReplacement(typeConfig) {
+    const spawn = this.pickRespawnPoint();
+    if (!spawn) return;
+
+    try {
+      const spriteResult = createSpriteBillboard({
+        path: typeConfig?.sprite || '/models/monster.png',
+        framesFolder: typeConfig?.spriteFramesPath ?? '../assets/moonman-sequence',
+        frameRate: typeConfig?.spriteFrameRate ?? 8,
+        randomStart: true,
+        clipLengthRange: { min: 20, max: 60 },
+        scale: { x: 1.5, y: 2.5 }
+      });
+      const spriteGroup = spriteResult.group || spriteResult;
+      await this.spawnMonster(
+        spriteGroup,
+        [],
+        spawn,
+        typeConfig,
+        this.levelConfig,
+        spriteResult.updateAnimation
+      );
+    } catch (err) {
+      console.warn('⚠️ Replacement spawn failed, using placeholder', err.message);
+      this.spawnPlaceholderMonster(spawn, typeConfig);
+    }
+  }
+
+  pickRespawnPoint() {
+    const playerGrid = this.playerRef?.getGridPosition?.();
+    const existing = this.getMonsterPositions();
+
+    if (this.worldState?.findRandomWalkableTile) {
+      for (let i = 0; i < 60; i++) {
+        const tile = this.worldState.findRandomWalkableTile();
+        if (!tile) continue;
+
+        let tooClose = false;
+        if (playerGrid) {
+          const distPlayer = Math.abs(tile.x - playerGrid.x) + Math.abs(tile.y - playerGrid.y);
+          if (distPlayer < 2) {
+            tooClose = true;
+          }
+        }
+
+        if (!tooClose) {
+          for (const pos of existing) {
+            const dist = Math.abs(tile.x - pos.x) + Math.abs(tile.y - pos.y);
+            if (dist < 2) {
+              tooClose = true;
+              break;
+            }
+          }
+        }
+
+        if (!tooClose) {
+          return tile;
+        }
+      }
+    }
+
+    return this.worldState?.getSpawnPoint?.() || null;
   }
 
   /**
@@ -584,6 +775,9 @@ export class MonsterManager {
     }
     this.monsters = [];
     this.brains.clear();
+    this.deathEffects.forEach(fx => this.scene.remove(fx.group));
+    this.deathEffects = [];
+    this.pendingRespawns = [];
     console.log('🗑️ All monsters removed');
   }
 

@@ -12,6 +12,7 @@ export class InputHandler {
     // Mouse state
     this.mouseDelta = { x: 0, y: 0 };
     this.pointerLocked = false;
+    this.mouseButtons = { left: false };
 
     // Setup event listeners
     this.setupListeners();
@@ -52,6 +53,20 @@ export class InputHandler {
       if (this.pointerLocked) {
         this.mouseDelta.x = e.movementX;
         this.mouseDelta.y = e.movementY;
+        this.lastInputTime = performance.now();
+      }
+    });
+
+    document.addEventListener('mousedown', (e) => {
+      if (e.button === 0) {
+        this.mouseButtons.left = true;
+        this.lastInputTime = performance.now();
+      }
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (e.button === 0) {
+        this.mouseButtons.left = false;
         this.lastInputTime = performance.now();
       }
     });
@@ -168,5 +183,13 @@ export class InputHandler {
    */
   isSprinting() {
     return this.isKeyPressed('ShiftLeft') || this.isKeyPressed('ShiftRight');
+  }
+
+  /**
+   * Check if primary fire (left mouse) is held while pointer is locked.
+   * @returns {boolean}
+   */
+  isFiring() {
+    return this.pointerLocked && this.mouseButtons.left;
   }
 }

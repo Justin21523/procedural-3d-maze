@@ -15,6 +15,9 @@ export const CONFIG = {
   PLAYER_SPEED: 4,       // Movement speed (units per second)
   PLAYER_HEIGHT: 1.7,    // Camera height (eye level)
   PLAYER_RADIUS: 0.35,   // Collision radius (slightly reduced to avoid sticking on corners)
+  PLAYER_FIRE_INTERVAL: 0.08, // Seconds between shots (automatic)
+  PLAYER_BULLET_SPEED: 42,
+  PLAYER_BULLET_LIFETIME: 2.2,
   MOUSE_SENSITIVITY: 0.002,
 
   // Monster settings
@@ -27,6 +30,8 @@ export const CONFIG = {
   MONSTER_SPEED: 9,              // 舊參數（保留向後相容）
   MONSTER_VISION_RANGE: 15,      // Base vision range (varies by type)
   MONSTER_FOV: Math.PI * 2 / 3,  // Base field of view (120 degrees)
+  MONSTER_HIT_RADIUS: 1.1,       // Bullet collision radius around monsters
+  MONSTER_RESPAWN_DELAY: 0.6,    // Seconds before a replacement monster spawns
   MONSTER_MODEL: '/models/VascodaGama.dae', // Default monster model (can be changed in UI)
 
   // Rendering settings

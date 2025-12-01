@@ -12,7 +12,8 @@ import { setupLighting } from './lighting.js';
 import {
   createRoomWallTexture,
   createRoomFloorTexture,
-  createRoomCeilingTexture
+  createRoomCeilingTexture,
+  createNormalMap
 } from './textures.js';
 import { generateRoomProps } from './props.js';
 
@@ -119,58 +120,70 @@ export class SceneManager {
   getMaterialPropsForRoom(roomType) {
     // corridor 基本值
     const base = {
-      wall:  { roughness: 0.9,  metalness: 0.05, envMapIntensity: 0.25 },
-      floor: { roughness: 0.85, metalness: 0.08, envMapIntensity: 0.4 },
-      ceiling: { roughness: 0.95, metalness: 0.0, envMapIntensity: 0.2 }
+      wall:  { roughness: 0.5, metalness: 0.18, envMapIntensity: 1.0 },
+      floor: { roughness: 0.35, metalness: 0.2, envMapIntensity: 1.4 },
+      ceiling: { roughness: 0.6, metalness: 0.08, envMapIntensity: 0.9 }
     };
 
     switch (roomType) {
       case ROOM_TYPES.CLASSROOM:
-        base.floor.roughness = 0.45;
-        base.floor.metalness = 0.18;
-        base.floor.envMapIntensity = 0.7; // 磨得亮亮的教室地板
+        base.floor.roughness = 0.35;
+        base.floor.metalness = 0.22;
+        base.floor.envMapIntensity = 1.1; // 光滑亮面地板
+        base.wall.roughness = 0.55;
         break;
 
       case ROOM_TYPES.OFFICE:
         base.floor.roughness = 0.5;
-        base.floor.metalness = 0.25;      // 木地板有點反光
-        base.floor.envMapIntensity = 0.8;
-        base.wall.roughness = 0.85;
+        base.floor.metalness = 0.25;
+        base.floor.envMapIntensity = 1.0;
+        base.wall.roughness = 0.6;
         break;
 
       case ROOM_TYPES.BATHROOM:
         // 洗手間：牆 + 地都很亮
-        base.wall.roughness = 0.35;
+        base.wall.roughness = 0.28;
         base.wall.metalness = 0.2;
-        base.wall.envMapIntensity = 0.9;
+        base.wall.envMapIntensity = 1.2;
 
-        base.floor.roughness = 0.15;
-        base.floor.metalness = 0.4;
-        base.floor.envMapIntensity = 1.3; // 超級亮的磁磚地
-        base.ceiling.roughness = 0.6;
-        base.ceiling.envMapIntensity = 0.9;
+        base.floor.roughness = 0.1;
+        base.floor.metalness = 0.5;
+        base.floor.envMapIntensity = 1.6; // 超級亮的磁磚地
+        base.ceiling.roughness = 0.45;
+        base.ceiling.envMapIntensity = 1.0;
         break;
 
       case ROOM_TYPES.STORAGE:
         // 倉庫：幾乎全是粗糙混凝土
-        base.wall.roughness = 1.0;
-        base.wall.metalness = 0.0;
-        base.wall.envMapIntensity = 0.1;
+        base.wall.roughness = 0.95;
+        base.wall.metalness = 0.02;
+        base.wall.envMapIntensity = 0.2;
 
-        base.floor.roughness = 1.0;
-        base.floor.metalness = 0.0;
-        base.floor.envMapIntensity = 0.1;
+        base.floor.roughness = 0.9;
+        base.floor.metalness = 0.05;
+        base.floor.envMapIntensity = 0.25;
         break;
 
       case ROOM_TYPES.LIBRARY:
         // 木牆 + 木地板，有一點油亮
-        base.wall.roughness = 0.8;
-        base.wall.metalness = 0.15;
-        base.wall.envMapIntensity = 0.6;
+        base.wall.roughness = 0.55;
+        base.wall.metalness = 0.2;
+        base.wall.envMapIntensity = 1.0;
 
-        base.floor.roughness = 0.55;
-        base.floor.metalness = 0.25;
-        base.floor.envMapIntensity = 0.9;
+        base.floor.roughness = 0.4;
+        base.floor.metalness = 0.35;
+        base.floor.envMapIntensity = 1.2;
+        break;
+
+      case ROOM_TYPES.POOL:
+        base.wall.roughness = 0.35;
+        base.wall.metalness = 0.2;
+        base.wall.envMapIntensity = 1.2;
+        base.floor.roughness = 0.25;
+        base.floor.metalness = 0.4;
+        base.floor.envMapIntensity = 1.4;
+        base.ceiling.roughness = 0.5;
+        base.ceiling.envMapIntensity = 1.0;
         break;
 
       default:
@@ -204,6 +217,7 @@ export class SceneManager {
 
     // Create textures for each room type
     const roomMaterials = {};
+    const sharedNormal = createNormalMap(6);
 
     // Create materials for all room types
     Object.values(ROOM_TYPES).forEach(roomType => {
@@ -236,24 +250,33 @@ export class SceneManager {
       const pbr = this.getMaterialPropsForRoom(roomType);
 
       roomMaterials[roomType] = {
-        wall: new THREE.MeshStandardMaterial({
+        wall: new THREE.MeshPhysicalMaterial({
           map: wallTexture,
+          normalMap: sharedNormal,
           roughness: pbr.wall.roughness,
           metalness: pbr.wall.metalness,
+          clearcoat: 0.25,
+          clearcoatRoughness: 0.18,
           envMap: this.environmentMap,
           envMapIntensity: pbr.wall.envMapIntensity
         }),
-        floor: new THREE.MeshStandardMaterial({
+        floor: new THREE.MeshPhysicalMaterial({
           map: floorTexture,
+          normalMap: sharedNormal,
           roughness: pbr.floor.roughness,
           metalness: pbr.floor.metalness,
+          clearcoat: 0.35,
+          clearcoatRoughness: 0.12,
           envMap: this.environmentMap,
           envMapIntensity: pbr.floor.envMapIntensity
         }),
-        ceiling: new THREE.MeshStandardMaterial({
+        ceiling: new THREE.MeshPhysicalMaterial({
           map: ceilingTexture,
+          normalMap: sharedNormal,
           roughness: pbr.ceiling.roughness,
           metalness: pbr.ceiling.metalness,
+          clearcoat: 0.2,
+          clearcoatRoughness: 0.2,
           envMap: this.environmentMap,
           envMapIntensity: pbr.ceiling.envMapIntensity
         })
@@ -334,6 +357,18 @@ export class SceneManager {
       mesh.material?.dispose();
     });
     this.worldMeshes = [];
+  }
+
+  /**
+   * Render the scene
+   */
+  update(deltaTime) {
+    if (!deltaTime) return;
+    for (const mesh of this.worldMeshes) {
+      if (mesh?.userData?.tick) {
+        mesh.userData.tick(deltaTime);
+      }
+    }
   }
 
   /**

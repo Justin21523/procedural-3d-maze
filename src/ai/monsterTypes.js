@@ -9,7 +9,7 @@ export const MonsterTypes = {
    */
   HUNTER: {
     name: 'Hunter',
-    aiType: 'roomHunter',
+    aiType: 'autopilotWanderer',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
     spriteFramesPath: '../assets/moonman-sequence',
@@ -57,7 +57,7 @@ export const MonsterTypes = {
    */
   WANDERER: {
     name: 'Wanderer',
-    aiType: 'wanderCritter',
+    aiType: 'autopilotWanderer',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
     spriteFramesPath: '../assets/moonman-sequence',
@@ -100,7 +100,7 @@ export const MonsterTypes = {
    */
   SENTINEL: {
     name: 'Sentinel',
-    aiType: 'corridorGuardian',
+    aiType: 'autopilotWanderer',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
     spriteFramesPath: '../assets/moonman-sequence',
@@ -144,7 +144,7 @@ export const MonsterTypes = {
    */
   STALKER: {
     name: 'Stalker',
-    aiType: 'teleportStalker',
+    aiType: 'autopilotWanderer',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
     spriteFramesPath: '../assets/moonman-sequence',
@@ -188,7 +188,7 @@ export const MonsterTypes = {
    */
   RUSHER: {
     name: 'Rusher',
-    aiType: 'speedJitter',
+    aiType: 'autopilotWanderer',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
     spriteFramesPath: '../assets/moonman-sequence',
@@ -231,7 +231,7 @@ export const MonsterTypes = {
    */
   GREETER: {
     name: 'GREETER',
-    aiType: 'shyGreeter',
+    aiType: 'autopilotWanderer',
     sprite: '/models/greeter.png',
     spriteFramesPath: '../assets/moonman-sequence',
     spriteFrameRate: 7,

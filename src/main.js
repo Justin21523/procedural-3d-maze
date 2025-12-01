@@ -14,11 +14,14 @@ import { WorldState } from './world/worldState.js';
 import { InputHandler } from './player/input.js';
 import { PlayerController } from './player/playerController.js';
 import { MonsterManager } from './entities/monsterManager.js';
+import { ProjectileManager } from './entities/projectileManager.js';
 import { ExitPoint } from './world/exitPoint.js';
 import { MissionPoint } from './world/missionPoint.js';
 import { AutoPilot } from './ai/autoPilot.js';
 import { AudioManager } from './audio/audioManager.js';
 import { LEVEL_CONFIGS } from './core/levelConfigs.js';
+import { Gun } from './player/gun.js';
+import { LevelDirector } from './core/levelDirector.js';
 
 /**
  * Initialize and start the game
@@ -58,22 +61,24 @@ function initGame() {
   }
 
   // 多關卡狀態
+  const levelDirector = new LevelDirector(LEVEL_CONFIGS);
   let currentLevelIndex = 0;
-  let levelConfig = LEVEL_CONFIGS[currentLevelIndex];
+  let levelConfig = levelDirector.getLevelConfig(currentLevelIndex);
   let missionPoints = [];
   let exitPoint = null;
   let autopilot = null;
   let levelLoading = Promise.resolve();
   let lastOutcome = null;
+  let lastRunStats = null;
   let minimapHidden = false;
 
   function updateLevelUI() {
-    const label = `${levelConfig.name} (L${currentLevelIndex + 1}/${LEVEL_CONFIGS.length})`;
+    const label = `${levelConfig.name || 'Endless'} (L${currentLevelIndex + 1})`;
     if (levelLabel) {
       levelLabel.textContent = label;
     }
     if (levelJumpInput) {
-      levelJumpInput.max = LEVEL_CONFIGS.length;
+      levelJumpInput.max = levelDirector.getMaxJump();
       levelJumpInput.value = currentLevelIndex + 1;
     }
   }
@@ -198,8 +203,35 @@ function initGame() {
     levelConfig
   );
 
+  const projectileManager = new ProjectileManager(
+    sceneManager.getScene(),
+    worldState,
+    monsterManager
+  );
+
+  const gun = new Gun(
+    sceneManager.getScene(),
+    camera,
+    input,
+    projectileManager,
+    audioManager
+  );
+
   // Create game loop with all systems（autopilot 實體可後續更新）
-  let gameLoop = new GameLoop(sceneManager, player, minimap, monsterManager, lights, worldState, gameState, exitPoint, missionPoints, autopilot);
+  let gameLoop = new GameLoop(
+    sceneManager,
+    player,
+    minimap,
+    monsterManager,
+    lights,
+    worldState,
+    gameState,
+    exitPoint,
+    missionPoints,
+    autopilot,
+    projectileManager,
+    gun
+  );
 
   // Render initial minimap (before game starts)
   console.log('🗺️ Rendering initial minimap...');
@@ -256,8 +288,8 @@ function initGame() {
    */
   async function loadLevel(levelIndex, { startLoop = false, resetGameState = true } = {}) {
     levelLoading = (async () => {
-      currentLevelIndex = (levelIndex + LEVEL_CONFIGS.length) % LEVEL_CONFIGS.length;
-      levelConfig = LEVEL_CONFIGS[currentLevelIndex];
+      currentLevelIndex = Math.max(0, levelIndex);
+      levelConfig = levelDirector.getLevelConfig(currentLevelIndex, lastRunStats, lastOutcome);
       console.log(`🔄 Loading level: ${levelConfig.name}`);
       lastOutcome = null;
       updateLevelUI();
@@ -331,6 +363,12 @@ function initGame() {
       );
       gameLoop.autopilot = autopilot;
       gameLoop.autopilotActive = CONFIG.AUTOPILOT_ENABLED;
+      projectileManager.worldState = worldState;
+      projectileManager.monsterManager = monsterManager;
+      projectileManager.reset?.();
+      gameLoop.projectileManager = projectileManager;
+      gameLoop.gun = gun;
+      gun.cooldown = 0;
 
       // 更新 minimap
       minimap.updateScale();
@@ -353,10 +391,12 @@ function initGame() {
   // 通關後等待使用者確認
   gameLoop.onWin = () => {
     lastOutcome = 'win';
+    lastRunStats = gameState.getStats();
     applyGameOverButtons(true);
   };
   gameLoop.onLose = () => {
     lastOutcome = 'lose';
+    lastRunStats = gameState.getStats();
     applyGameOverButtons(false);
   };
 
@@ -375,7 +415,7 @@ function initGame() {
 
   if (levelJumpBtn && levelJumpInput) {
     levelJumpBtn.addEventListener('click', async () => {
-      const target = Math.max(1, Math.min(LEVEL_CONFIGS.length, parseInt(levelJumpInput.value, 10) || 1));
+      const target = Math.max(1, Math.min(levelDirector.getMaxJump(), parseInt(levelJumpInput.value, 10) || 1));
       await loadLevel(target - 1, { startLoop: true, resetGameState: true });
     });
   }

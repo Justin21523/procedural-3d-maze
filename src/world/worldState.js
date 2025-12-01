@@ -33,7 +33,12 @@ export class WorldState {
     console.log(`Generating maze: ${width}×${height}...`);
     const result = generateMazeDFS(width, height, {
       roomDensity: mazeCfg.roomDensity,
-      extraConnectionChance: mazeCfg.extraConnectionChance
+      extraConnectionChance: mazeCfg.extraConnectionChance,
+      noDeadEnds: mazeCfg.noDeadEnds ?? true,
+      minRoomSize: mazeCfg.minRoomSize,
+      maxRoomSize: mazeCfg.maxRoomSize,
+      minRoomDoors: mazeCfg.minRoomDoors ?? 2,
+      deadEndPasses: mazeCfg.deadEndPasses ?? 3
     });
     this.grid = result.grid;
     this.rooms = result.rooms;

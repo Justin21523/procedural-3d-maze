@@ -42,6 +42,12 @@ export class AutoPilot {
     this.noProgressThreshold = apCfg.noProgressSeconds ?? 0.8;
     this.lastWorldPos = null;
     this.noProgressTimer = 0;
+
+    // Oscillation / nudge handling
+    this.recentTiles = [];
+    this.nudgeTimer = 0;
+    this.nudgeDir = null;
+    this.nudgeDuration = 0.4;
   }
 
   setEnabled(enabled) {
@@ -254,8 +260,25 @@ export class AutoPilot {
 
     const playerPos = this.playerController.getGridPosition();
 
+    // Track oscillation
+    this.recordRecentTile(playerPos);
+    this.handleNudgeTimer(deltaTime);
+
     // 記錄走過的格子，給探索策略用
     this.recordVisit(playerPos);
+
+    if (this.shouldNudge()) {
+      this.triggerNudge();
+    }
+
+    if (this.nudgeTimer > 0 && this.nudgeDir) {
+      const cmd = {
+        moveWorld: { x: this.nudgeDir.x, z: this.nudgeDir.y },
+        lookYaw: Math.atan2(-this.nudgeDir.x, -this.nudgeDir.y),
+        sprint: false,
+      };
+      return cmd;
+    }
 
     this.plan(playerPos);
 
@@ -354,5 +377,40 @@ export class AutoPilot {
     }
 
     return { moveWorld, lookYaw, sprint };
+  }
+
+  recordRecentTile(gridPos) {
+    const key = this.posKey(gridPos);
+    this.recentTiles.push(key);
+    if (this.recentTiles.length > 10) {
+      this.recentTiles.shift();
+    }
+  }
+
+  shouldNudge() {
+    if (this.recentTiles.length < 6) return false;
+    const last = this.recentTiles.slice(-4);
+    const unique = Array.from(new Set(last));
+    if (unique.length === 2 && last[0] === last[2] && last[1] === last[3]) {
+      return true;
+    }
+    return false;
+  }
+
+  triggerNudge() {
+    const angle = Math.random() * Math.PI * 2;
+    this.nudgeDir = { x: Math.cos(angle), y: Math.sin(angle) };
+    this.nudgeTimer = this.nudgeDuration;
+    this.resetPath();
+  }
+
+  handleNudgeTimer(dt) {
+    if (this.nudgeTimer > 0) {
+      this.nudgeTimer -= dt;
+      if (this.nudgeTimer <= 0) {
+        this.nudgeDir = null;
+        this.nudgeTimer = 0;
+      }
+    }
   }
 }

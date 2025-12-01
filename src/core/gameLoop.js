@@ -21,12 +21,14 @@ export class GameLoop {
    * @param {GameState} gameState - Game state manager (optional)
    * @param {ExitPoint} exitPoint - Exit point (optional)
    */
-  constructor(sceneManager, player, minimap = null, monsterManager = null, lights = null, worldState = null, gameState = null, exitPoint = null, missionPoints = [], autopilot = null) {
+  constructor(sceneManager, player, minimap = null, monsterManager = null, lights = null, worldState = null, gameState = null, exitPoint = null, missionPoints = [], autopilot = null, projectileManager = null, gun = null) {
     this.sceneManager = sceneManager;
     this.player = player;
     this.minimap = minimap;
     this.monsterManager = monsterManager;
     this.lights = lights;
+    this.projectileManager = projectileManager;
+    this.gun = gun;
 
     this.worldState = worldState;
     this.gameState = gameState;
@@ -203,6 +205,14 @@ export class GameLoop {
       this.player.update(dt, this.autopilotActive, externalCommand);
     }
 
+    if (this.gun) {
+      this.gun.update(dt);
+    }
+
+    if (this.projectileManager) {
+      this.projectileManager.update(dt);
+    }
+
     // Get player position for checks
     let playerPos = this.player.getPosition();
 
@@ -318,6 +328,11 @@ export class GameLoop {
     // Update lighting (flickering effect)
     if (this.lights) {
       updateLighting(this.lights, dt);
+    }
+
+    // Update scene-level animated props (e.g., water)
+    if (this.sceneManager && typeof this.sceneManager.update === 'function') {
+      this.sceneManager.update(dt);
     }
 
     // Update visual effects
