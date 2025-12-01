@@ -240,7 +240,7 @@ export class MonsterManager {
   }
 
   applyBrainCommand(monster, command, deltaTime) {
-    const move = command?.move || { x: 0, y: 0 };
+    const move = this.applySteering(monster, command?.move || { x: 0, y: 0 });
     const speed = monster.getSpeed ? monster.getSpeed(command?.sprint) : CONFIG.MONSTER_SPEED;
     const dx = move.x * speed * deltaTime;
     const dz = move.y * speed * deltaTime;
@@ -265,6 +265,50 @@ export class MonsterManager {
         monster.setYaw(currentYaw + command.lookYaw);
       }
     }
+  }
+
+  applySteering(monster, desiredMove) {
+    if (!this.monsters || this.monsters.length === 0) return desiredMove;
+    const move = { ...desiredMove };
+    const pos = monster.getWorldPosition ? monster.getWorldPosition() : null;
+    if (!pos) return move;
+
+    const avoidRadius = 1.2 * (CONFIG.TILE_SIZE || 1);
+    const avoidForce = new THREE.Vector3(0, 0, 0);
+    let count = 0;
+
+    for (const other of this.monsters) {
+      if (other === monster) continue;
+      const op = other.getWorldPosition ? other.getWorldPosition() : null;
+      if (!op) continue;
+      const dist = pos.distanceTo(op);
+      if (dist > avoidRadius || dist <= 0.001) continue;
+      const away = pos.clone().sub(op).setY(0);
+      away.normalize().multiplyScalar((avoidRadius - dist) / avoidRadius);
+      avoidForce.add(away);
+      count++;
+    }
+
+    // Lightly avoid player as well
+    if (this.playerRef?.getPosition) {
+      const p = this.playerRef.getPosition();
+      const dist = pos.distanceTo(p);
+      if (dist > 0.001 && dist < avoidRadius) {
+        const away = pos.clone().sub(p).setY(0);
+        away.normalize().multiplyScalar((avoidRadius - dist) / avoidRadius);
+        avoidForce.add(away);
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      avoidForce.divideScalar(count);
+      const desired = new THREE.Vector3(move.x, 0, move.y);
+      desired.add(avoidForce.multiplyScalar(0.6)).normalize();
+      return { x: desired.x, y: desired.z };
+    }
+
+    return move;
   }
 
   tryMoveMonster(monster, currentPos, targetPos, deltaVec) {
