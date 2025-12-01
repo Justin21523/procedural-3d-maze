@@ -351,17 +351,24 @@ export function generateRoomProps(roomType, gridX, gridY, grid) {
       break;
 
     case ROOM_TYPES.POOL: {
-      // Pool edge (simple blue plane) + lifebuoy
-      const poolMaterial = new THREE.MeshStandardMaterial({
-        color: 0x2196f3,
-        roughness: 0.4,
-        metalness: 0.1
+      // Pool rim
+      const rimMaterial = new THREE.MeshStandardMaterial({
+        color: 0x1f7ea5,
+        roughness: 0.35,
+        metalness: 0.12,
+        envMapIntensity: 1.0
       });
-      const pool = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.2, 1.2), poolMaterial);
-      pool.position.set(worldX, 0.1, worldZ);
-      pool.castShadow = false;
-      pool.receiveShadow = true;
-      props.push(pool);
+      const rim = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.25, 1.3), rimMaterial);
+      rim.position.set(worldX, 0.12, worldZ);
+      rim.castShadow = true;
+      rim.receiveShadow = true;
+      props.push(rim);
+
+      const waterVolume = createWaterVolume(worldX, worldZ);
+      props.push(waterVolume);
+
+      const water = createWaterSurface(worldX, worldZ);
+      props.push(water);
 
       const buoyMaterial = new THREE.MeshStandardMaterial({ color: 0xff7043, roughness: 0.6 });
       const buoy = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.07, 8, 16), buoyMaterial);
@@ -430,4 +437,75 @@ export function generateRoomProps(roomType, gridX, gridY, grid) {
   }
 
   return props;
+}
+
+function createWaterSurface(x, z) {
+  const geo = new THREE.PlaneGeometry(1.6, 1.0, 14, 10);
+  geo.rotateX(-Math.PI / 2);
+
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: 0x4ab8ff,
+    transparent: true,
+    opacity: 0.65,
+    roughness: 0.05,
+    metalness: 0.05,
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.04,
+    transmission: 0.7,
+    ior: 1.33,
+    envMapIntensity: 1.4
+  });
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x, 0.52, z);
+  mesh.receiveShadow = true;
+
+  const base = geo.attributes.position.array.slice();
+  mesh.userData.wave = {
+    base,
+    time: 0,
+    amplitude: 0.12,
+    frequency: 1.6,
+    choppiness: 1.2
+  };
+
+  mesh.userData.tick = (dt) => {
+    const wave = mesh.userData.wave;
+    if (!wave) return;
+    wave.time += dt;
+    const pos = geo.attributes.position.array;
+
+    for (let i = 0; i < pos.length; i += 3) {
+      const ox = base[i];
+      const oz = base[i + 2];
+      const wave1 = Math.sin(ox * wave.choppiness + wave.time * wave.frequency);
+      const wave2 = Math.cos(oz * wave.choppiness * 0.8 + wave.time * (wave.frequency * 0.7));
+      pos[i + 1] = base[i + 1] + (wave1 + wave2) * 0.5 * wave.amplitude;
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.computeVertexNormals();
+  };
+
+  return mesh;
+}
+
+function createWaterVolume(x, z) {
+  const geo = new THREE.BoxGeometry(1.6, 0.8, 1.0);
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: 0x3aa4e6,
+    transparent: true,
+    opacity: 0.45,
+    roughness: 0.08,
+    metalness: 0.05,
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.05,
+    transmission: 0.82,
+    ior: 1.33,
+    thickness: 0.9,
+    envMapIntensity: 1.3
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x, 0.45, z);
+  mesh.receiveShadow = true;
+  return mesh;
 }

@@ -28,11 +28,16 @@ export function generateMazeDFS(width, height, options = {}) {
   carveDFS(grid);
 
   // 加一些額外通道減少死路
-  const extraChance = options.extraConnectionChance ?? 0.08;
+  const extraChance = options.extraConnectionChance ?? 0.18;
   addExtraConnections(grid, extraChance);
 
   // ==== 2) 從走廊長出房間 ====
   const rooms = carveRoomsFromCorridors(grid, options);
+
+  if (options.noDeadEnds) {
+    // 最後一層：打掉走廊死路，讓路網更通透
+    removeDeadEnds(grid, options.deadEndPasses ?? 3);
+  }
 
   return { grid, rooms };
 }
@@ -131,8 +136,11 @@ function carveRoomsFromCorridors(grid, options = {}) {
 
   const rooms = [];
   // Higher base density so rooms dominate over corridors
-  const baseRooms = Math.floor((width * height) / 250);
+  const baseRooms = Math.floor((width * height) / 180);
   const density = options.roomDensity ?? CONFIG.ROOM_DENSITY ?? 1.0;
+  const minRoomSize = options.minRoomSize ?? 5;
+  const maxRoomSize = options.maxRoomSize ?? 10;
+  const minDoors = options.minRoomDoors ?? 2;
   const maxRooms = Math.max(20, Math.floor(baseRooms * density));
   let attempts = 0;
 
@@ -160,8 +168,8 @@ function carveRoomsFromCorridors(grid, options = {}) {
     if (grid[doorY][doorX] !== TILE_TYPES.WALL) continue;
 
     // 決定房間大小
-    const roomW = randomInt(4, 9);  // 4~8 格寬
-    const roomH = randomInt(4, 8);  // 4~7 格高
+    const roomW = randomInt(minRoomSize, maxRoomSize);
+    const roomH = randomInt(minRoomSize, maxRoomSize - 1);
 
     // 根據方向決定房間左上角
     let x, y;
@@ -199,7 +207,7 @@ function carveRoomsFromCorridors(grid, options = {}) {
     grid[doorY][doorX] = TILE_TYPES.DOOR;
 
     const roomType = pickRoomType();
-    rooms.push({
+    const room = {
       type: roomType,
       x,
       y,
@@ -208,7 +216,10 @@ function carveRoomsFromCorridors(grid, options = {}) {
       tiles,
       doors: [{ x: doorX, y: doorY }],
       corridor: { x: cx, y: cy }
-    });
+    };
+
+    tryAddExtraDoors(grid, room, minDoors);
+    rooms.push(room);
   }
 
   console.log(`🧱 Carved ${rooms.length} rooms`);
@@ -260,6 +271,48 @@ function canPlaceRoom(grid, x, y, w, h, options = {}) {
   const area = w * h;
   const floorRatio = existingNonWall / area;
   return floorRatio <= maxExistingFloorRatio;
+}
+
+/**
+ * 給房間多開幾個門，減少「單門房」造成的走廊死路感
+ */
+function tryAddExtraDoors(grid, room, minDoors = 2) {
+  if (!room || minDoors <= 1) return;
+  const width = grid[0].length;
+  const height = grid.length;
+
+  const perimeterTiles = room.tiles.filter(t =>
+    t.x === room.x ||
+    t.x === room.x + room.width - 1 ||
+    t.y === room.y ||
+    t.y === room.y + room.height - 1
+  );
+
+  const existingDoorKeys = new Set(room.doors.map(d => `${d.x},${d.y}`));
+
+  for (const tile of perimeterTiles) {
+    if (room.doors.length >= minDoors) break;
+
+    const neighbors = [
+      { x: tile.x + 1, y: tile.y },
+      { x: tile.x - 1, y: tile.y },
+      { x: tile.x, y: tile.y + 1 },
+      { x: tile.x, y: tile.y - 1 }
+    ];
+
+    for (const n of neighbors) {
+      if (n.x <= 0 || n.y <= 0 || n.x >= width - 1 || n.y >= height - 1) continue;
+      if (grid[n.y][n.x] !== TILE_TYPES.FLOOR) continue; // 只連走廊
+
+      const key = `${tile.x},${tile.y}`;
+      if (existingDoorKeys.has(key)) continue;
+
+      grid[tile.y][tile.x] = TILE_TYPES.DOOR;
+      room.doors.push({ x: tile.x, y: tile.y });
+      existingDoorKeys.add(key);
+      break;
+    }
+  }
 }
 
 /**
@@ -346,4 +399,46 @@ export function analyzeMaze(grid) {
     wallCount,
     deadEnds,
   };
+}
+
+/**
+ * 打掉迷宮死路：找到只有單一出口的走廊，強制再挖一個方向
+ */
+function removeDeadEnds(grid, passes = 2) {
+  const height = grid.length;
+  const width = grid[0].length;
+  const dirs = [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 }
+  ];
+
+  for (let p = 0; p < passes; p++) {
+    let changed = false;
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        if (grid[y][x] === TILE_TYPES.WALL) continue;
+
+        let neighbors = 0;
+        const wallCandidates = [];
+        for (const d of dirs) {
+          const nx = x + d.dx;
+          const ny = y + d.dy;
+          if (grid[ny][nx] === TILE_TYPES.WALL) {
+            wallCandidates.push({ x: nx, y: ny });
+          } else {
+            neighbors++;
+          }
+        }
+
+        if (neighbors <= 1 && wallCandidates.length > 0) {
+          const pick = wallCandidates[randomInt(0, wallCandidates.length - 1)];
+          grid[pick.y][pick.x] = TILE_TYPES.FLOOR;
+          changed = true;
+        }
+      }
+    }
+    if (!changed) break;
+  }
 }

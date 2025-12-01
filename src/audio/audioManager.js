@@ -145,6 +145,47 @@ export class AudioManager {
   }
 
   /**
+   * Procedural gunshot (short noise burst) without external assets.
+   */
+  playGunshot() {
+    if (!this.enabled) return;
+
+    const buffer = this.getGunshotBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.9 * this.effectsVolume * this.masterVolume);
+    sound.play();
+
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
+  getGunshotBuffer() {
+    if (this.buffers.has('gunshot_proc')) {
+      return this.buffers.get('gunshot_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.15;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const envelope = Math.exp(-t * 25); // fast decay
+      data[i] = (Math.random() * 2 - 1) * envelope * 0.8;
+    }
+
+    this.buffers.set('gunshot_proc', buffer);
+    return buffer;
+  }
+
+  /**
    * Play player footstep sound
    * @param {boolean} running - Is player running?
    */
