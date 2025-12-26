@@ -56,7 +56,6 @@ export class GameLoop {
     // Monster damage tracking
     this.lastMonsterDamageTime = 0;
     this.monsterDamageCooldown = 1.0; // 1 second between damage
-    this.lastExitLockedAnnounceAt = 0;
 
     // Visual effects
     this.visualEffects = new VisualEffects();
@@ -352,38 +351,6 @@ export class GameLoop {
       this.applyPlayerKnockback(caught.monster);
       ctx.playerPos = this.player.getPosition();
     }, { order: 90 });
-
-    systems.add('exitWin', (dt, ctx) => {
-      if (this.gameState?.gameOver) return;
-      if (!this.exitPoint || !this.gameState || !this.player?.getPosition) return;
-
-      const playerPos = ctx.playerPos || this.player.getPosition();
-      if (!this.exitPoint.isPlayerNear(playerPos, 2)) return;
-
-      // Missions can lock the exit until objectives are met.
-      if (this.gameState.exitUnlocked === false) {
-        const nowMs = Number.isFinite(ctx?.nowMs) ? ctx.nowMs : performance.now();
-        if (nowMs - (this.lastExitLockedAnnounceAt || 0) > 950) {
-          this.lastExitLockedAnnounceAt = nowMs;
-          this.gameState?.eventBus?.emit?.(EVENTS.EXIT_LOCKED, {
-            message: this.gameState.exitLockedReason || 'Exit locked'
-          });
-        }
-        return;
-      }
-
-      if (this.visualEffects) {
-        this.visualEffects.victoryFlash();
-      }
-
-      if (!this.winHandled) {
-        this.winHandled = true;
-        this.gameState.win('You found the exit!');
-        if (typeof this.onWin === 'function') {
-          this.onWin();
-        }
-      }
-    }, { order: 100 });
 
     systems.add('exitAnim', (dt) => {
       if (this.exitPoint?.update) {
