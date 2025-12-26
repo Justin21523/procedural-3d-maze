@@ -172,6 +172,9 @@ export class MissionDirector {
     this.unsubs.push(
       bus.on(EVENTS.MISSION_HINT_REQUESTED, (payload) => this.onHintRequested(payload))
     );
+    this.unsubs.push(
+      bus.on(EVENTS.KEYPAD_CODE_SUBMITTED, (payload) => this.onKeypadCodeSubmitted(payload))
+    );
   }
 
   spawnFromConfig(missionsConfig) {
@@ -227,6 +230,7 @@ export class MissionDirector {
           codeReady: false,
           code: '',
           unlocked: false,
+          failedAttempts: 0,
           clues: [],
           keypadId: null,
           keypadGridPos: null
@@ -482,9 +486,20 @@ export class MissionDirector {
           if (unlocked) return 'E: Keypad (Unlocked)';
           return ready ? 'E: Keypad (Enter Code)' : 'E: Keypad (Locked)';
         },
-        interact: ({ entry }) => {
+        interact: ({ entry, actorKind }) => {
           if (mission.state.unlocked) return { ok: true, message: 'Keypad already unlocked', state: { unlocked: true } };
           if (!mission.state.codeReady) return { ok: false, message: 'Keypad locked (missing clues)' };
+
+          if (actorKind === 'player') {
+            const codeLength = String(mission.state.code || '').length || Number(mission.state.cluesTotal) || 3;
+            return {
+              ok: true,
+              message: 'Enter code',
+              openKeypad: true,
+              keypadId,
+              codeLength
+            };
+          }
 
           const meta = entry?.meta || {};
           meta.unlocked = true;
@@ -495,6 +510,58 @@ export class MissionDirector {
       })
     );
     this.interactableMeta.set(keypadId, { missionId: mission.id, template: mission.template });
+  }
+
+  onKeypadCodeSubmitted(payload) {
+    const keypadId = String(payload?.keypadId || '').trim();
+    if (!keypadId) return;
+
+    const meta = this.interactableMeta.get(keypadId);
+    if (!meta) return;
+
+    const mission = this.missions.get(meta.missionId);
+    if (!mission || mission.template !== 'codeLock') return;
+
+    const actorKind = payload?.actorKind || 'player';
+    const submitted = String(payload?.code || '').trim();
+    const expected = String(mission.state.code || '').trim();
+
+    if (mission.state.unlocked) {
+      this.eventBus?.emit?.(EVENTS.KEYPAD_CODE_RESULT, { actorKind, keypadId, ok: true, code: submitted });
+      return;
+    }
+
+    if (!mission.state.codeReady || !expected) {
+      if (actorKind === 'player') {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Keypad is locked (missing clues).', seconds: 1.7 });
+      }
+      this.eventBus?.emit?.(EVENTS.KEYPAD_CODE_RESULT, { actorKind, keypadId, ok: false, code: submitted, message: 'Locked' });
+      return;
+    }
+
+    if (submitted === expected) {
+      mission.state.unlocked = true;
+      const entry = this.interactables?.get?.(keypadId) || null;
+      if (entry?.meta) {
+        entry.meta.unlocked = true;
+      }
+      if (entry?.object3d) {
+        setKeypadState(entry.object3d, true);
+      }
+      if (actorKind === 'player') {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Correct code. Keypad unlocked.', seconds: 2.0 });
+      }
+      this.eventBus?.emit?.(EVENTS.KEYPAD_CODE_RESULT, { actorKind, keypadId, ok: true, code: submitted });
+      this.syncStatus();
+      return;
+    }
+
+    mission.state.failedAttempts = (mission.state.failedAttempts || 0) + 1;
+    if (actorKind === 'player') {
+      this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Incorrect code.', seconds: 1.6 });
+      this.eventBus?.emit?.(EVENTS.NOISE_EMITTED, { source: 'player', kind: 'keypad', strength: 0.25 });
+    }
+    this.eventBus?.emit?.(EVENTS.KEYPAD_CODE_RESULT, { actorKind, keypadId, ok: false, code: submitted, message: 'Incorrect' });
   }
 
   onItemPicked(payload) {
@@ -716,6 +783,12 @@ export class MissionDirector {
           : tier === 2
             ? 'Switches spawn in labs/storage—interact to turn them on.'
             : 'If you are stuck, explore new rooms; switches never spawn in walls/corridors.';
+      } else if (m.template === 'codeLock') {
+        hintText = tier === 1
+          ? 'Find and read the code note clues (A/B/C).'
+          : tier === 2
+            ? 'After collecting all clues, find the keypad and enter the digits (A→B→C), then press Enter.'
+            : 'If you forgot a digit, re-check the notes; the keypad spawns in themed rooms away from spawn/exit.';
       } else if (m.template === 'enterRoomType') {
         const roomLabel = formatRoomTypeList(m.params?.roomTypes);
         hintText = tier === 1
@@ -892,7 +965,7 @@ export class MissionDirector {
           return total > 0 ? `Find code notes (${collected}/${total}) — ${ordered}` : 'Find code notes';
         }
         if (!mission.state.unlocked) {
-          return `Use the keypad (E) — ${ordered}`;
+          return `Use the keypad (E), enter code + Enter — ${ordered}`;
         }
         return 'Keypad unlocked. Reach the exit.';
       }
