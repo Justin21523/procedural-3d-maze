@@ -233,7 +233,8 @@ export class PlayerController {
 
     // Sweep via step subdivision to avoid tunneling through walls/obstacles when dt spikes.
     const tileSize = CONFIG.TILE_SIZE || 1;
-    const maxStep = Math.max(0.08, tileSize * 0.25);
+    const radius = CONFIG.PLAYER_RADIUS || 0.35;
+    const maxStep = Math.max(0.05, Math.min(tileSize * 0.25, radius * 0.5));
     const dist = Math.hypot(moveVector.x, moveVector.z);
     const steps = Math.max(1, Math.ceil(dist / maxStep));
 
@@ -272,25 +273,47 @@ export class PlayerController {
       return;
     }
 
-    // 2) Axis-aligned slide (favor larger axis)
+    const sweepMove = (dx, dz) => {
+      if (Math.abs(dx) <= 1e-8 && Math.abs(dz) <= 1e-8) return 0;
+
+      const startX = this.position.x;
+      const startZ = this.position.z;
+      const fullX = startX + dx;
+      const fullZ = startZ + dz;
+      if (this.canMoveTo(fullX, fullZ)) {
+        this.position.x = fullX;
+        this.position.z = fullZ;
+        return 1;
+      }
+
+      let lo = 0;
+      let hi = 1;
+      for (let i = 0; i < 6; i++) {
+        const mid = (lo + hi) * 0.5;
+        const testX = startX + dx * mid;
+        const testZ = startZ + dz * mid;
+        if (this.canMoveTo(testX, testZ)) {
+          lo = mid;
+        } else {
+          hi = mid;
+        }
+      }
+
+      const safe = lo > 0 ? Math.max(0, lo - 0.02) : 0;
+      if (safe > 0) {
+        this.position.x = startX + dx * safe;
+        this.position.z = startZ + dz * safe;
+      }
+      return safe;
+    };
+
+    // 2) Axis-aligned slide (favor larger axis), but sweep to the closest valid position.
     if (Math.abs(stepX) > Math.abs(stepZ)) {
-      const newPosX = this.position.x + stepX;
-      if (this.canMoveTo(newPosX, this.position.z)) {
-        this.position.x = newPosX;
-      }
-      const newPosZ = this.position.z + stepZ;
-      if (this.canMoveTo(this.position.x, newPosZ)) {
-        this.position.z = newPosZ;
-      }
+      sweepMove(stepX, 0);
+      sweepMove(0, stepZ);
     } else {
-      const newPosZ = this.position.z + stepZ;
-      if (this.canMoveTo(this.position.x, newPosZ)) {
-        this.position.z = newPosZ;
-      }
-      const newPosX = this.position.x + stepX;
-      if (this.canMoveTo(newPosX, this.position.z)) {
-        this.position.x = newPosX;
-      }
+      sweepMove(0, stepZ);
+      sweepMove(stepX, 0);
     }
   }
 
@@ -327,7 +350,32 @@ export class PlayerController {
         const dz = centerZ - nearestZ;
         const distSq = dx * dx + dz * dz;
 
-        if (distSq === 0 || distSq >= radius * radius) {
+        if (distSq === 0) {
+          // Player center is inside the blocked tile; push out toward the nearest edge.
+          const toLeft = Math.abs(centerX - tileMinX);
+          const toRight = Math.abs(tileMaxX - centerX);
+          const toTop = Math.abs(centerZ - tileMinZ);
+          const toBottom = Math.abs(tileMaxZ - centerZ);
+          const min = Math.min(toLeft, toRight, toTop, toBottom);
+
+          let newX = centerX;
+          let newZ = centerZ;
+          const pad = radius * 1.05;
+          if (min === toLeft) newX = tileMinX - pad;
+          else if (min === toRight) newX = tileMaxX + pad;
+          else if (min === toTop) newZ = tileMinZ - pad;
+          else newZ = tileMaxZ + pad;
+
+          if (this.canMoveTo(newX, newZ)) {
+            this.position.x = newX;
+            this.position.z = newZ;
+            centerX = newX;
+            centerZ = newZ;
+          }
+          continue;
+        }
+
+        if (distSq >= radius * radius) {
           continue;
         }
 
@@ -397,33 +445,34 @@ export class PlayerController {
    * @returns {boolean}
    */
   canMoveTo(worldX, worldZ) {
-    const gridPos = worldToGrid(worldX, worldZ, CONFIG.TILE_SIZE);
+    if (!this.worldState?.isWalkable) return true;
+    if (!Number.isFinite(worldX) || !Number.isFinite(worldZ)) return false;
 
-    if (!this.worldState.isWalkable(gridPos.x, gridPos.y)) {
-      return false;
-    }
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const radius = CONFIG.PLAYER_RADIUS || 0.35;
+    const gridPos = worldToGrid(worldX, worldZ, tileSize);
 
-    const radius = CONFIG.PLAYER_RADIUS * 0.9;
-    const offsets = [
-      { x: radius, z: radius },
-      { x: radius, z: -radius },
-      { x: -radius, z: radius },
-      { x: -radius, z: -radius },
-      { x: radius, z: 0 },
-      { x: -radius, z: 0 },
-      { x: 0, z: radius },
-      { x: 0, z: -radius },
-    ];
+    // Quick reject: center tile must be walkable.
+    if (!this.worldState.isWalkable(gridPos.x, gridPos.y)) return false;
 
-    for (const offset of offsets) {
-      const checkPos = worldToGrid(
-        worldX + offset.x,
-        worldZ + offset.z,
-        CONFIG.TILE_SIZE
-      );
+    // Circle-vs-tile overlap check against nearby blocked tiles (walls + obstacleMap).
+    for (let gy = gridPos.y - 1; gy <= gridPos.y + 1; gy++) {
+      for (let gx = gridPos.x - 1; gx <= gridPos.x + 1; gx++) {
+        if (this.worldState.isWalkable(gx, gy)) continue;
 
-      if (!this.worldState.isWalkable(checkPos.x, checkPos.y)) {
-        return false;
+        const tileMinX = gx * tileSize;
+        const tileMaxX = tileMinX + tileSize;
+        const tileMinZ = gy * tileSize;
+        const tileMaxZ = tileMinZ + tileSize;
+
+        const nearestX = Math.max(tileMinX, Math.min(worldX, tileMaxX));
+        const nearestZ = Math.max(tileMinZ, Math.min(worldZ, tileMaxZ));
+
+        const dx = worldX - nearestX;
+        const dz = worldZ - nearestZ;
+        if (dx * dx + dz * dz < radius * radius) {
+          return false;
+        }
       }
     }
 
