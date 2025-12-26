@@ -186,9 +186,20 @@ export class Gun {
       return;
     }
 
+    const fired = this.fireWeapon(def, state);
+    if (!fired) {
+      // Avoid spamming CPU/audio when we're capped (e.g., too many projectiles).
+      state.cooldown = Math.max(state.cooldown || 0, 0.05);
+      return;
+    }
+
     state.ammoInMag -= 1;
     state.cooldown = def.fireInterval ?? 0.1;
-    this.fireWeapon(def, state);
+
+    // Auto-reload when empty and reserve is available.
+    if ((state.ammoInMag || 0) <= 0 && (state.ammoReserve || 0) > 0) {
+      this.tryStartReload();
+    }
   }
 
   switchWeaponByIndex(index) {
@@ -323,10 +334,10 @@ export class Gun {
 
   fireWeapon(def, state) {
     const cam = this.getCameraObject();
-    if (!cam || !this.projectileManager) return;
+    if (!cam || !this.projectileManager) return false;
 
     const { origin, dir } = this.computeShotRay(cam);
-    if (!origin || !dir) return;
+    if (!origin || !dir) return false;
 
     const modeKey = state.mode && def.modes && def.modes[state.mode] ? state.mode : null;
     const mode = modeKey ? def.modes[modeKey] : null;
@@ -337,6 +348,20 @@ export class Gun {
       ...projBase,
       ...projMode
     };
+
+    let spawnedAny = false;
+    if (def.pellets && def.pellets > 1) {
+      const pellets = Math.max(1, Math.round(def.pellets));
+      const spread = def.spread ?? 0.1;
+      for (let i = 0; i < pellets; i++) {
+        const d = this.applySpread(dir, spread);
+        spawnedAny = this.spawnPlayerProjectile(origin, d, options) || spawnedAny;
+      }
+    } else {
+      spawnedAny = this.spawnPlayerProjectile(origin, dir, options) || spawnedAny;
+    }
+
+    if (!spawnedAny) return false;
 
     this.weaponView?.kick?.(def.recoilKick ?? 1.0);
     this.spawnMuzzleFlash(origin, dir, def.muzzleColor ?? 0xffdd88, 2.0);
@@ -349,32 +374,18 @@ export class Gun {
       direction: dir.clone()
     });
 
-    if (def.pellets && def.pellets > 1) {
-      const pellets = Math.max(1, Math.round(def.pellets));
-      const spread = def.spread ?? 0.1;
-      for (let i = 0; i < pellets; i++) {
-        const d = this.applySpread(dir, spread);
-        this.spawnPlayerProjectile(origin, d, options);
-      }
-    } else {
-      this.spawnPlayerProjectile(origin, dir, options);
-    }
-
     this.registerPlayerNoise(origin, 1.0);
     this.audioManager?.playGunshot?.();
-
-    // Auto-reload when empty and reserve is available.
-    if ((state.ammoInMag || 0) <= 0 && (state.ammoReserve || 0) > 0) {
-      this.tryStartReload();
-    }
+    return true;
   }
 
   spawnPlayerProjectile(origin, direction, options) {
     if (this.projectileManager?.spawnPlayerProjectile) {
-      this.projectileManager.spawnPlayerProjectile(origin, direction, options);
+      return this.projectileManager.spawnPlayerProjectile(origin, direction, options);
     } else if (this.projectileManager?.spawnBullet) {
-      this.projectileManager.spawnBullet(origin, direction);
+      return this.projectileManager.spawnBullet(origin, direction);
     }
+    return false;
   }
 
   registerPlayerNoise(origin, strength = 1.0) {

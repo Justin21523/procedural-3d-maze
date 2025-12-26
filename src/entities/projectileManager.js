@@ -222,7 +222,7 @@ export class ProjectileManager {
    * @param {THREE.Vector3} direction - normalized
    */
   spawnBullet(origin, direction) {
-    this.spawnProjectile({
+    return this.spawnProjectile({
       origin,
       direction,
       owner: 'player',
@@ -247,7 +247,7 @@ export class ProjectileManager {
     const damage = options.damage ?? (CONFIG.PLAYER_BULLET_DAMAGE ?? 1);
     const kind = options.kind ?? 'bullet';
 
-    this.spawnProjectile({
+    return this.spawnProjectile({
       origin,
       direction,
       owner: 'player',
@@ -278,7 +278,7 @@ export class ProjectileManager {
     const damage = options.damage ?? this.monsterProjectileDamage;
     const color = options.color ?? 0x77ccff;
 
-    this.spawnProjectile({
+    return this.spawnProjectile({
       origin,
       direction,
       owner: 'monster',
@@ -532,24 +532,24 @@ export class ProjectileManager {
   spawnProjectile(options) {
     const origin = options?.origin;
     const direction = options?.direction;
-    if (!origin || !direction) return;
+    if (!origin || !direction) return false;
 
     const dir = direction.clone().normalize();
     const owner = options.owner || 'player';
 
     const maxTotal = CONFIG.MAX_ACTIVE_PROJECTILES;
     if (Number.isFinite(maxTotal) && maxTotal >= 0 && this.projectiles.length >= maxTotal) {
-      return;
+      return false;
     }
     const maxPlayer = CONFIG.MAX_ACTIVE_PLAYER_PROJECTILES;
     const maxMonster = CONFIG.MAX_ACTIVE_MONSTER_PROJECTILES;
     if (owner === 'player' && Number.isFinite(maxPlayer) && maxPlayer >= 0) {
       const count = this.activeCounts?.player ?? 0;
-      if (count >= maxPlayer) return;
+      if (count >= maxPlayer) return false;
     }
     if (owner === 'monster' && Number.isFinite(maxMonster) && maxMonster >= 0) {
       const count = this.activeCounts?.monster ?? 0;
-      if (count >= maxMonster) return;
+      if (count >= maxMonster) return false;
     }
 
     const kind = options.kind || 'bullet';
@@ -561,7 +561,7 @@ export class ProjectileManager {
     const projectile = pool.length > 0 ? pool.pop() : this.createPooledProjectile(poolKey);
     const mesh = projectile.mesh;
 
-    if (!mesh) return;
+    if (!mesh) return false;
 
     if (poolKey === 'bolt') {
       const color = options.color ?? 0x77ccff;
@@ -620,6 +620,7 @@ export class ProjectileManager {
       if (owner === 'player') this.activeCounts.player = (this.activeCounts.player ?? 0) + 1;
       else if (owner === 'monster') this.activeCounts.monster = (this.activeCounts.monster ?? 0) + 1;
     }
+    return true;
   }
 
   segmentSphereHit(start, end, center, radius) {
