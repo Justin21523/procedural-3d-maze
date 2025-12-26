@@ -12,6 +12,25 @@ export class MonsterSpawner {
     this.pendingRespawns = [];
   }
 
+  getMaxAliveMonsters() {
+    const manager = this.manager;
+    const fromLevel = manager?.levelConfig?.monsters?.maxCount;
+    const fromConfig = CONFIG.MONSTER_MAX_COUNT;
+    const max = fromLevel ?? fromConfig ?? Infinity;
+    return Number.isFinite(max) ? Math.max(0, max) : Infinity;
+  }
+
+  getAliveCount() {
+    const monsters = this.manager?.monsters || [];
+    let alive = 0;
+    for (const m of monsters) {
+      if (!m) continue;
+      if (m.isDead) continue;
+      alive += 1;
+    }
+    return alive;
+  }
+
   setAutoRespawnEnabled(enabled) {
     this.autoRespawnEnabled = !!enabled;
   }
@@ -148,6 +167,10 @@ export class MonsterSpawner {
     if (!spawnPosition) return;
     const manager = this.manager;
     const levelConfig = manager.levelConfig;
+    const maxAlive = this.getMaxAliveMonsters();
+    if (Number.isFinite(maxAlive) && this.getAliveCount() >= maxAlive) {
+      return;
+    }
 
     if (!(CONFIG.MONSTER_USE_ASSET_MODELS ?? true)) {
       manager.spawnPlaceholderMonster(spawnPosition, typeConfig, levelConfig);
@@ -192,6 +215,10 @@ export class MonsterSpawner {
     const manager = this.manager;
     const spawn = this.pickRespawnPoint();
     if (!spawn) return;
+    const maxAlive = this.getMaxAliveMonsters();
+    if (Number.isFinite(maxAlive) && this.getAliveCount() >= maxAlive) {
+      return;
+    }
 
     if (!(CONFIG.MONSTER_USE_ASSET_MODELS ?? true)) {
       manager.spawnPlaceholderMonster(spawn, typeConfig, manager.levelConfig);
