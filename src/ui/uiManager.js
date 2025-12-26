@@ -122,6 +122,15 @@ export class UIManager {
     );
 
     this.unsubscribers.push(
+      this.eventBus.on(EVENTS.UI_TOAST, (payload) => {
+        const text = String(payload?.text || '');
+        if (!text) return;
+        const seconds = Number.isFinite(payload?.seconds) ? payload.seconds : 1.8;
+        this.flashInteractPrompt(text, seconds);
+      })
+    );
+
+    this.unsubscribers.push(
       this.eventBus.on(EVENTS.MISSION_UPDATED, (payload) => {
         const objective = payload?.objectiveText ?? payload?.summary ?? '';
         if (this.missionObjectiveElement) {
@@ -148,6 +157,9 @@ export class UIManager {
     if (dt <= 0) return;
 
     const now = Number.isFinite(nowMs) ? nowMs : performance.now();
+    if (this.player?.input?.consumeKeyPress?.('KeyH')) {
+      this.eventBus?.emit?.(EVENTS.MISSION_HINT_REQUESTED, { nowMs: now, actorKind: 'player' });
+    }
     this.updateFPS(now);
     this.updateCrosshairPulse(dt);
     this.updateInteractPrompt(dt);
@@ -177,7 +189,7 @@ export class UIManager {
     const el = this.interactPromptElement;
     if (!el) return;
 
-    const text = this.interactHoverText || this.interactFlashText || '';
+    const text = this.interactFlashText || this.interactHoverText || '';
     const hidden = !text;
     if (this.lastInteractPromptHidden !== hidden) {
       if (hidden) el.classList.add('hidden');
