@@ -192,7 +192,8 @@ procedural-3d-maze/
 1. 確認 dev server 運行（預設 3000，或使用 `--port 3002` 以配合測試文件）
 2. AI 匯入檢查：開啟 `http://localhost:3002/test-ai.html`（改成你的埠）→ 預期綠色「All modules loaded successfully」訊息
 3. 主程式診斷：開啟 `diagnostic.html` → 按「Test Main Game」→ 預期 `main.js loaded successfully`
-4. 遊戲驗證：開啟 `/` 首頁 → 點擊「Click to Start」取得 Pointer Lock → 確認迷你地圖渲染、怪物生成日誌與移動操作正常
+4. Enemy Lab：開啟 `http://localhost:3002/enemy-lab.html` → 測試模型站立/比例/貼地，並可直接存到 `public/models/<enemy>/meta.json`
+5. 遊戲驗證：開啟 `/` 首頁 → 點擊「Click to Start」取得 Pointer Lock → 確認迷你地圖渲染、怪物生成日誌與移動操作正常
 
 ---
 

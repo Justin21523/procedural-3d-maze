@@ -49,6 +49,31 @@ npm run dev -- --host --port 3002
 
 ---
 
+### 步骤 2.5: 调整/预览敌人 meta.json（模型朝向/比例/贴地）
+访问: **http://localhost:3002/test-enemy-meta.html**
+
+用途：
+- 从 `/models/manifest.json` 选择模型（支持 `.dae/.glb/.gltf`）
+- 调整 `scaleMultiplier / groundOffset / correctionRotationDeg`
+- 复制输出的 JSON，粘贴到 `public/models/<enemy>/meta.json`（或 `public/models/<file>.meta.json`）
+
+---
+
+### 步骤 2.6: Enemy Lab（第一人称实验室：模型/战斗/保存）
+访问: **http://localhost:3002/enemy-lab.html**
+
+用途：
+- 第一人称视角测试：移动、开枪、怪物攻击与受击反应
+- Tab 面板调参：
+  - **Model**：模型选择、spawn（single / squad）、scale / groundOffset / upright rotation、预览 yaw
+  - **Combat**：`meta.combat.ranged`（射程/伤害/间隔/弹匣/装填/对准角度等）
+  - **Save**：一键保存到 `public/models/<enemy>/meta.json`（通过 dev server 的 `/api/enemy-meta`）
+
+提示：
+- Save 只有在跑 Vite dev server 时可用；若失败可用 Copy JSON 手动贴到对应 meta 文件。
+
+---
+
 ### 步骤 3: 测试实际游戏
 访问: **http://localhost:3002/**
 
