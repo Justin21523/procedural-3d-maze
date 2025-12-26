@@ -193,7 +193,8 @@ export class AutoPilot {
     const wantsInteractTargets =
       objectiveTemplate === 'findKeycard' ||
       objectiveTemplate === 'collectEvidence' ||
-      objectiveTemplate === 'restorePower';
+      objectiveTemplate === 'restorePower' ||
+      objectiveTemplate === 'codeLock';
 
     if (wantsInteractTargets) {
       const objectiveTargets = (objectiveId && objectiveTemplate !== 'exit')
