@@ -24,6 +24,10 @@ export class GameState {
     this.hasLost = false;
     this.gameOver = false;
 
+    // Exit gating (missions can lock the exit until objectives are met)
+    this.exitUnlocked = true;
+    this.exitLockedReason = '';
+
     // Objectives
     this.exitFound = false;
     this.itemsCollected = 0;
@@ -243,6 +247,8 @@ export class GameState {
     this.hasLost = false;
     this.gameOver = false;
     this.exitFound = false;
+    this.exitUnlocked = true;
+    this.exitLockedReason = '';
     this.itemsCollected = 0;
     this.steps = 0;
     this.roomsVisited.clear();
@@ -252,6 +258,11 @@ export class GameState {
     this.isRunning = false;
 
     console.log('🔄 GameState reset');
+  }
+
+  setExitUnlocked(unlocked, reason = '') {
+    this.exitUnlocked = unlocked !== false;
+    this.exitLockedReason = this.exitUnlocked ? '' : String(reason || '');
   }
 
   /**

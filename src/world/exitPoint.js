@@ -26,6 +26,8 @@ export class ExitPoint {
     // Place the group at floor level; the portal visuals are positioned within the group.
     this.baseY = 0;
     this.mesh.position.set(this.worldX, this.baseY, this.worldZ);
+    this.unlocked = true;
+    this.setUnlocked(true);
 
     // Animation
     this.time = 0;
@@ -116,6 +118,43 @@ export class ExitPoint {
     group.add(light);
 
     return group;
+  }
+
+  setUnlocked(unlocked) {
+    this.unlocked = unlocked !== false;
+    const color = this.unlocked ? 0x00ff00 : 0xff4444;
+
+    const ring = this.mesh?.children?.[0] || null;
+    if (ring?.material) {
+      ring.material.color.setHex(color);
+      ring.material.emissive.setHex(color);
+    }
+
+    const glow = this.mesh?.children?.[1] || null;
+    if (glow?.material) {
+      glow.material.color.setHex(color);
+    }
+
+    const platform = this.mesh?.children?.[2] || null;
+    if (platform?.material) {
+      platform.material.color.setHex(this.unlocked ? 0x44ff44 : 0x663333);
+      platform.material.emissive.setHex(color);
+    }
+
+    if (this.mesh) {
+      this.mesh.children.forEach((child) => {
+        if (!child) return;
+        if (child.isPointLight) {
+          child.color?.setHex?.(color);
+          child.intensity = this.unlocked ? 2 : 1.2;
+          return;
+        }
+        if (child.isMesh && child.material && child !== ring && child !== glow && child !== platform) {
+          child.material.color?.setHex?.(color);
+          child.material.emissive?.setHex?.(color);
+        }
+      });
+    }
   }
 
   /**
