@@ -56,6 +56,13 @@ export class UIManager {
     this.lastInteractPromptText = null;
     this.lastInteractPromptHidden = null;
 
+    // Puzzle UI: keypad input mode (captures digit keys without triggering weapon binds)
+    this.keypadMode = null; // { keypadId, codeLength }
+    this.keypadBuffer = '';
+    this.keypadSubmitting = false;
+    this._keypadKeydownCapture = (e) => this.onKeypadKeydownCapture(e);
+    window.addEventListener('keydown', this._keypadKeydownCapture, true);
+
     this.unsubscribers = [];
     this.bindEvents();
   }
@@ -138,6 +145,36 @@ export class UIManager {
         }
       })
     );
+
+    this.unsubscribers.push(
+      this.eventBus.on(EVENTS.INTERACT, (payload) => {
+        if (payload?.actorKind !== 'player') return;
+        if (payload?.kind !== 'keypad') return;
+        if (!payload?.result?.openKeypad) return;
+
+        const keypadId = String(payload?.id || '').trim();
+        if (!keypadId) return;
+        const codeLength = Number(payload?.result?.codeLength);
+        this.openKeypadInput({ keypadId, codeLength });
+      })
+    );
+
+    this.unsubscribers.push(
+      this.eventBus.on(EVENTS.KEYPAD_CODE_RESULT, (payload) => {
+        if (payload?.actorKind !== 'player') return;
+        const keypadId = String(payload?.keypadId || '').trim();
+        if (!keypadId) return;
+        if (this.keypadMode?.keypadId !== keypadId) return;
+
+        this.keypadSubmitting = false;
+        if (payload?.ok) {
+          this.closeKeypadInput();
+        } else {
+          this.keypadBuffer = '';
+          this.renderInteractPrompt();
+        }
+      })
+    );
   }
 
   setRefs({ player, worldState, gameState, gun } = {}) {
@@ -166,6 +203,114 @@ export class UIManager {
     this.updateHud();
   }
 
+  openKeypadInput({ keypadId, codeLength } = {}) {
+    const id = String(keypadId || '').trim();
+    if (!id) return;
+    const len = Number.isFinite(codeLength) ? Math.max(1, Math.floor(codeLength)) : 3;
+    this.keypadMode = { keypadId: id, codeLength: len };
+    this.keypadBuffer = '';
+    this.keypadSubmitting = false;
+    this.renderInteractPrompt();
+  }
+
+  closeKeypadInput() {
+    this.keypadMode = null;
+    this.keypadBuffer = '';
+    this.keypadSubmitting = false;
+    this.renderInteractPrompt();
+  }
+
+  getKeypadPromptText() {
+    if (!this.keypadMode?.keypadId) return '';
+    const len = Number(this.keypadMode.codeLength) || 0;
+    const buf = String(this.keypadBuffer || '');
+    const padded = len > 0
+      ? (buf + '_'.repeat(Math.max(0, len - buf.length))).slice(0, len)
+      : buf;
+    const status = this.keypadSubmitting ? 'Submitting…' : 'Enter=OK Backspace=Del E=Exit';
+    return `Keypad: ${padded} (${status})`;
+  }
+
+  codeToDigit(code) {
+    const c = String(code || '');
+    if (c.length === 6 && c.startsWith('Digit')) {
+      const d = c.slice(5);
+      if (d >= '0' && d <= '9') return d;
+    }
+    if (c.length === 7 && c.startsWith('Numpad')) {
+      const d = c.slice(6);
+      if (d >= '0' && d <= '9') return d;
+    }
+    return null;
+  }
+
+  onKeypadKeydownCapture(e) {
+    if (!this.keypadMode?.keypadId) return;
+    if (!e?.code) return;
+
+    const codeLength = Number(this.keypadMode.codeLength) || 0;
+    const digit = this.codeToDigit(e.code);
+
+    if (digit !== null) {
+      if (!this.keypadSubmitting && (this.keypadBuffer.length < codeLength || codeLength <= 0)) {
+        this.keypadBuffer += digit;
+        if (codeLength > 0) this.keypadBuffer = this.keypadBuffer.slice(0, codeLength);
+        this.renderInteractPrompt();
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    if (e.code === 'Backspace') {
+      if (!this.keypadSubmitting) {
+        if (this.keypadBuffer.length > 0) {
+          this.keypadBuffer = this.keypadBuffer.slice(0, -1);
+          this.renderInteractPrompt();
+        } else {
+          this.closeKeypadInput();
+        }
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+      if (this.keypadSubmitting) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (codeLength > 0 && this.keypadBuffer.length !== codeLength) {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, {
+          text: `Enter ${codeLength} digits.`,
+          seconds: 1.4
+        });
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      this.keypadSubmitting = true;
+      this.eventBus?.emit?.(EVENTS.KEYPAD_CODE_SUBMITTED, {
+        actorKind: 'player',
+        keypadId: this.keypadMode.keypadId,
+        code: String(this.keypadBuffer || ''),
+        nowMs: performance.now()
+      });
+      this.renderInteractPrompt();
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    if (e.code === 'Escape' || e.code === 'KeyE') {
+      this.closeKeypadInput();
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }
+
   setInteractHoverText(text) {
     this.interactHoverText = String(text || '');
     this.renderInteractPrompt();
@@ -189,7 +334,9 @@ export class UIManager {
     const el = this.interactPromptElement;
     if (!el) return;
 
-    const text = this.interactFlashText || this.interactHoverText || '';
+    const keypadText = this.getKeypadPromptText();
+    const baseText = keypadText || this.interactHoverText || '';
+    const text = this.interactFlashText || baseText || '';
     const hidden = !text;
     if (this.lastInteractPromptHidden !== hidden) {
       if (hidden) el.classList.add('hidden');
@@ -335,6 +482,7 @@ export class UIManager {
 
   showGameOver(won, reason = null) {
     if (!this.gameOverElement) return;
+    this.closeKeypadInput();
 
     if (this.gameOverTitleElement && this.gameOverMessageElement) {
       if (won) {
@@ -370,5 +518,6 @@ export class UIManager {
   dispose() {
     this.unsubscribers.forEach((fn) => fn?.());
     this.unsubscribers = [];
+    window.removeEventListener('keydown', this._keypadKeydownCapture, true);
   }
 }
