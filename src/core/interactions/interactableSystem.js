@@ -348,7 +348,8 @@ export class InteractableSystem {
 
     const input = this.input;
     const wantsManual = !!input?.consumeKeyPress?.('KeyE');
-    const wantsAuto = !!ctx?.externalCommand?.interact;
+    const interactCmd = ctx?.externalCommand?.interact;
+    const wantsAuto = interactCmd === true || typeof interactCmd === 'string';
     if (!wantsManual && !wantsAuto) return;
 
     if (wantsManual) {
@@ -362,6 +363,19 @@ export class InteractableSystem {
     }
 
     // Autopilot / AI: allow proximity interact without strict raycast aiming.
+    if (typeof interactCmd === 'string') {
+      const wantedId = interactCmd.trim();
+      if (!wantedId) return;
+      const wanted = this.get(wantedId);
+      if (!wanted) return;
+      this.tryInteract(wanted, {
+        actorKind: 'ai',
+        playerPos,
+        nowMs: ctx?.nowMs
+      });
+      return;
+    }
+
     const target = hovered || this.pickNearest(playerPos, this.autoInteractDistance);
     if (!target) return;
     this.tryInteract(target, {

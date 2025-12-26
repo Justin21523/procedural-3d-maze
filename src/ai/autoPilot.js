@@ -498,6 +498,10 @@ export class AutoPilot {
       this.interactCooldown = 0.65;
     }
 
+    const interact = wantsInteract
+      ? (typeof this.taskInteractId === 'string' && this.taskInteractId.trim() ? this.taskInteractId.trim() : true)
+      : false;
+
     if (!this.currentPath || this.currentPath.length === 0) {
       return {
         move: { x: 0, y: 0 },
@@ -505,7 +509,7 @@ export class AutoPilot {
         lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
         sprint: false,
         block,
-        interact: wantsInteract,
+        interact,
         fire: !!combat?.fire
       };
     }
@@ -595,7 +599,7 @@ export class AutoPilot {
       this.plan(playerPos);
     }
 
-    return { moveWorld, lookYaw, lookPitch, sprint, block, interact: wantsInteract, fire: !!combat?.fire };
+    return { moveWorld, lookYaw, lookPitch, sprint, block, interact, fire: !!combat?.fire };
   }
 
   computeCombatDirective(playerGrid, deltaTime, options = {}) {
