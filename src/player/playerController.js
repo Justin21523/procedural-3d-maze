@@ -5,6 +5,7 @@
 
 import * as THREE from 'three';
 import { CONFIG } from '../core/config.js';
+import { EVENTS } from '../core/events.js';
 import { worldToGrid, gridToWorld } from '../utils/math.js';
 
 export class PlayerController {
@@ -22,11 +23,18 @@ export class PlayerController {
     this.gameState = gameState;
     this.audioManager = audioManager;
 
+    // Defense (block/guard)
+    this.blocking = false;
+    this.blockStaminaMax = CONFIG.PLAYER_BLOCK_STAMINA_MAX ?? 100;
+    this.blockStamina = this.blockStaminaMax;
+    this.blockCooldown = 0;
+
     // Position & movement state
     this.position = new THREE.Vector3(0, CONFIG.PLAYER_HEIGHT, 0);
     this.velocity = new THREE.Vector3(0, 0, 0);
     this.externalMove = null;
     this.externalLookYaw = null;
+    this.externalLookPitch = null;
 
     // Tracking
     this.lastPosition = new THREE.Vector3();
@@ -60,6 +68,8 @@ export class PlayerController {
       return;
     }
 
+    this.updateBlockState(deltaTime, externalCommand);
+
     if (externalCommand) {
       this.applyExternalControl(externalCommand, deltaTime);
     }
@@ -82,9 +92,28 @@ export class PlayerController {
       this.externalLookYaw = null;
     }
 
-    const moveVector = this.externalMove
+    // Autopilot absolute pitch (if any) comes after manual look, smoothed
+    if (this.externalLookPitch !== null) {
+      const currentPitch = this.camera.getPitch ? this.camera.getPitch() : 0;
+      const delta = this.externalLookPitch - currentPitch;
+      const maxStep = (CONFIG.AUTOPILOT_TURN_SPEED || 3) * deltaTime;
+      const applied = Math.max(-maxStep, Math.min(maxStep, delta));
+      if (typeof this.camera.setPitch === 'function') {
+        this.camera.setPitch(currentPitch + applied);
+      }
+      this.externalLookPitch = null;
+    }
+
+    let moveVector = this.externalMove
       ? this.externalMove.clone()
       : this.calculateMovement(deltaTime);
+
+    if (this.blocking) {
+      const mult = CONFIG.PLAYER_BLOCK_MOVE_MULT ?? 0.85;
+      if (Number.isFinite(mult) && mult >= 0) {
+        moveVector.multiplyScalar(mult);
+      }
+    }
 
     this.applyMovement(moveVector);
     this.updateStatistics();
@@ -186,6 +215,10 @@ export class PlayerController {
     if (cmd?.lookYaw !== undefined && cmd.lookYaw !== null) {
       this.externalLookYaw = cmd.lookYaw;
     }
+
+    if (cmd?.lookPitch !== undefined && cmd.lookPitch !== null) {
+      this.externalLookPitch = cmd.lookPitch;
+    }
   }
 
   /**
@@ -193,58 +226,72 @@ export class PlayerController {
    * @param {THREE.Vector3} moveVector
    */
   applyMovement(moveVector) {
-    if (moveVector.lengthSq() === 0) {
-      return;
+    if (moveVector.lengthSq() === 0) return;
+
+    const beforeX = this.position.x;
+    const beforeZ = this.position.z;
+
+    // Sweep via step subdivision to avoid tunneling through walls/obstacles when dt spikes.
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const maxStep = Math.max(0.08, tileSize * 0.25);
+    const dist = Math.hypot(moveVector.x, moveVector.z);
+    const steps = Math.max(1, Math.ceil(dist / maxStep));
+
+    const stepX = moveVector.x / steps;
+    const stepZ = moveVector.z / steps;
+
+    for (let i = 0; i < steps; i++) {
+      this.applyMovementStep(stepX, stepZ);
     }
 
-    const beforePos = this.position.clone();
-    const targetX = this.position.x + moveVector.x;
-    const targetZ = this.position.z + moveVector.z;
-
-    // 1) Try full move
-    if (this.canMoveTo(targetX, targetZ)) {
-      this.position.x = targetX;
-      this.position.z = targetZ;
-      this.separateFromWalls();
-      return;
-    }
-
-    // 2) Axis-aligned slide (favor larger axis)
-    let moved = false;
-    if (Math.abs(moveVector.x) > Math.abs(moveVector.z)) {
-      const newPosX = this.position.x + moveVector.x;
-      if (this.canMoveTo(newPosX, this.position.z)) {
-        this.position.x = newPosX;
-        moved = true;
-      }
-      const newPosZ = this.position.z + moveVector.z;
-      if (this.canMoveTo(this.position.x, newPosZ)) {
-        this.position.z = newPosZ;
-        moved = true;
-      }
-    } else {
-      const newPosZ = this.position.z + moveVector.z;
-      if (this.canMoveTo(this.position.x, newPosZ)) {
-        this.position.z = newPosZ;
-        moved = true;
-      }
-      const newPosX = this.position.x + moveVector.x;
-      if (this.canMoveTo(newPosX, this.position.z)) {
-        this.position.x = newPosX;
-        moved = true;
-      }
-    }
-
-    // 3) If barely moved, attempt small nudge to get unstuck
-    const movedDistance = this.position.distanceTo(beforePos);
+    // If barely moved, attempt small nudge to get unstuck
+    const dx = this.position.x - beforeX;
+    const dz = this.position.z - beforeZ;
+    const movedDistance = Math.hypot(dx, dz);
     if (movedDistance < 0.0001) {
       this.tryUnstuck(moveVector);
     } else {
       this.stuckTimer = 0;
     }
 
-    // 4) Final separation from nearby walls/corners
+    // Final separation from nearby walls/corners
     this.separateFromWalls();
+  }
+
+  applyMovementStep(stepX, stepZ) {
+    if (!Number.isFinite(stepX) || !Number.isFinite(stepZ)) return;
+    if (Math.abs(stepX) <= 1e-8 && Math.abs(stepZ) <= 1e-8) return;
+
+    const targetX = this.position.x + stepX;
+    const targetZ = this.position.z + stepZ;
+
+    // 1) Try full move
+    if (this.canMoveTo(targetX, targetZ)) {
+      this.position.x = targetX;
+      this.position.z = targetZ;
+      return;
+    }
+
+    // 2) Axis-aligned slide (favor larger axis)
+    if (Math.abs(stepX) > Math.abs(stepZ)) {
+      const newPosX = this.position.x + stepX;
+      if (this.canMoveTo(newPosX, this.position.z)) {
+        this.position.x = newPosX;
+      }
+      const newPosZ = this.position.z + stepZ;
+      if (this.canMoveTo(this.position.x, newPosZ)) {
+        this.position.z = newPosZ;
+      }
+    } else {
+      const newPosZ = this.position.z + stepZ;
+      if (this.canMoveTo(this.position.x, newPosZ)) {
+        this.position.z = newPosZ;
+      }
+      const newPosX = this.position.x + stepX;
+      if (this.canMoveTo(newPosX, this.position.z)) {
+        this.position.x = newPosX;
+      }
+    }
   }
 
   /**
@@ -395,6 +442,105 @@ export class PlayerController {
    */
   getGridPosition() {
     return worldToGrid(this.position.x, this.position.z, CONFIG.TILE_SIZE);
+  }
+
+  /**
+   * @returns {boolean} True if sprinting
+   */
+  isSprinting() {
+    return !!this.input?.isSprinting?.();
+  }
+
+  isBlocking() {
+    return !!this.blocking;
+  }
+
+  getBlockState() {
+    return {
+      blocking: !!this.blocking,
+      stamina: this.blockStamina,
+      maxStamina: this.blockStaminaMax,
+      cooldown: this.blockCooldown
+    };
+  }
+
+  /**
+   * Damage multiplier applied by CombatSystem.
+   * @returns {number} 0..1
+   */
+  getDamageTakenMultiplier() {
+    if (!(CONFIG.PLAYER_BLOCK_ENABLED ?? true)) return 1.0;
+    if (!this.blocking) return 1.0;
+    if ((this.blockCooldown || 0) > 0) return 1.0;
+    if ((this.blockStamina || 0) <= 0) return 1.0;
+    const mult = CONFIG.PLAYER_BLOCK_DAMAGE_MULT ?? 0.35;
+    if (!Number.isFinite(mult)) return 1.0;
+    return Math.max(0, Math.min(1, mult));
+  }
+
+  updateBlockState(deltaTime, externalCommand = null) {
+    const dt = deltaTime ?? 0;
+    if (!(dt > 0)) return;
+
+    const enabled = CONFIG.PLAYER_BLOCK_ENABLED ?? true;
+    const maxStamina = CONFIG.PLAYER_BLOCK_STAMINA_MAX ?? 100;
+    const drain = CONFIG.PLAYER_BLOCK_STAMINA_DRAIN ?? 34;
+    const regen = CONFIG.PLAYER_BLOCK_STAMINA_REGEN ?? 22;
+    const cooldownSeconds = CONFIG.PLAYER_BLOCK_COOLDOWN ?? 1.2;
+    const minStart = CONFIG.PLAYER_BLOCK_MIN_STAMINA_START ?? 10;
+
+    const eventBus = this.gameState?.eventBus || null;
+    const wasBlocking = !!this.blocking;
+    let broke = false;
+
+    this.blockCooldown = Math.max(0, (this.blockCooldown || 0) - dt);
+    this.blockStaminaMax = Number.isFinite(maxStamina) && maxStamina > 0 ? maxStamina : 100;
+    this.blockStamina = Math.max(0, Math.min(this.blockStaminaMax, this.blockStamina));
+
+    if (!enabled) {
+      this.blocking = false;
+      this.blockCooldown = 0;
+      this.blockStamina = this.blockStaminaMax;
+      if (wasBlocking && eventBus?.emit) {
+        eventBus.emit(EVENTS.PLAYER_BLOCK_END, this.getBlockState());
+      }
+      return;
+    }
+
+    const wantsExternal = !!(externalCommand && (externalCommand.block || externalCommand.defend));
+    const wantsKey = !!this.input?.isKeyPressed?.('KeyF');
+    const wantsRightMouse = !!(this.input?.isPointerLocked?.() && this.input?.mouseButtons?.right);
+    const wantsBlock = wantsExternal || wantsKey || wantsRightMouse;
+
+    const canHold = (this.blockCooldown || 0) <= 0 && (this.blockStamina || 0) > 0;
+    const canStart = (this.blockCooldown || 0) <= 0 && (this.blockStamina || 0) > minStart;
+    this.blocking = wantsBlock && (wasBlocking ? canHold : canStart);
+
+    if (this.blocking) {
+      this.blockStamina = Math.max(0, this.blockStamina - drain * dt);
+      if ((this.blockStamina || 0) <= 0) {
+        this.blockStamina = 0;
+        this.blocking = false;
+        broke = true;
+        if (Number.isFinite(cooldownSeconds) && cooldownSeconds > 0) {
+          this.blockCooldown = Math.max(this.blockCooldown || 0, cooldownSeconds);
+        }
+      }
+    } else {
+      this.blockStamina = Math.min(this.blockStaminaMax, this.blockStamina + regen * dt);
+    }
+
+    if (!wasBlocking && this.blocking && eventBus?.emit) {
+      eventBus.emit(EVENTS.PLAYER_BLOCK_START, this.getBlockState());
+    }
+
+    if (wasBlocking && !this.blocking && eventBus?.emit) {
+      if (broke) {
+        eventBus.emit(EVENTS.PLAYER_BLOCK_BROKEN, this.getBlockState());
+      } else {
+        eventBus.emit(EVENTS.PLAYER_BLOCK_END, this.getBlockState());
+      }
+    }
   }
 
   /**

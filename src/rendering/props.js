@@ -290,6 +290,156 @@ export function createBoxStack(x, z) {
   return group;
 }
 
+export function createRoomPropsFromPlan(roomType, gridX, gridY, planEntry) {
+  const props = [];
+  if (CONFIG.LOW_PERF_MODE) return props;
+  if (!planEntry || typeof planEntry !== 'object') return props;
+
+  const worldX = gridX * CONFIG.TILE_SIZE;
+  const worldZ = gridY * CONFIG.TILE_SIZE;
+  const rot = Number.isFinite(planEntry.rotation) ? planEntry.rotation : 0;
+  const kind = String(planEntry.kind || '');
+
+  const offsetXZ = (dx, dz) => ({
+    x: dx * Math.cos(rot) + dz * Math.sin(rot),
+    z: -dx * Math.sin(rot) + dz * Math.cos(rot)
+  });
+
+  switch (kind) {
+    case 'deskChair': {
+      const desk = createDesk(worldX, worldZ, 0xb8a68f);
+      desk.rotation.y = rot;
+      props.push(desk);
+
+      const off = offsetXZ(0, 0.5);
+      props.push(createChair(worldX + off.x, worldZ + off.z, rot, 0x8b7355));
+      break;
+    }
+
+    case 'deskChairOffice': {
+      const desk = createDesk(worldX, worldZ, 0x5c3a1e);
+      desk.rotation.y = rot;
+      props.push(desk);
+
+      const off = offsetXZ(0, 0.5);
+      props.push(createChair(worldX + off.x, worldZ + off.z, rot, 0x3d2817));
+      break;
+    }
+
+    case 'chair': {
+      props.push(createChair(worldX, worldZ, rot, 0x8b7355));
+      break;
+    }
+
+    case 'chairOffice': {
+      props.push(createChair(worldX, worldZ, rot, 0x3d2817));
+      break;
+    }
+
+    case 'toilet': {
+      props.push(createToilet(worldX, worldZ, rot));
+      break;
+    }
+
+    case 'sink': {
+      props.push(createSink(worldX, worldZ, rot));
+      break;
+    }
+
+    case 'boxStack': {
+      const stack = createBoxStack(worldX, worldZ);
+      stack.rotation.y = rot;
+      props.push(stack);
+      break;
+    }
+
+    case 'bookshelf': {
+      props.push(createBookshelf(worldX, worldZ, rot));
+      break;
+    }
+
+    case 'gymSet': {
+      const treadmillMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.8 });
+      const treadmill = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.3, 0.6), treadmillMat);
+      treadmill.castShadow = true;
+      treadmill.receiveShadow = true;
+
+      const rackMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.7 });
+      const rack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.2, 0.2), rackMat);
+      rack.castShadow = true;
+      rack.receiveShadow = true;
+
+      const offRack = offsetXZ(0, 0.6);
+      treadmill.position.set(worldX, 0.15, worldZ);
+      treadmill.rotation.y = rot;
+      props.push(treadmill);
+
+      rack.position.set(worldX + offRack.x, 0.4, worldZ + offRack.z);
+      rack.rotation.y = rot;
+      props.push(rack);
+
+      for (let i = 0; i < 4; i++) {
+        const bell = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.4, 8), rackMat);
+        const offBell = offsetXZ(-0.3 + i * 0.2, 0.6);
+        bell.position.set(worldX + offBell.x, 0.5, worldZ + offBell.z);
+        bell.rotation.y = rot;
+        bell.rotation.z = Math.PI / 2;
+        bell.castShadow = true;
+        props.push(bell);
+      }
+      break;
+    }
+
+    case 'bedroomSet': {
+      const bedMat = new THREE.MeshStandardMaterial({ color: 0xc8a97e, roughness: 0.6 });
+      const mattressMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.8 });
+
+      const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.3, 0.9), bedMat);
+      bedFrame.castShadow = true;
+      bedFrame.receiveShadow = true;
+
+      const mattress = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.2, 0.8), mattressMat);
+      mattress.castShadow = true;
+      mattress.receiveShadow = true;
+
+      const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.25), mattressMat);
+      pillow.castShadow = true;
+
+      const tableMat = new THREE.MeshStandardMaterial({ color: 0x8d6e63, roughness: 0.7 });
+      const nightStand = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), tableMat);
+      nightStand.castShadow = true;
+      nightStand.receiveShadow = true;
+
+      bedFrame.position.set(worldX, 0.15, worldZ);
+      bedFrame.rotation.y = rot;
+      props.push(bedFrame);
+
+      mattress.position.set(worldX, 0.35, worldZ);
+      mattress.rotation.y = rot;
+      props.push(mattress);
+
+      const offPillow = offsetXZ(-0.4, 0);
+      pillow.position.set(worldX + offPillow.x, 0.45, worldZ + offPillow.z);
+      pillow.rotation.y = rot;
+      props.push(pillow);
+
+      const offTable = offsetXZ(0.9, 0.3);
+      nightStand.position.set(worldX + offTable.x, 0.2, worldZ + offTable.z);
+      nightStand.rotation.y = rot;
+      props.push(nightStand);
+      break;
+    }
+
+    default:
+      // Unknown plan kind.
+      break;
+  }
+
+  // Backwards-compatible guard: plan should match the tile's room type.
+  void roomType;
+  return props;
+}
+
 /**
  * Generate props for a room based on room type
  * @param {number} roomType - Room type from ROOM_TYPES
@@ -350,33 +500,9 @@ export function generateRoomProps(roomType, gridX, gridY, grid) {
       }
       break;
 
-    case ROOM_TYPES.POOL: {
-      // Pool rim
-      const rimMaterial = new THREE.MeshStandardMaterial({
-        color: 0x1f7ea5,
-        roughness: 0.35,
-        metalness: 0.12,
-        envMapIntensity: 1.0
-      });
-      const rim = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.25, 1.3), rimMaterial);
-      rim.position.set(worldX, 0.12, worldZ);
-      rim.castShadow = true;
-      rim.receiveShadow = true;
-      props.push(rim);
-
-      const waterVolume = createWaterVolume(worldX, worldZ);
-      props.push(waterVolume);
-
-      const water = createWaterSurface(worldX, worldZ);
-      props.push(water);
-
-      const buoyMaterial = new THREE.MeshStandardMaterial({ color: 0xff7043, roughness: 0.6 });
-      const buoy = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.07, 8, 16), buoyMaterial);
-      buoy.position.set(worldX, 0.4, worldZ);
-      buoy.rotation.x = Math.PI / 2;
-      props.push(buoy);
+    case ROOM_TYPES.POOL:
+      // Pool rooms are decorated by SceneManager with a dedicated pool model.
       break;
-    }
 
     case ROOM_TYPES.GYM: {
       // Treadmill-like block + dumbbell rack

@@ -5,9 +5,10 @@
 
 import * as THREE from 'three';
 import { CONFIG } from '../core/config.js';
+import { EVENTS } from './events.js';
 import { updateLighting } from '../rendering/lighting.js';
-import { ROOM_CONFIGS } from '../world/tileTypes.js';
 import { VisualEffects } from '../rendering/visualEffects.js';
+import { SystemRegistry } from './systemRegistry.js';
 
 export class GameLoop {
   /**
@@ -21,7 +22,7 @@ export class GameLoop {
    * @param {GameState} gameState - Game state manager (optional)
    * @param {ExitPoint} exitPoint - Exit point (optional)
    */
-  constructor(sceneManager, player, minimap = null, monsterManager = null, lights = null, worldState = null, gameState = null, exitPoint = null, missionPoints = [], autopilot = null, projectileManager = null, gun = null) {
+  constructor(sceneManager, player, minimap = null, monsterManager = null, lights = null, worldState = null, gameState = null, exitPoint = null, missionPoints = [], autopilot = null, projectileManager = null, gun = null, spawnDirector = null, uiManager = null) {
     this.sceneManager = sceneManager;
     this.player = player;
     this.minimap = minimap;
@@ -29,6 +30,8 @@ export class GameLoop {
     this.lights = lights;
     this.projectileManager = projectileManager;
     this.gun = gun;
+    this.spawnDirector = spawnDirector;
+    this.uiManager = uiManager;
 
     this.worldState = worldState;
     this.gameState = gameState;
@@ -45,21 +48,8 @@ export class GameLoop {
     this.running = false;
     this.lastTime = 0;
 
-    // FPS tracking
-    this.frameCount = 0;
-    this.fps = CONFIG.TARGET_FPS;
-    this.lastFpsUpdate = 0;
-    this.targetFrameTime = 1000 / CONFIG.TARGET_FPS; // Target time per frame in ms
     this.lastProgressPos = null;
     this.noProgressTimer = 0;
-
-    // UI elements
-    this.positionElement = document.getElementById('position');
-    this.fpsElement = document.getElementById('fps');
-    this.currentRoomElement = document.getElementById('current-room');
-    this.gameTimeElement = document.getElementById('game-time');
-    this.healthDisplayElement = document.getElementById('health-display');
-    this.healthFillElement = document.getElementById('health-fill');
 
     // Monster damage tracking
     this.lastMonsterDamageTime = 0;
@@ -73,6 +63,20 @@ export class GameLoop {
     this.onLose = null;
     this.winHandled = false;
     this.loseHandled = false;
+
+    this.frameContext = {
+      nowMs: 0,
+      dt: 0,
+      gameOver: false,
+      hasPlayerMove: false,
+      hasPlayerLook: false,
+      autopilotActive: false,
+      externalCommand: null,
+      playerPos: null,
+    };
+
+    this.systemRegistry = new SystemRegistry();
+    this.registerSystems();
   }
 
   /**
@@ -83,7 +87,6 @@ export class GameLoop {
 
     this.running = true;
     this.lastTime = performance.now();
-    this.lastFpsUpdate = this.lastTime;
 
     // Start game timer
     if (this.gameState && !this.gameState.isRunning) {
@@ -102,6 +105,281 @@ export class GameLoop {
     console.log('Game loop stopped');
   }
 
+  registerSystems() {
+    const systems = this.systemRegistry;
+    systems.systems = [];
+
+    // Handle win/lose callbacks even if gameOver happens from outside GameLoop (e.g. projectile hits).
+    systems.add('outcome', (dt, ctx) => {
+      if (!this.gameState?.gameOver) return;
+      if (this.gameState.hasWon && !this.winHandled) {
+        this.winHandled = true;
+        this.visualEffects?.victoryFlash?.();
+        if (typeof this.onWin === 'function') this.onWin();
+      } else if (this.gameState.hasLost && !this.loseHandled) {
+        this.loseHandled = true;
+        this.visualEffects?.deathEffect?.();
+        if (typeof this.onLose === 'function') this.onLose();
+      }
+    }, { order: 0 });
+
+    systems.add('timer', () => {
+      if (this.gameState && !this.gameState.gameOver) {
+        this.gameState.updateTimer();
+      }
+    }, { order: 5 });
+
+    systems.add('autopilot', (dt, ctx) => {
+      ctx.hasPlayerMove = false;
+      ctx.hasPlayerLook = false;
+      ctx.externalCommand = null;
+      ctx.autopilotActive = false;
+
+      if (this.gameState?.gameOver) {
+        this.autopilotActive = false;
+        this.autopilotIdleSeconds = 0;
+        return;
+      }
+
+      const allowAutopilot = CONFIG.AUTOPILOT_ENABLED && this.autopilot && !this.gameState?.gameOver;
+      let hasPlayerMove = false;
+      let hasPlayerLook = false;
+      let externalCommand = null;
+
+      if (allowAutopilot && this.player?.input) {
+        const mouseDelta = this.player.input.peekMouseDelta
+          ? this.player.input.peekMouseDelta()
+          : { x: 0, y: 0 };
+
+        hasPlayerMove =
+          this.player.input.isKeyPressed('KeyW') ||
+          this.player.input.isKeyPressed('KeyA') ||
+          this.player.input.isKeyPressed('KeyS') ||
+          this.player.input.isKeyPressed('KeyD') ||
+          this.player.input.isKeyPressed('ShiftLeft') ||
+          this.player.input.isKeyPressed('ShiftRight');
+
+        const hasMouseButtons = !!(this.player.input.mouseButtons?.left || this.player.input.mouseButtons?.right);
+        hasPlayerLook = mouseDelta.x !== 0 || mouseDelta.y !== 0 || hasMouseButtons;
+
+        const idle = this.player.input.getIdleTimeSeconds
+          ? this.player.input.getIdleTimeSeconds()
+          : 0;
+        this.autopilotIdleSeconds = idle;
+      } else {
+        this.autopilotIdleSeconds = 0;
+      }
+
+      const allowAutopilotNow =
+        allowAutopilot &&
+        this.autopilotIdleSeconds >= (CONFIG.AUTOPILOT_DELAY || 0);
+
+      const autopilotControlling = allowAutopilotNow && !hasPlayerMove && !hasPlayerLook;
+
+      if (this.autopilot) {
+        this.autopilot.setEnabled(allowAutopilot);
+        const cmd = allowAutopilot ? (this.autopilot.tick(dt) || null) : null;
+
+        if (autopilotControlling && cmd) {
+          if (hasPlayerLook) {
+            const { lookYaw, ...rest } = cmd;
+            externalCommand = rest;
+          } else {
+            externalCommand = cmd;
+          }
+        }
+      }
+
+      ctx.hasPlayerMove = hasPlayerMove;
+      ctx.hasPlayerLook = hasPlayerLook;
+      ctx.externalCommand = externalCommand;
+      ctx.autopilotActive = autopilotControlling;
+      this.autopilotActive = autopilotControlling;
+    }, { order: 10 });
+
+    systems.add('player', (dt, ctx) => {
+      if (this.gameState?.gameOver) return;
+      if (!this.player?.update) return;
+      this.player.update(dt, !!ctx.autopilotActive, ctx.externalCommand || null);
+      ctx.playerPos = this.player.getPosition ? this.player.getPosition() : null;
+    }, { order: 20 });
+
+    systems.add('gun', (dt, ctx) => {
+      if (this.gameState?.gameOver) return;
+      this.gun?.update?.(dt, ctx?.externalCommand || null, !!ctx?.autopilotActive);
+    }, { order: 30 });
+
+    systems.add('projectiles', (dt) => {
+      if (this.gameState?.gameOver) return;
+      this.projectileManager?.update?.(dt);
+    }, { order: 40 });
+
+    systems.add('spawnDirector', (dt) => {
+      if (this.gameState?.gameOver) return;
+      this.spawnDirector?.update?.(dt);
+    }, { order: 50 });
+
+    systems.add('monsters', (dt, ctx) => {
+      if (this.gameState?.gameOver) return;
+      const playerPos = ctx.playerPos || (this.player?.getPosition ? this.player.getPosition() : null);
+      if (!playerPos) return;
+      this.monsterManager?.update?.(dt, playerPos);
+    }, { order: 60 });
+
+    systems.add('separation', (dt, ctx) => {
+      if (this.gameState?.gameOver) return;
+      if (!this.player?.getPosition) return;
+
+      let playerPos = this.player.getPosition();
+      this.separatePlayerFromMonsters(playerPos);
+      playerPos = this.player.getPosition();
+      this.separatePlayerFromWalls(playerPos);
+      ctx.playerPos = this.player.getPosition();
+    }, { order: 70 });
+
+    systems.add('noProgress', (dt, ctx) => {
+      if (this.gameState?.gameOver) return;
+      const playerPos = ctx.playerPos || (this.player?.getPosition ? this.player.getPosition() : null);
+      if (!playerPos) return;
+
+      const isDriven = !!ctx.autopilotActive || !!ctx.hasPlayerMove;
+      if (!this.lastProgressPos) {
+        this.lastProgressPos = playerPos.clone();
+      }
+
+      const distSinceLast = this.lastProgressPos ? playerPos.distanceTo(this.lastProgressPos) : 0;
+      if (isDriven && distSinceLast < 0.05) {
+        this.noProgressTimer += dt;
+        if (this.noProgressTimer > 2.0) {
+          if (this.player?.forceUnstuck) {
+            this.player.forceUnstuck();
+          }
+          if (this.autopilot?.resetPath) {
+            this.autopilot.resetPath();
+          }
+          const refreshed = this.player?.getPosition ? this.player.getPosition() : playerPos;
+          this.lastProgressPos = refreshed.clone();
+          this.noProgressTimer = 0;
+          console.log('⚠️ No-progress detected, nudging player free.');
+        }
+      } else {
+        this.noProgressTimer = 0;
+        this.lastProgressPos = playerPos.clone();
+      }
+    }, { order: 80 });
+
+    systems.add('meleeCollision', (dt, ctx) => {
+      if (this.gameState?.gameOver) return;
+      if (!this.monsterManager || !this.gameState || !this.player?.getPosition) return;
+
+      const nowSeconds = (Number.isFinite(ctx.nowMs) ? ctx.nowMs : performance.now()) / 1000;
+      const playerPos = ctx.playerPos || this.player.getPosition();
+      const caught = this.monsterManager.checkPlayerCaught(playerPos, 1.25);
+      if (!caught?.hit) return;
+      if (!caught?.monster) return;
+
+      // Global limiter: prevent multi-hit bursts when several monsters overlap the player.
+      if (nowSeconds - this.lastMonsterDamageTime <= this.monsterDamageCooldown) return;
+
+      const monster = caught.monster;
+      const profile = this.getMonsterContactAttackProfile(monster);
+      const nextAt = Number.isFinite(monster.__nextMeleeAttackAt) ? monster.__nextMeleeAttackAt : 0;
+      if (nowSeconds < nextAt) return;
+
+      // Require the monster to be roughly facing the player to land a melee hit.
+      if (!this.isMonsterFacingTarget(monster, playerPos, profile.facingDot)) {
+        monster.__nextMeleeAttackAt = nowSeconds + 0.25;
+        return;
+      }
+
+      // Optional hesitation to avoid "endless" contact DPS.
+      if (profile.chance < 1.0 && Math.random() > profile.chance) {
+        monster.__nextMeleeAttackAt = nowSeconds + Math.max(0.25, profile.cooldown * (0.35 + Math.random() * 0.35));
+        return;
+      }
+
+      const damage = caught.damage ?? 10;
+      monster.__nextMeleeAttackAt = nowSeconds + Math.max(0.25, profile.cooldown * (0.85 + Math.random() * 0.3));
+      this.lastMonsterDamageTime = nowSeconds;
+      const eventBus = this.gameState?.eventBus || null;
+      if (eventBus?.emit) {
+        eventBus.emit(EVENTS.MONSTER_HIT_PLAYER, {
+          attackType: 'melee',
+          monster: caught.monster,
+          damage,
+          hitPosition: playerPos.clone()
+        });
+      } else {
+        this.gameState.takeDamage(damage);
+      }
+
+      this.applyPlayerKnockback(caught.monster);
+      ctx.playerPos = this.player.getPosition();
+    }, { order: 90 });
+
+    systems.add('exitWin', (dt, ctx) => {
+      if (this.gameState?.gameOver) return;
+      if (!this.exitPoint || !this.gameState || !this.player?.getPosition) return;
+
+      const playerPos = ctx.playerPos || this.player.getPosition();
+      if (!this.exitPoint.isPlayerNear(playerPos, 2)) return;
+
+      if (this.visualEffects) {
+        this.visualEffects.victoryFlash();
+      }
+
+      if (!this.winHandled) {
+        this.winHandled = true;
+        this.gameState.win('You found the exit!');
+        if (typeof this.onWin === 'function') {
+          this.onWin();
+        }
+      }
+    }, { order: 100 });
+
+    systems.add('missions', () => {
+      if (this.gameState?.gameOver) return;
+      if (!this.gameState || !this.missionPoints || this.missionPoints.length === 0) return;
+      const playerPos = this.player?.getPosition ? this.player.getPosition() : null;
+      if (!playerPos) return;
+
+      this.missionPoints.forEach(mp => {
+        if (!mp.collected && mp.isPlayerNear(playerPos, 2)) {
+          mp.collect(this.sceneManager.getScene());
+          this.gameState.collectMission();
+        }
+      });
+    }, { order: 110 });
+
+    systems.add('exitAnim', (dt) => {
+      if (this.exitPoint?.update) {
+        this.exitPoint.update(dt);
+      }
+    }, { order: 120 });
+
+    systems.add('lighting', (dt) => {
+      if (this.lights) {
+        updateLighting(this.lights, dt);
+      }
+    }, { order: 130 });
+
+    systems.add('sceneUpdate', (dt) => {
+      if (this.sceneManager && typeof this.sceneManager.update === 'function') {
+        this.sceneManager.update(dt);
+      }
+    }, { order: 140 });
+
+    systems.add('visualEffects', (dt) => {
+      if (this.visualEffects) {
+        this.visualEffects.update(dt, this.sceneManager.camera);
+      }
+    }, { order: 150 });
+
+    systems.add('ui', (dt, ctx) => {
+      this.uiManager?.update?.(dt, ctx.nowMs);
+    }, { order: 160 });
+  }
+
   /**
    * Main loop function (called every frame)
    */
@@ -113,13 +391,10 @@ export class GameLoop {
     this.lastTime = now;
 
     // Update game state
-    this.update(deltaTime);
+    this.update(deltaTime, now);
 
     // Render scene
     this.render();
-
-    // Update FPS counter
-    this.updateFPS(now);
 
     // Request next frame
     requestAnimationFrame(() => this.loop());
@@ -129,219 +404,14 @@ export class GameLoop {
    * Update all game systems
    * @param {number} deltaTime - Time since last frame in seconds
    */
-  update(deltaTime) {
-    // Clamp deltaTime to prevent physics issues on lag spikes
+  update(deltaTime, nowMs = null) {
     const dt = Math.min(deltaTime, 0.1);
+    const now = Number.isFinite(nowMs) ? nowMs : performance.now();
+    const ctx = this.frameContext;
+    ctx.nowMs = now;
+    ctx.dt = dt;
 
-    // Don't update if game is over
-    if (this.gameState && this.gameState.gameOver) {
-      return;
-    }
-
-    // Update game state timer
-    if (this.gameState) {
-      this.gameState.updateTimer();
-    }
-
-    // --- Autopilot takeover (v2) ---
-    let externalCommand = null;
-    const allowAutopilot =
-      CONFIG.AUTOPILOT_ENABLED &&
-      this.autopilot &&
-      !this.gameState?.gameOver;
-
-    let hasPlayerMove = false;
-    let hasPlayerLook = false;
-
-    if (allowAutopilot && this.player && this.player.input) {
-      const mouseDelta = this.player.input.peekMouseDelta
-        ? this.player.input.peekMouseDelta()
-        : { x: 0, y: 0 };
-
-      hasPlayerMove =
-        this.player.input.isKeyPressed('KeyW') ||
-        this.player.input.isKeyPressed('KeyA') ||
-        this.player.input.isKeyPressed('KeyS') ||
-        this.player.input.isKeyPressed('KeyD') ||
-        this.player.input.isKeyPressed('ShiftLeft') ||
-        this.player.input.isKeyPressed('ShiftRight');
-
-      hasPlayerLook = mouseDelta.x !== 0 || mouseDelta.y !== 0;
-
-      // Idle timer counts all input (keyboard + mouse)
-      const idle = this.player.input.getIdleTimeSeconds
-        ? this.player.input.getIdleTimeSeconds()
-        : 0;
-      this.autopilotIdleSeconds = idle;
-    } else {
-      this.autopilotIdleSeconds = 0;
-    }
-
-    const allowAutopilotNow =
-      allowAutopilot &&
-      this.autopilotIdleSeconds >= (CONFIG.AUTOPILOT_DELAY || 0);
-
-    // Only hand over movement when autopilot is enabled and player isn't providing input
-    const autopilotControlling = allowAutopilotNow && !hasPlayerMove && !hasPlayerLook;
-
-    if (this.autopilot) {
-      this.autopilot.setEnabled(allowAutopilot);
-
-      const cmd = allowAutopilot ? (this.autopilot.tick(dt) || null) : null;
-
-      if (autopilotControlling && cmd) {
-        // Mouse look this frame: keep autopilot movement but don't override view
-        if (hasPlayerLook) {
-          const { lookYaw, ...rest } = cmd;
-          externalCommand = rest;
-        } else {
-          externalCommand = cmd;
-        }
-      }
-    }
-
-    this.autopilotActive = autopilotControlling;
-    if (this.player) {
-      this.player.update(dt, this.autopilotActive, externalCommand);
-    }
-
-    if (this.gun) {
-      this.gun.update(dt);
-    }
-
-    if (this.projectileManager) {
-      this.projectileManager.update(dt);
-    }
-
-    // Get player position for checks
-    let playerPos = this.player.getPosition();
-
-    // Update monsters via MonsterManager
-    if (this.monsterManager && this.monsterManager.update) {
-      this.monsterManager.update(dt, playerPos);
-    }
-
-    // Soft separation to reduce sticking with monsters
-    this.separatePlayerFromMonsters(playerPos);
-    playerPos = this.player.getPosition();
-    this.separatePlayerFromWalls(playerPos);
-    playerPos = this.player.getPosition();
-
-    // Detect prolonged no-progress while input or autopilot is active
-    const isDriven = this.autopilotActive || hasPlayerMove;
-    if (!this.lastProgressPos) {
-      this.lastProgressPos = playerPos.clone();
-    }
-    const distSinceLast = this.lastProgressPos ? playerPos.distanceTo(this.lastProgressPos) : 0;
-    if (isDriven && distSinceLast < 0.05) {
-      this.noProgressTimer += dt;
-      if (this.noProgressTimer > 2.0) {
-        if (this.player?.forceUnstuck) {
-          this.player.forceUnstuck();
-          playerPos = this.player.getPosition();
-        }
-        if (this.autopilot?.resetPath) {
-          this.autopilot.resetPath();
-        }
-        this.lastProgressPos = playerPos.clone();
-        this.noProgressTimer = 0;
-        console.log('⚠️ No-progress detected, nudging player free.');
-      }
-    } else {
-      this.noProgressTimer = 0;
-      this.lastProgressPos = playerPos.clone();
-    }
-
-    // Check monster collision (damage player)
-    if (this.monsterManager && this.gameState) {
-      const now = performance.now() / 1000;
-      if (now - this.lastMonsterDamageTime > this.monsterDamageCooldown) {
-        const caught = this.monsterManager.checkPlayerCaught(playerPos, 1.25);
-        if (caught?.hit) {
-          const died = this.gameState.takeDamage(10);
-          this.lastMonsterDamageTime = now;
-
-          // Visual feedback
-          if (this.visualEffects) {
-            if (died) {
-              // Death effect (stronger)
-              this.visualEffects.deathEffect();
-              this.showGameOver(false);
-            } else {
-              // Damage effect
-              this.visualEffects.monsterCaughtEffect();
-            }
-          }
-
-          if (died && !this.loseHandled) {
-            this.loseHandled = true;
-            if (typeof this.onLose === 'function') {
-              this.onLose();
-            }
-          }
-
-          // Small knockback so player doesn't stick to monsters
-          this.applyPlayerKnockback(caught.monster);
-
-          console.log('💔 Caught by monster! Health:', this.gameState.currentHealth);
-        }
-      }
-    }
-
-    // Refresh player position after potential knockback
-    playerPos = this.player.getPosition();
-
-    // Check exit point collision (win condition)
-    if (this.exitPoint && this.gameState) {
-      if (this.exitPoint.isPlayerNear(playerPos, 2)) {
-        // Visual feedback for victory
-        if (this.visualEffects) {
-          this.visualEffects.victoryFlash();
-        }
-
-        if (!this.winHandled) {
-          this.winHandled = true;
-          this.gameState.win('你成功找到了出口！');
-          this.showGameOver(true);
-          if (typeof this.onWin === 'function') {
-            this.onWin();
-          }
-        }
-      }
-    }
-
-    // Check mission points
-    if (this.gameState && this.missionPoints && this.missionPoints.length > 0) {
-      this.missionPoints.forEach(mp => {
-        if (!mp.collected && mp.isPlayerNear(playerPos, 2)) {
-          mp.collect(this.sceneManager.getScene());
-          this.gameState.collectMission();
-        }
-      });
-    }
-
-    // Update exit point animation
-    if (this.exitPoint) {
-      this.exitPoint.update(dt);
-    }
-
-    // Update lighting (flickering effect)
-    if (this.lights) {
-      updateLighting(this.lights, dt);
-    }
-
-    // Update scene-level animated props (e.g., water)
-    if (this.sceneManager && typeof this.sceneManager.update === 'function') {
-      this.sceneManager.update(dt);
-    }
-
-    // Update visual effects
-    if (this.visualEffects) {
-      this.visualEffects.update(dt, this.sceneManager.camera);
-    }
-
-    // Update UI
-    this.updateUI();
+    this.systemRegistry.update(dt, ctx);
   }
 
   /**
@@ -371,69 +441,6 @@ export class GameLoop {
   }
 
   /**
-   * Update UI elements
-   */
-  updateUI() {
-    // Update position display
-    if (this.positionElement) {
-      const pos = this.player.getPosition();
-      const gridPos = this.player.getGridPosition();
-      this.positionElement.textContent =
-        `${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)} | Grid: ${gridPos.x}, ${gridPos.y}`;
-    }
-
-    // Update current room display
-    if (this.currentRoomElement && this.worldState) {
-      const gridPos = this.player.getGridPosition();
-      const roomType = this.worldState.getRoomType(gridPos.x, gridPos.y);
-      const roomConfig = ROOM_CONFIGS[roomType];
-      if (roomConfig) {
-        this.currentRoomElement.textContent = roomConfig.name;
-      }
-    }
-
-    // Update mission status
-    const missionElement = document.getElementById('mission-status');
-    if (missionElement && this.gameState) {
-      missionElement.textContent = `${this.gameState.missionsCollected}/${this.gameState.missionsTotal}`;
-    }
-
-    // Update game timer
-    if (this.gameTimeElement && this.gameState) {
-      this.gameTimeElement.textContent = this.gameState.getFormattedTime();
-    }
-
-    // Update health display
-    if (this.healthDisplayElement && this.gameState) {
-      this.healthDisplayElement.textContent = this.gameState.currentHealth;
-    }
-
-    // Update health bar fill
-    if (this.healthFillElement && this.gameState) {
-      const healthPercent = this.gameState.getHealthPercentage();
-      this.healthFillElement.style.width = `${healthPercent}%`;
-    }
-
-    // Update keys pressed display
-    const keysElement = document.getElementById('keys-pressed');
-    if (keysElement && this.player && this.player.input) {
-      const keys = [];
-      if (this.player.input.isKeyPressed('KeyW')) keys.push('W');
-      if (this.player.input.isKeyPressed('KeyA')) keys.push('A');
-      if (this.player.input.isKeyPressed('KeyS')) keys.push('S');
-      if (this.player.input.isKeyPressed('KeyD')) keys.push('D');
-      if (this.player.input.isSprinting()) keys.push('Shift');
-      keysElement.textContent = keys.length > 0 ? keys.join(', ') : 'None';
-    }
-
-    // Update pointer lock status
-    const pointerElement = document.getElementById('pointer-status');
-    if (pointerElement && this.player && this.player.input) {
-      pointerElement.textContent = this.player.input.isPointerLocked() ? 'Locked ✓' : 'Not Locked';
-    }
-  }
-
-  /**
    * Push player slightly away from the monster that just hit them to avoid overlap/locking
    * @param {Monster|null} monster
    */
@@ -450,21 +457,57 @@ export class GameLoop {
     }
     direction.normalize();
 
-    const pushDistance = (CONFIG.TILE_SIZE || 1) * 0.75;
-    const targetPos = playerPos.clone().add(direction.multiplyScalar(pushDistance));
+    const blockMult =
+      (typeof this.player?.isBlocking === 'function' && this.player.isBlocking())
+        ? (CONFIG.PLAYER_BLOCK_KNOCKBACK_MULT ?? 0.5)
+        : 1.0;
 
-    // Keep knockback inside walkable space when possible
-    if (this.worldState && this.worldState.isWalkable) {
-      const grid = {
-        x: Math.floor(targetPos.x / (CONFIG.TILE_SIZE || 1)),
-        y: Math.floor(targetPos.z / (CONFIG.TILE_SIZE || 1))
-      };
-      if (!this.worldState.isWalkable(grid.x, grid.y)) {
-        return;
+    const pushDistance = (CONFIG.TILE_SIZE || 1) * 0.75 * blockMult;
+    const attempts = [pushDistance, pushDistance * 0.5, pushDistance * 0.25];
+    for (const dist of attempts) {
+      const targetPos = playerPos.clone().add(direction.clone().multiplyScalar(dist));
+
+      // Keep knockback inside walkable space when possible
+      if (typeof this.player?.canMoveTo === 'function') {
+        if (!this.player.canMoveTo(targetPos.x, targetPos.z)) continue;
+      } else if (this.worldState && this.worldState.isWalkable) {
+        const grid = {
+          x: Math.floor(targetPos.x / (CONFIG.TILE_SIZE || 1)),
+          y: Math.floor(targetPos.z / (CONFIG.TILE_SIZE || 1))
+        };
+        if (!this.worldState.isWalkable(grid.x, grid.y)) continue;
       }
-    }
 
-    this.player.setPosition(targetPos.x, targetPos.y, targetPos.z);
+      this.player.setPosition(targetPos.x, targetPos.y, targetPos.z);
+      break;
+    }
+  }
+
+  getMonsterContactAttackProfile(monster) {
+    const combat = monster?.typeConfig?.combat || {};
+    const cooldown = Number.isFinite(combat.contactCooldown) ? combat.contactCooldown : 1.8;
+    const chance = Number.isFinite(combat.contactChance) ? combat.contactChance : 0.65;
+    const facingDot = Number.isFinite(combat.contactFacingDot) ? combat.contactFacingDot : 0.15;
+
+    return {
+      cooldown: Math.max(0.25, cooldown),
+      chance: Math.max(0, Math.min(1, chance)),
+      facingDot: Math.max(-1, Math.min(1, facingDot))
+    };
+  }
+
+  isMonsterFacingTarget(monster, targetPos, minDot = 0.15) {
+    const yaw = typeof monster?.getYaw === 'function' ? monster.getYaw() : monster?.yaw;
+    const monsterPos = monster?.getWorldPosition ? monster.getWorldPosition() : null;
+    if (!Number.isFinite(yaw) || !monsterPos || !targetPos) return true;
+
+    const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+    const toTarget = targetPos.clone().sub(monsterPos).setY(0);
+    if (toTarget.lengthSq() <= 1e-8) return true;
+    toTarget.normalize();
+
+    const dot = forward.dot(toTarget);
+    return dot >= minDot;
   }
 
   /**
@@ -485,13 +528,28 @@ export class GameLoop {
 
       const pushDir = delta.normalize();
       const pushMag = (minDist - dist) * 0.6; // soften push
-      const targetPos = playerPos.clone().add(pushDir.multiplyScalar(pushMag));
+      const pushVec = pushDir.clone().multiplyScalar(pushMag);
+      let targetPos = playerPos.clone().add(pushVec);
 
-      // Avoid pushing into walls
-      if (this.worldState && this.worldState.isWalkable) {
-        const gx = Math.floor(targetPos.x / (CONFIG.TILE_SIZE || 1));
-        const gy = Math.floor(targetPos.z / (CONFIG.TILE_SIZE || 1));
-        if (!this.worldState.isWalkable(gx, gy)) {
+      const canMoveTo = (x, z) => {
+        if (typeof this.player?.canMoveTo === 'function') return this.player.canMoveTo(x, z);
+        if (this.worldState && this.worldState.isWalkable) {
+          const gx = Math.floor(x / (CONFIG.TILE_SIZE || 1));
+          const gy = Math.floor(z / (CONFIG.TILE_SIZE || 1));
+          return this.worldState.isWalkable(gx, gy);
+        }
+        return true;
+      };
+
+      if (!canMoveTo(targetPos.x, targetPos.z)) {
+        // Try axis-only pushes to avoid corner tunneling.
+        const posX = playerPos.clone().add(new THREE.Vector3(pushVec.x, 0, 0));
+        const posZ = playerPos.clone().add(new THREE.Vector3(0, 0, pushVec.z));
+        if (canMoveTo(posX.x, posX.z)) {
+          targetPos = posX;
+        } else if (canMoveTo(posZ.x, posZ.z)) {
+          targetPos = posZ;
+        } else {
           continue;
         }
       }
@@ -510,7 +568,7 @@ export class GameLoop {
     if (!this.worldState || !this.player || !this.worldState.isWalkable) return;
 
     const tileSize = CONFIG.TILE_SIZE || 1;
-    const radius = (CONFIG.PLAYER_COLLISION_RADIUS || 0.35) * tileSize;
+    const radius = CONFIG.PLAYER_RADIUS ?? 0.35;
 
     let pos = playerPos.clone();
     const baseGX = Math.floor(pos.x / tileSize);
@@ -548,96 +606,15 @@ export class GameLoop {
       }
     }
 
+    const canMoveTo = typeof this.player?.canMoveTo === 'function'
+      ? this.player.canMoveTo.bind(this.player)
+      : null;
+
     const finalGX = Math.floor(pos.x / tileSize);
     const finalGY = Math.floor(pos.z / tileSize);
-    if (this.worldState.isWalkable(finalGX, finalGY)) {
+    if (canMoveTo ? canMoveTo(pos.x, pos.z) : this.worldState.isWalkable(finalGX, finalGY)) {
       this.player.setPosition(pos.x, pos.y, pos.z);
     }
   }
 
-  /**
-   * Update FPS counter
-   * @param {number} now - Current timestamp
-   */
-  updateFPS(now) {
-    this.frameCount++;
-
-    // Update FPS display every second
-    if (now - this.lastFpsUpdate >= 1000) {
-      this.fps = this.frameCount;
-      this.frameCount = 0;
-      this.lastFpsUpdate = now;
-
-      if (this.fpsElement) {
-        this.fpsElement.textContent = this.fps;
-      }
-    }
-  }
-
-  /**
-   * Add a monster to the game loop
-   * @param {Monster} monster - Monster controller to add
-   */
-  addMonster(monster) {
-    this.monsters.push(monster);
-  }
-
-  /**
-   * Remove a monster from the game loop
-   * @param {Monster} monster - Monster controller to remove
-   */
-  removeMonster(monster) {
-    const index = this.monsters.indexOf(monster);
-    if (index !== -1) {
-      this.monsters.splice(index, 1);
-    }
-  }
-
-  /**
-   * Get current FPS
-   * @returns {number} Current FPS
-   */
-  getFPS() {
-    return this.fps;
-  }
-
-  /**
-   * Show game over screen
-   * @param {boolean} won - True if player won, false if lost
-   */
-  showGameOver(won) {
-    const gameOverElement = document.getElementById('game-over');
-    const titleElement = document.getElementById('game-over-title');
-    const messageElement = document.getElementById('game-over-message');
-
-    // Set title and message
-    if (won) {
-      titleElement.textContent = '🎉 胜利！';
-      titleElement.style.color = '#ffd700';
-      messageElement.textContent = '你成功找到了出口！';
-    } else {
-      titleElement.textContent = '💀 失败';
-      titleElement.style.color = '#ff4444';
-      messageElement.textContent = '你的生命值耗尽了...';
-    }
-
-    // Update stats
-    if (this.gameState) {
-      const stats = this.gameState.getStats();
-      document.getElementById('final-time').textContent = stats.timeFormatted;
-      document.getElementById('final-health').textContent = stats.health;
-      document.getElementById('final-rooms').textContent = stats.roomsVisited;
-      document.getElementById('final-steps').textContent = stats.steps;
-    }
-
-    // Show the overlay
-    gameOverElement.classList.remove('hidden');
-
-    // Release pointer lock
-    if (this.player && this.player.input) {
-      this.player.input.exitPointerLock();
-    }
-
-    console.log(won ? '🎉 Victory!' : '💀 Game Over');
-  }
 }

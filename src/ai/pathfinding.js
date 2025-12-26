@@ -241,29 +241,50 @@ export class Pathfinding {
    * @returns {Array<Object>} Smoothed path
    */
   smoothPath(path) {
-    if (path.length <= 2) {
-      return path;
+    if (!Array.isArray(path) || path.length <= 2) {
+      return path || [];
     }
 
+    // NOTE: Keep smoothing axis-aligned only.
+    // Line-of-sight smoothing can create diagonal "shortcuts" that cut corners,
+    // causing agents to attempt moving through walls/obstacles in tight mazes.
     const smoothed = [path[0]];
-    let current = 0;
 
-    while (current < path.length - 1) {
-      // Try to find the furthest visible point
-      let furthest = current + 1;
+    let prev = path[0];
+    let prevDir = null;
 
-      for (let i = path.length - 1; i > current + 1; i--) {
-        if (this.hasLineOfSight(path[current], path[i])) {
-          furthest = i;
-          break;
-        }
+    for (let i = 1; i < path.length; i++) {
+      const cur = path[i];
+      const dx = Math.sign(cur.x - prev.x);
+      const dy = Math.sign(cur.y - prev.y);
+
+      // Skip duplicates / zero-length steps defensively.
+      if (dx === 0 && dy === 0) {
+        prev = cur;
+        continue;
       }
 
-      smoothed.push(path[furthest]);
-      current = furthest;
+      const dir = `${dx},${dy}`;
+      if (prevDir === null) {
+        prevDir = dir;
+      } else if (dir !== prevDir) {
+        smoothed.push(prev);
+        prevDir = dir;
+      }
+
+      prev = cur;
     }
 
-    return smoothed;
+    smoothed.push(path[path.length - 1]);
+
+    // Deduplicate consecutive identical points (defensive)
+    const out = [];
+    for (const p of smoothed) {
+      const last = out[out.length - 1];
+      if (last && last.x === p.x && last.y === p.y) continue;
+      out.push(p);
+    }
+    return out;
   }
 
   /**

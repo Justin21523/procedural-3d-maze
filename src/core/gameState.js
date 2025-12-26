@@ -4,9 +4,11 @@
  */
 
 import { CONFIG } from './config.js';
+import { EVENTS } from './events.js';
 
 export class GameState {
-  constructor() {
+  constructor(eventBus = null) {
+    this.eventBus = eventBus;
     // Player stats
     this.maxHealth = 100;
     this.currentHealth = 100;
@@ -34,6 +36,10 @@ export class GameState {
     this.missionsCollected = 0;
 
     console.log('🎮 GameState initialized');
+  }
+
+  setEventBus(eventBus) {
+    this.eventBus = eventBus;
   }
 
   /**
@@ -97,14 +103,35 @@ export class GameState {
         console.log('🛡️ AUTO_REVIVE enabled - restoring health to full');
         this.currentHealth = this.maxHealth;
         this.isDead = false;
+        this.eventBus?.emit?.(EVENTS.PLAYER_DAMAGED, {
+          amount,
+          currentHealth: this.currentHealth,
+          maxHealth: this.maxHealth,
+          died: false,
+          autoRevived: true
+        });
         return false;
       }
 
       this.isDead = true;
-      this.lose('你的生命值耗尽了...');
+      this.lose('You ran out of health...');
+      this.eventBus?.emit?.(EVENTS.PLAYER_DAMAGED, {
+        amount,
+        currentHealth: this.currentHealth,
+        maxHealth: this.maxHealth,
+        died: true,
+        autoRevived: false
+      });
       return true;
     }
 
+    this.eventBus?.emit?.(EVENTS.PLAYER_DAMAGED, {
+      amount,
+      currentHealth: this.currentHealth,
+      maxHealth: this.maxHealth,
+      died: false,
+      autoRevived: false
+    });
     return false;
   }
 
@@ -117,6 +144,12 @@ export class GameState {
     this.currentHealth = Math.min(this.maxHealth, this.currentHealth + amount);
     const actualHeal = this.currentHealth - oldHealth;
     console.log(`💚 Healed ${actualHeal} HP. Health: ${this.currentHealth}/${this.maxHealth}`);
+    this.eventBus?.emit?.(EVENTS.PLAYER_HEALED, {
+      amount,
+      actual: actualHeal,
+      currentHealth: this.currentHealth,
+      maxHealth: this.maxHealth
+    });
   }
 
   /**
@@ -162,7 +195,7 @@ export class GameState {
    * Player wins the game
    * @param {string} reason - Reason for winning
    */
-  win(reason = '你找到了出口！') {
+  win(reason = 'You found the exit!') {
     if (this.gameOver) return;
 
     this.hasWon = true;
@@ -176,13 +209,14 @@ export class GameState {
       roomsVisited: this.roomsVisited.size,
       steps: this.steps
     });
+    this.eventBus?.emit?.(EVENTS.GAME_WON, { reason, stats: this.getStats() });
   }
 
   /**
    * Player loses the game
    * @param {string} reason - Reason for losing
    */
-  lose(reason = '游戏结束') {
+  lose(reason = 'Game over') {
     if (this.gameOver) return;
 
     this.hasLost = true;
@@ -196,6 +230,7 @@ export class GameState {
       roomsVisited: this.roomsVisited.size,
       steps: this.steps
     });
+    this.eventBus?.emit?.(EVENTS.GAME_LOST, { reason, stats: this.getStats() });
   }
 
   /**

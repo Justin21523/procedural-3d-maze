@@ -163,6 +163,82 @@ export class AudioManager {
     };
   }
 
+  /**
+   * Procedural hit marker (short "tick") without external assets.
+   */
+  playHitMarker() {
+    if (!this.enabled) return;
+
+    const buffer = this.getHitMarkerBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.35 * this.effectsVolume * this.masterVolume);
+    sound.play();
+
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
+  /**
+   * Procedural player hurt sound (short harsh thud/beep) without external assets.
+   */
+  playPlayerHurt() {
+    if (!this.enabled) return;
+
+    const buffer = this.getPlayerHurtBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.55 * this.effectsVolume * this.masterVolume);
+    sound.play();
+
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
+  /**
+   * Procedural win sound (short bright chirp) without external assets.
+   */
+  playGameWon() {
+    if (!this.enabled) return;
+
+    const buffer = this.getGameWonBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.5 * this.effectsVolume * this.masterVolume);
+    sound.play();
+
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
+  /**
+   * Procedural lose sound (short low buzz) without external assets.
+   */
+  playGameLost() {
+    if (!this.enabled) return;
+
+    const buffer = this.getGameLostBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.7 * this.effectsVolume * this.masterVolume);
+    sound.play();
+
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
   getGunshotBuffer() {
     if (this.buffers.has('gunshot_proc')) {
       return this.buffers.get('gunshot_proc');
@@ -182,6 +258,115 @@ export class AudioManager {
     }
 
     this.buffers.set('gunshot_proc', buffer);
+    return buffer;
+  }
+
+  getHitMarkerBuffer() {
+    if (this.buffers.has('hit_proc')) {
+      return this.buffers.get('hit_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.07;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const freq = 950;
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const envelope = Math.exp(-t * 55);
+      const tone = Math.sin(t * Math.PI * 2 * freq) * 0.55;
+      const noise = (Math.random() * 2 - 1) * 0.12;
+      data[i] = (tone + noise) * envelope * 0.9;
+    }
+
+    this.buffers.set('hit_proc', buffer);
+    return buffer;
+  }
+
+  getPlayerHurtBuffer() {
+    if (this.buffers.has('player_hurt_proc')) {
+      return this.buffers.get('player_hurt_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.16;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const f0 = 320;
+    const f1 = 140;
+
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const p = t / duration;
+      const envelope = Math.exp(-t * 18);
+      const freq = f0 + (f1 - f0) * p;
+      const tone = Math.sin(t * Math.PI * 2 * freq) * 0.55;
+      const noise = (Math.random() * 2 - 1) * 0.35;
+      data[i] = (tone + noise) * envelope * 0.9;
+    }
+
+    this.buffers.set('player_hurt_proc', buffer);
+    return buffer;
+  }
+
+  getGameWonBuffer() {
+    if (this.buffers.has('game_won_proc')) {
+      return this.buffers.get('game_won_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.35;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const base = 520;
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const envelope = Math.exp(-t * 6.5);
+      const chirp = Math.sin(t * Math.PI * 2 * (base + t * 900)) * 0.55;
+      const harmony = Math.sin(t * Math.PI * 2 * (base * 1.25 + t * 650)) * 0.25;
+      data[i] = (chirp + harmony) * envelope * 0.9;
+    }
+
+    this.buffers.set('game_won_proc', buffer);
+    return buffer;
+  }
+
+  getGameLostBuffer() {
+    if (this.buffers.has('game_lost_proc')) {
+      return this.buffers.get('game_lost_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.55;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const f0 = 180;
+    const f1 = 75;
+
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const p = t / duration;
+      const envelope = Math.exp(-t * 3.8);
+      const freq = f0 + (f1 - f0) * p;
+      const tone = Math.sin(t * Math.PI * 2 * freq) * 0.6;
+      const buzz = Math.sin(t * Math.PI * 2 * (freq * 2.01)) * 0.18;
+      const noise = (Math.random() * 2 - 1) * 0.12;
+      data[i] = (tone + buzz + noise) * envelope * 0.9;
+    }
+
+    this.buffers.set('game_lost_proc', buffer);
     return buffer;
   }
 

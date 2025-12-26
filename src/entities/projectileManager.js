@@ -1,33 +1,219 @@
 import * as THREE from 'three';
 import { CONFIG } from '../core/config.js';
+import { EVENTS } from '../core/events.js';
+
+const MAX_POOLED_PROJECTILES = {
+  bullet: 96,
+  grenade: 32,
+  bolt: 64
+};
+const MAX_POOLED_IMPACTS = 64;
+const MAX_POOLED_EXPLOSIONS = 32;
+const BULLET_BASE_AXIS = new THREE.Vector3(0, 1, 0);
 
 /**
  * ProjectileManager
- * Handles bullets, simple impacts, and collision checks against monsters.
+ * Handles projectiles (player + monsters), simple impacts, and collision checks.
  */
 export class ProjectileManager {
-  constructor(scene, worldState, monsterManager) {
+  constructor(scene, worldState, monsterManager, playerRef = null, eventBus = null) {
     this.scene = scene;
     this.worldState = worldState;
     this.monsterManager = monsterManager;
+    this.playerRef = playerRef;
+    this.eventBus = eventBus;
 
-    this.bullets = [];
+    this.projectiles = [];
     this.impacts = [];
+    this.explosions = [];
+    this.activeCounts = { player: 0, monster: 0 };
 
-    this.bulletGeometry = new THREE.SphereGeometry(0.08, 10, 10);
-    this.bulletMaterial = new THREE.MeshStandardMaterial({
+    this.projectilePools = {
+      bullet: [],
+      grenade: [],
+      bolt: []
+    };
+    this.impactPool = [];
+    this.explosionPool = [];
+
+    this.playerBulletGeometry = new THREE.CylinderGeometry(0.028, 0.028, 0.28, 10);
+    this.playerBulletMaterial = new THREE.MeshStandardMaterial({
       color: 0xffee88,
       emissive: 0xffcc55,
-      emissiveIntensity: 0.9,
+      emissiveIntensity: 0.85,
       transparent: true,
       opacity: 0.95,
-      roughness: 0.3,
+      roughness: 0.35,
+      metalness: 0.15
+    });
+
+    this.playerGrenadeGeometry = new THREE.SphereGeometry(0.14, 12, 10);
+    this.playerGrenadeMaterial = new THREE.MeshStandardMaterial({
+      color: 0x66ff99,
+      emissive: 0x22aa66,
+      emissiveIntensity: 0.55,
+      transparent: true,
+      opacity: 0.95,
+      roughness: 0.45,
       metalness: 0.1
+    });
+
+    this.monsterBoltGeometry = new THREE.IcosahedronGeometry(0.12, 0);
+    this.monsterBoltMaterial = new THREE.MeshStandardMaterial({
+      color: 0x77ccff,
+      emissive: 0x66aaff,
+      emissiveIntensity: 1.0,
+      transparent: true,
+      opacity: 0.92,
+      roughness: 0.25,
+      metalness: 0.05
     });
 
     this.hitRadius = CONFIG.MONSTER_HIT_RADIUS ?? 1.0;
     this.bulletSpeed = CONFIG.PLAYER_BULLET_SPEED ?? 42;
     this.bulletLifetime = CONFIG.PLAYER_BULLET_LIFETIME ?? 2.2;
+
+    this.monsterProjectileSpeed = CONFIG.MONSTER_PROJECTILE_SPEED ?? 22;
+    this.monsterProjectileLifetime = CONFIG.MONSTER_PROJECTILE_LIFETIME ?? 3.0;
+    this.monsterProjectileDamage = CONFIG.MONSTER_PROJECTILE_DAMAGE ?? 8;
+
+    this.playerHitRadius = CONFIG.PLAYER_PROJECTILE_HIT_RADIUS ?? (CONFIG.PLAYER_RADIUS ?? 0.35) * 1.1;
+
+    // Event hooks (optional)
+    this.onPlayerHitMonster = null;
+    this.onMonsterHitPlayer = null;
+  }
+
+  getProjectilePoolKey(owner, kind) {
+    if (owner === 'monster') return 'bolt';
+    const lowerKind = String(kind || '').toLowerCase();
+    const isGrenade = lowerKind.includes('grenade') || lowerKind.includes('rocket') || lowerKind.includes('bomb');
+    return isGrenade ? 'grenade' : 'bullet';
+  }
+
+  createPooledProjectile(poolKey) {
+    let mesh = null;
+    let spin = null;
+
+    if (poolKey === 'bolt') {
+      mesh = new THREE.Mesh(this.monsterBoltGeometry, this.monsterBoltMaterial.clone());
+      spin = new THREE.Vector3();
+    } else if (poolKey === 'grenade') {
+      mesh = new THREE.Mesh(this.playerGrenadeGeometry, this.playerGrenadeMaterial.clone());
+    } else {
+      mesh = new THREE.Mesh(this.playerBulletGeometry, this.playerBulletMaterial.clone());
+    }
+
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.visible = false;
+
+    return {
+      poolKey,
+      mesh,
+      velocity: new THREE.Vector3(),
+      spin,
+      hitMonsters: new Set()
+    };
+  }
+
+  releaseProjectile(projectile) {
+    if (!projectile) return;
+    if (projectile.mesh) {
+      this.scene.remove(projectile.mesh);
+      projectile.mesh.visible = false;
+      projectile.mesh.rotation.set(0, 0, 0);
+    }
+
+    projectile.velocity?.set?.(0, 0, 0);
+    projectile.hitMonsters?.clear?.();
+    projectile.sourceMonster = null;
+    projectile.remainingPierce = 0;
+
+    const poolKey = projectile.poolKey || 'bullet';
+    const pool = this.projectilePools?.[poolKey] || null;
+    const limit = MAX_POOLED_PROJECTILES[poolKey] ?? 0;
+    if (pool && pool.length < limit) {
+      pool.push(projectile);
+    }
+  }
+
+  createPooledImpact() {
+    const material = new THREE.SpriteMaterial({
+      color: 0xffffff,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.visible = false;
+    return { sprite, life: 0, maxLife: 0 };
+  }
+
+  releaseImpact(fx) {
+    if (!fx?.sprite) return;
+    this.scene.remove(fx.sprite);
+    fx.sprite.visible = false;
+    if (this.impactPool.length < MAX_POOLED_IMPACTS) {
+      this.impactPool.push(fx);
+    }
+  }
+
+  createPooledExplosion() {
+    const group = new THREE.Group();
+
+    const coreMat = new THREE.SpriteMaterial({
+      color: 0xffffff,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false
+    });
+    const core = new THREE.Sprite(coreMat);
+    core.position.set(0, 0.2, 0);
+    group.add(core);
+
+    const ringMat = new THREE.SpriteMaterial({
+      color: 0xffffff,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      opacity: 0.6,
+      depthWrite: false
+    });
+    const ring = new THREE.Sprite(ringMat);
+    ring.position.set(0, 0.25, 0);
+    group.add(ring);
+
+    group.visible = false;
+
+    const light = new THREE.PointLight(0xffffff, 1, 8, 2);
+    light.visible = false;
+
+    return {
+      group,
+      light,
+      core,
+      ring,
+      maxIntensity: 1,
+      life: 0,
+      maxLife: 0
+    };
+  }
+
+  releaseExplosion(fx) {
+    if (!fx) return;
+    if (fx.group) {
+      this.scene.remove(fx.group);
+      fx.group.visible = false;
+    }
+    if (fx.light) {
+      this.scene.remove(fx.light);
+      fx.light.visible = false;
+    }
+    if (this.explosionPool.length < MAX_POOLED_EXPLOSIONS) {
+      this.explosionPool.push(fx);
+    }
   }
 
   /**
@@ -36,61 +222,230 @@ export class ProjectileManager {
    * @param {THREE.Vector3} direction - normalized
    */
   spawnBullet(origin, direction) {
-    if (!origin || !direction) return;
-
-    const mesh = new THREE.Mesh(this.bulletGeometry, this.bulletMaterial.clone());
-    mesh.position.copy(origin);
-    mesh.scale.setScalar(1.2);
-    this.scene.add(mesh);
-
-    const velocity = direction.clone().normalize().multiplyScalar(this.bulletSpeed);
-    this.bullets.push({
-      mesh,
-      velocity,
-      life: this.bulletLifetime
+    this.spawnProjectile({
+      origin,
+      direction,
+      owner: 'player',
+      kind: 'bullet',
+      speed: this.bulletSpeed,
+      lifetime: this.bulletLifetime,
+      damage: CONFIG.PLAYER_BULLET_DAMAGE ?? 1,
+      canHitMonsters: true,
+      canHitPlayer: false
     });
+  }
+
+  /**
+   * Spawn a configurable player projectile (supports explosive/piercing/etc).
+   * @param {THREE.Vector3} origin
+   * @param {THREE.Vector3} direction - normalized
+   * @param {Object} options
+   */
+  spawnPlayerProjectile(origin, direction, options = {}) {
+    const speed = options.speed ?? this.bulletSpeed;
+    const lifetime = options.lifetime ?? this.bulletLifetime;
+    const damage = options.damage ?? (CONFIG.PLAYER_BULLET_DAMAGE ?? 1);
+    const kind = options.kind ?? 'bullet';
+
+    this.spawnProjectile({
+      origin,
+      direction,
+      owner: 'player',
+      kind,
+      speed,
+      lifetime,
+      damage,
+      color: options.color,
+      canHitMonsters: options.canHitMonsters ?? true,
+      canHitPlayer: options.canHitPlayer ?? false,
+      hitRadius: options.hitRadius,
+      explosionRadius: options.explosionRadius,
+      explosionDamage: options.explosionDamage,
+      explosionColor: options.explosionColor,
+      pierce: options.pierce
+    });
+  }
+
+  /**
+   * Spawn a monster projectile traveling from origin along direction.
+   * @param {THREE.Vector3} origin
+   * @param {THREE.Vector3} direction - normalized
+   * @param {Object} options
+   */
+  spawnMonsterProjectile(origin, direction, options = {}) {
+    const speed = options.speed ?? this.monsterProjectileSpeed;
+    const lifetime = options.lifetime ?? this.monsterProjectileLifetime;
+    const damage = options.damage ?? this.monsterProjectileDamage;
+    const color = options.color ?? 0x77ccff;
+
+    this.spawnProjectile({
+      origin,
+      direction,
+      owner: 'monster',
+      kind: options.kind ?? 'bolt',
+      speed,
+      lifetime,
+      damage,
+      color,
+      canHitMonsters: false,
+      canHitPlayer: true,
+      sourceMonster: options.sourceMonster || null
+    });
+  }
+
+  setPlayerRef(playerRef) {
+    this.playerRef = playerRef;
+  }
+
+  setEventBus(eventBus) {
+    this.eventBus = eventBus;
+  }
+
+  setOnPlayerHitMonster(callback) {
+    this.onPlayerHitMonster = typeof callback === 'function' ? callback : null;
+  }
+
+  setOnMonsterHitPlayer(callback) {
+    this.onMonsterHitPlayer = typeof callback === 'function' ? callback : null;
+  }
+
+  registerNoise(position, options = {}) {
+    if (this.monsterManager?.registerNoise) {
+      this.monsterManager.registerNoise(position, options);
+    }
   }
 
   update(deltaTime) {
     const dt = deltaTime ?? 0;
     if (dt <= 0) return;
 
-    this.updateBullets(dt);
+    this.updateProjectiles(dt);
     this.updateImpacts(dt);
+    this.updateExplosions(dt);
   }
 
   reset() {
-    this.bullets.forEach(b => this.scene.remove(b.mesh));
-    this.impacts.forEach(fx => this.scene.remove(fx.sprite));
-    this.bullets = [];
+    this.projectiles.forEach(p => this.releaseProjectile(p));
+    this.impacts.forEach(fx => this.releaseImpact(fx));
+    this.explosions.forEach(fx => this.releaseExplosion(fx));
+    this.projectiles = [];
     this.impacts = [];
+    this.explosions = [];
+    this.activeCounts = { player: 0, monster: 0 };
   }
 
-  updateBullets(dt) {
-    for (let i = this.bullets.length - 1; i >= 0; i--) {
-      const bullet = this.bullets[i];
-      bullet.life -= dt;
+  updateProjectiles(dt) {
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const p = this.projectiles[i];
+      p.life -= dt;
 
-      if (bullet.life <= 0) {
-        this.cleanupBullet(i);
+      if (p.life <= 0) {
+        this.cleanupProjectile(i);
         continue;
       }
 
-      bullet.mesh.position.addScaledVector(bullet.velocity, dt);
+      const start = p.mesh.position.clone();
+      const end = start.clone().addScaledVector(p.velocity, dt);
+      const segLen = start.distanceTo(end);
 
-      if (this.hitWall(bullet.mesh.position)) {
-        this.spawnImpact(bullet.mesh.position);
-        this.cleanupBullet(i);
+      // If dt is tiny, just move.
+      if (segLen <= 1e-6) {
         continue;
       }
 
-      const hit = this.findHitMonster(bullet.mesh.position);
-      if (hit) {
-        this.spawnImpact(bullet.mesh.position);
-        if (this.monsterManager?.handleProjectileHit) {
-          this.monsterManager.handleProjectileHit(hit, bullet.mesh.position);
+      const wallHit = this.sweepWall(start, end);
+      let monsterHit = p.canHitMonsters ? this.sweepMonsters(start, end, p.hitRadius ?? this.hitRadius) : null;
+      if (monsterHit && p.hitMonsters && p.hitMonsters.has(monsterHit.target)) {
+        monsterHit = null;
+      }
+      const playerHit = p.canHitPlayer ? this.sweepPlayer(start, end, p.playerHitRadius ?? this.playerHitRadius) : null;
+
+      let hitType = null;
+      let hitResult = null;
+
+      if (wallHit) {
+        hitType = 'wall';
+        hitResult = wallHit;
+      }
+      if (monsterHit && (!hitResult || monsterHit.t < hitResult.t)) {
+        hitType = 'monster';
+        hitResult = monsterHit;
+      }
+      if (playerHit && (!hitResult || playerHit.t < hitResult.t)) {
+        hitType = 'player';
+        hitResult = playerHit;
+      }
+
+      if (hitResult) {
+        const hitPos = hitResult.point || end;
+        p.mesh.position.copy(hitPos);
+
+        if (hitType === 'wall') {
+          if (this.eventBus) {
+            this.eventBus.emit(EVENTS.PROJECTILE_HIT_WALL, {
+              hitPosition: hitPos.clone(),
+              projectile: p
+            });
+          }
+        } else if (hitType === 'monster') {
+          const monster = hitResult.target;
+          if (p.owner === 'player' && this.eventBus) {
+            this.eventBus.emit(EVENTS.PLAYER_HIT_MONSTER, {
+              monster,
+              hitPosition: hitPos.clone(),
+              projectile: p
+            });
+          }
+          if (p.owner === 'player' && this.onPlayerHitMonster) {
+            try {
+              this.onPlayerHitMonster({ monster, hitPosition: hitPos.clone(), projectile: p });
+            } catch (err) {
+              console.warn('⚠️ onPlayerHitMonster callback failed:', err?.message || err);
+            }
+          }
+          if (p.hitMonsters && monster) {
+            p.hitMonsters.add(monster);
+          }
+          if (p.explosionRadius && p.explosionRadius > 0) {
+            // Explosion handled by combat system.
+          }
+        } else if (hitType === 'player') {
+          if (p.owner === 'monster' && this.eventBus) {
+            this.eventBus.emit(EVENTS.MONSTER_HIT_PLAYER, {
+              hitPosition: hitPos.clone(),
+              projectile: p,
+              damage: p?.damage ?? this.monsterProjectileDamage
+            });
+          }
+          if (p.owner === 'monster' && this.onMonsterHitPlayer) {
+            try {
+              this.onMonsterHitPlayer({ hitPosition: hitPos.clone(), projectile: p });
+            } catch (err) {
+              console.warn('⚠️ onMonsterHitPlayer callback failed:', err?.message || err);
+            }
+          }
+          if (p.explosionRadius && p.explosionRadius > 0) {
+            // Explosion handled by combat system.
+          }
         }
-        this.cleanupBullet(i);
+
+        if (hitType === 'monster' && p.remainingPierce > 0) {
+          p.remainingPierce -= 1;
+          const n = p.velocity.clone().normalize();
+          p.mesh.position.addScaledVector(n, 0.25);
+          continue;
+        }
+
+        this.cleanupProjectile(i);
+        continue;
+      }
+
+      // No hit: apply movement
+      p.mesh.position.copy(end);
+      if (p.spin) {
+        p.mesh.rotation.x += p.spin.x * dt;
+        p.mesh.rotation.y += p.spin.y * dt;
+        p.mesh.rotation.z += p.spin.z * dt;
       }
     }
   }
@@ -104,8 +459,32 @@ export class ProjectileManager {
       fx.sprite.scale.setScalar(0.6 + (1 - progress) * 0.6);
 
       if (fx.life <= 0) {
-        this.scene.remove(fx.sprite);
         this.impacts.splice(i, 1);
+        this.releaseImpact(fx);
+      }
+    }
+  }
+
+  updateExplosions(dt) {
+    for (let i = this.explosions.length - 1; i >= 0; i--) {
+      const fx = this.explosions[i];
+      fx.life -= dt;
+      const progress = Math.max(0, fx.life / fx.maxLife);
+      const inv = 1 - progress;
+
+      if (fx.group) {
+        fx.group.children.forEach((obj) => {
+          if (!obj?.material) return;
+          obj.material.opacity = progress;
+          obj.scale.setScalar(1 + inv * 1.8);
+        });
+      }
+      if (fx.light) {
+        fx.light.intensity = fx.maxIntensity * progress;
+      }
+      if (fx.life <= 0) {
+        this.explosions.splice(i, 1);
+        this.releaseExplosion(fx);
       }
     }
   }
@@ -118,47 +497,310 @@ export class ProjectileManager {
     return !this.worldState.isWalkable(gx, gy);
   }
 
-  findHitMonster(position) {
-    if (!this.monsterManager || !this.monsterManager.getMonsters) return null;
-    const monsters = this.monsterManager.getMonsters();
-    for (const m of monsters) {
-      const mPos = m.getWorldPosition ? m.getWorldPosition() : null;
-      if (!mPos) continue;
-      const dist = mPos.distanceTo(position);
-      if (dist <= this.hitRadius) {
-        return m;
+  getMonsterHitCenter(monster) {
+    const base = monster?.getWorldPosition ? monster.getWorldPosition() : null;
+    if (!base) return null;
+    const height =
+      (CONFIG.MONSTER_BASE_HEIGHT ?? 1.6) *
+      (monster?.scale || monster?.typeConfig?.stats?.scale || 1);
+    const center = base.clone();
+    center.y += Math.max(0.2, height * 0.55);
+    return center;
+  }
+
+  getPlayerHitCenter() {
+    const pos = this.playerRef?.getPosition ? this.playerRef.getPosition() : null;
+    if (!pos) return null;
+    const center = pos.clone();
+    center.y -= (CONFIG.PLAYER_HEIGHT ?? 1.7) * 0.35;
+    return center;
+  }
+
+  cleanupProjectile(index) {
+    const projectile = this.projectiles[index];
+    this.projectiles.splice(index, 1);
+    if (projectile?.owner) {
+      const key = projectile.owner;
+      const cur = this.activeCounts?.[key] ?? 0;
+      if (this.activeCounts) {
+        this.activeCounts[key] = Math.max(0, cur - 1);
       }
     }
+    this.releaseProjectile(projectile);
+  }
+
+  spawnProjectile(options) {
+    const origin = options?.origin;
+    const direction = options?.direction;
+    if (!origin || !direction) return;
+
+    const dir = direction.clone().normalize();
+    const owner = options.owner || 'player';
+
+    const maxTotal = CONFIG.MAX_ACTIVE_PROJECTILES;
+    if (Number.isFinite(maxTotal) && maxTotal >= 0 && this.projectiles.length >= maxTotal) {
+      return;
+    }
+    const maxPlayer = CONFIG.MAX_ACTIVE_PLAYER_PROJECTILES;
+    const maxMonster = CONFIG.MAX_ACTIVE_MONSTER_PROJECTILES;
+    if (owner === 'player' && Number.isFinite(maxPlayer) && maxPlayer >= 0) {
+      const count = this.activeCounts?.player ?? 0;
+      if (count >= maxPlayer) return;
+    }
+    if (owner === 'monster' && Number.isFinite(maxMonster) && maxMonster >= 0) {
+      const count = this.activeCounts?.monster ?? 0;
+      if (count >= maxMonster) return;
+    }
+
+    const kind = options.kind || 'bullet';
+    const speed = Number.isFinite(options.speed) ? options.speed : 20;
+    const lifetime = Number.isFinite(options.lifetime) ? options.lifetime : 2.0;
+
+    const poolKey = this.getProjectilePoolKey(owner, kind);
+    const pool = this.projectilePools[poolKey] || [];
+    const projectile = pool.length > 0 ? pool.pop() : this.createPooledProjectile(poolKey);
+    const mesh = projectile.mesh;
+
+    if (!mesh) return;
+
+    if (poolKey === 'bolt') {
+      const color = options.color ?? 0x77ccff;
+      mesh.material.color.setHex(color);
+      mesh.material.emissive.setHex(color);
+      mesh.scale.setScalar(1.0);
+      mesh.quaternion.identity();
+      projectile.spin.set((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 2);
+    } else if (poolKey === 'grenade') {
+      if (options.color) {
+        mesh.material.color.setHex(options.color);
+        mesh.material.emissive.setHex(options.color);
+      } else {
+        mesh.material.color.copy(this.playerGrenadeMaterial.color);
+        mesh.material.emissive.copy(this.playerGrenadeMaterial.emissive);
+      }
+      mesh.scale.setScalar(1.0);
+      mesh.quaternion.identity();
+      projectile.spin = null;
+    } else {
+      const color = options.color ?? this.playerBulletMaterial.color.getHex();
+      mesh.material.color.setHex(color);
+      mesh.material.emissive.setHex(options.color ?? this.playerBulletMaterial.emissive.getHex());
+      // Cylinder is Y-up; align to direction
+      mesh.quaternion.setFromUnitVectors(BULLET_BASE_AXIS, dir);
+      mesh.scale.set(1.15, 1.15, 1.15);
+      projectile.spin = null;
+    }
+
+    mesh.position.copy(origin);
+    mesh.visible = true;
+    this.scene.add(mesh);
+
+    projectile.velocity.copy(dir).multiplyScalar(speed);
+
+    const pierce = Number.isFinite(options.pierce) ? Math.max(0, options.pierce) : 0;
+    projectile.life = lifetime;
+    projectile.maxLife = lifetime;
+    projectile.owner = owner;
+    projectile.kind = kind;
+    projectile.damage = options.damage ?? 1;
+    projectile.stunSeconds = options.stunSeconds;
+    projectile.canHitMonsters = !!options.canHitMonsters;
+    projectile.canHitPlayer = !!options.canHitPlayer;
+    projectile.hitRadius = options.hitRadius;
+    projectile.playerHitRadius = options.playerHitRadius;
+    projectile.sourceMonster = options.sourceMonster || null;
+    projectile.explosionRadius = options.explosionRadius;
+    projectile.explosionDamage = options.explosionDamage;
+    projectile.explosionColor = options.explosionColor;
+    projectile.remainingPierce = pierce;
+    projectile.hitMonsters.clear();
+
+    this.projectiles.push(projectile);
+    if (this.activeCounts) {
+      if (owner === 'player') this.activeCounts.player = (this.activeCounts.player ?? 0) + 1;
+      else if (owner === 'monster') this.activeCounts.monster = (this.activeCounts.monster ?? 0) + 1;
+    }
+  }
+
+  segmentSphereHit(start, end, center, radius) {
+    if (!start || !end || !center) return null;
+    const r = Number.isFinite(radius) ? radius : 1.0;
+    const d = end.clone().sub(start);
+    const f = start.clone().sub(center);
+    const a = d.dot(d);
+    if (a <= 1e-9) {
+      const dist = start.distanceTo(center);
+      if (dist <= r) return { t: 0, point: start.clone() };
+      return null;
+    }
+    const b = 2 * f.dot(d);
+    const c = f.dot(f) - r * r;
+    const disc = b * b - 4 * a * c;
+    if (disc < 0) return null;
+    const sqrt = Math.sqrt(disc);
+    const inv2a = 1 / (2 * a);
+    const t1 = (-b - sqrt) * inv2a;
+    const t2 = (-b + sqrt) * inv2a;
+
+    let t = null;
+    if (t1 >= 0 && t1 <= 1) t = t1;
+    else if (t2 >= 0 && t2 <= 1) t = t2;
+    if (t === null) return null;
+
+    const point = start.clone().addScaledVector(d, t);
+    return { t, point };
+  }
+
+  sweepWall(start, end) {
+    if (!this.worldState || !this.worldState.isWalkable) return null;
+    const tileSize = CONFIG.TILE_SIZE || 1;
+
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const len = Math.sqrt(dx * dx + dz * dz);
+    if (!Number.isFinite(len) || len <= 1e-6) return null;
+
+    const dirX = dx / len;
+    const dirZ = dz / len;
+
+    let gx = Math.floor(start.x / tileSize);
+    let gy = Math.floor(start.z / tileSize);
+
+    if (!this.worldState.isWalkable(gx, gy)) {
+      return { t: 0, point: start.clone() };
+    }
+
+    const stepX = dirX > 0 ? 1 : dirX < 0 ? -1 : 0;
+    const stepY = dirZ > 0 ? 1 : dirZ < 0 ? -1 : 0;
+
+    const nextBoundaryX = stepX > 0
+      ? (gx + 1) * tileSize
+      : gx * tileSize;
+    const nextBoundaryZ = stepY > 0
+      ? (gy + 1) * tileSize
+      : gy * tileSize;
+
+    let tMaxX = stepX === 0 ? Infinity : (nextBoundaryX - start.x) / dirX;
+    let tMaxZ = stepY === 0 ? Infinity : (nextBoundaryZ - start.z) / dirZ;
+    const tDeltaX = stepX === 0 ? Infinity : tileSize / Math.abs(dirX);
+    const tDeltaZ = stepY === 0 ? Infinity : tileSize / Math.abs(dirZ);
+
+    let t = 0;
+    while (t <= len) {
+      if (tMaxX < tMaxZ) {
+        gx += stepX;
+        t = tMaxX;
+        tMaxX += tDeltaX;
+      } else {
+        gy += stepY;
+        t = tMaxZ;
+        tMaxZ += tDeltaZ;
+      }
+
+      const isWalkable = this.worldState.isWalkable(gx, gy);
+      if (!isWalkable) {
+        const clamped = Math.max(0, Math.min(len, t));
+        const point = start.clone().add(new THREE.Vector3(dirX, 0, dirZ).multiplyScalar(clamped));
+        const tn = len > 0 ? clamped / len : 0;
+        return { t: tn, point };
+      }
+    }
+
     return null;
   }
 
-  cleanupBullet(index) {
-    const bullet = this.bullets[index];
-    if (bullet?.mesh) {
-      this.scene.remove(bullet.mesh);
+  sweepMonsters(start, end, radius) {
+    if (!this.monsterManager || !this.monsterManager.getMonsters) return null;
+    const monsters = this.monsterManager.getMonsters();
+
+    let best = null;
+    for (const monster of monsters) {
+      if (!monster) continue;
+      const center = this.getMonsterHitCenter(monster);
+      if (!center) continue;
+      const monsterRadius =
+        monster?.hitRadius ??
+        monster?.typeConfig?.stats?.hitRadius ??
+        null;
+      const effectiveRadius = Number.isFinite(monsterRadius)
+        ? Math.max(radius, monsterRadius)
+        : radius;
+      const res = this.segmentSphereHit(start, end, center, effectiveRadius);
+      if (!res) continue;
+      if (!best || res.t < best.t) {
+        best = { ...res, target: monster };
+      }
     }
-    this.bullets.splice(index, 1);
+    return best;
   }
 
-  spawnImpact(position) {
-    if (!position) return;
-    const material = new THREE.SpriteMaterial({
-      color: 0xffddaa,
-      blending: THREE.AdditiveBlending,
-      transparent: true,
-      opacity: 1,
-      depthWrite: false
-    });
-    const sprite = new THREE.Sprite(material);
-    sprite.position.copy(position);
-    sprite.position.y += 0.3;
-    sprite.scale.set(0.8, 0.8, 0.8);
-    this.scene.add(sprite);
+  sweepPlayer(start, end, radius) {
+    const center = this.getPlayerHitCenter();
+    if (!center) return null;
+    const res = this.segmentSphereHit(start, end, center, radius);
+    if (!res) return null;
+    return { ...res, target: 'player' };
+  }
 
-    this.impacts.push({
-      sprite,
-      life: 0.25,
-      maxLife: 0.25
+  spawnImpact(position, projectile = null) {
+    if (!position) return;
+    const maxImpacts = CONFIG.MAX_ACTIVE_IMPACTS;
+    if (Number.isFinite(maxImpacts) && maxImpacts >= 0 && this.impacts.length >= maxImpacts) {
+      return;
+    }
+    const owner = projectile?.owner || 'player';
+    const color = owner === 'monster' ? 0x88ccff : 0xffddaa;
+
+    const fx = this.impactPool.length > 0 ? this.impactPool.pop() : this.createPooledImpact();
+    fx.life = 0.25;
+    fx.maxLife = 0.25;
+    fx.sprite.material.color.setHex(color);
+    fx.sprite.material.opacity = 1;
+    fx.sprite.position.copy(position);
+    fx.sprite.position.y += 0.3;
+    fx.sprite.scale.set(0.9, 0.9, 0.9);
+    fx.sprite.visible = true;
+    this.scene.add(fx.sprite);
+
+    this.impacts.push(fx);
+  }
+
+  spawnExplosion(position, options = {}) {
+    if (!position) return;
+    const maxExplosions = CONFIG.MAX_ACTIVE_EXPLOSIONS;
+    if (Number.isFinite(maxExplosions) && maxExplosions >= 0 && this.explosions.length >= maxExplosions) {
+      return;
+    }
+
+    const color = options.color ?? 0xffaa55;
+    const size = options.size ?? 1.2;
+    const intensity = options.intensity ?? 1.6;
+
+    const fx = this.explosionPool.length > 0 ? this.explosionPool.pop() : this.createPooledExplosion();
+
+    fx.group.position.copy(position);
+    fx.group.visible = true;
+    fx.group.children.forEach((obj) => {
+      if (!obj?.material) return;
+      obj.material.color.setHex(color);
+      obj.material.opacity = obj === fx.core ? 0.95 : 0.6;
     });
+    fx.core.scale.set(size, size, size);
+    fx.ring.scale.set(size * 1.4, size * 1.4, size * 1.4);
+
+    fx.light.color.setHex(color);
+    fx.light.intensity = intensity;
+    fx.light.position.copy(position);
+    fx.light.position.y += 0.6;
+    fx.light.visible = true;
+
+    this.scene.add(fx.group);
+    this.scene.add(fx.light);
+
+    fx.maxIntensity = intensity;
+    fx.life = 0.35;
+    fx.maxLife = 0.35;
+
+    this.explosions.push(fx);
   }
 }

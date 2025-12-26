@@ -12,7 +12,11 @@ export class InputHandler {
     // Mouse state
     this.mouseDelta = { x: 0, y: 0 };
     this.pointerLocked = false;
-    this.mouseButtons = { left: false };
+    this.mouseButtons = { left: false, right: false };
+    this.mouseJustPressed = { left: false, right: false };
+
+    // One-shot key presses
+    this.justPressed = new Set();
 
     // Setup event listeners
     this.setupListeners();
@@ -27,7 +31,11 @@ export class InputHandler {
 
     // Keyboard events
     window.addEventListener('keydown', (e) => {
+      const wasDown = !!this.keys[e.code];
       this.keys[e.code] = true;
+      if (!wasDown) {
+        this.justPressed.add(e.code);
+      }
       this.lastInputTime = performance.now();
 
       // Debug: Log first key press
@@ -59,7 +67,18 @@ export class InputHandler {
 
     document.addEventListener('mousedown', (e) => {
       if (e.button === 0) {
+        const wasDown = this.mouseButtons.left;
         this.mouseButtons.left = true;
+        if (!wasDown) {
+          this.mouseJustPressed.left = true;
+        }
+        this.lastInputTime = performance.now();
+      } else if (e.button === 2) {
+        const wasDown = this.mouseButtons.right;
+        this.mouseButtons.right = true;
+        if (!wasDown) {
+          this.mouseJustPressed.right = true;
+        }
         this.lastInputTime = performance.now();
       }
     });
@@ -68,6 +87,16 @@ export class InputHandler {
       if (e.button === 0) {
         this.mouseButtons.left = false;
         this.lastInputTime = performance.now();
+      } else if (e.button === 2) {
+        this.mouseButtons.right = false;
+        this.lastInputTime = performance.now();
+      }
+    });
+
+    // Prevent the right-click context menu while playing (pointer lock).
+    document.addEventListener('contextmenu', (e) => {
+      if (this.pointerLocked) {
+        e.preventDefault();
       }
     });
 
@@ -115,6 +144,20 @@ export class InputHandler {
    */
   isKeyPressed(code) {
     return !!this.keys[code];
+  }
+
+  /**
+   * Consume a key-down edge once.
+   * @param {string} code
+   * @returns {boolean}
+   */
+  consumeKeyPress(code) {
+    if (!code) return false;
+    if (this.justPressed.has(code)) {
+      this.justPressed.delete(code);
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -191,5 +234,21 @@ export class InputHandler {
    */
   isFiring() {
     return this.pointerLocked && this.mouseButtons.left;
+  }
+
+  /**
+   * Consume a mouse-down edge for primary fire (left click).
+   * @returns {boolean}
+   */
+  consumeFirePressed() {
+    if (!this.pointerLocked) {
+      this.mouseJustPressed.left = false;
+      return false;
+    }
+    if (this.mouseJustPressed.left) {
+      this.mouseJustPressed.left = false;
+      return true;
+    }
+    return false;
   }
 }

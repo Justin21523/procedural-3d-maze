@@ -15,7 +15,7 @@ import {
   createRoomCeilingTexture,
   createNormalMap
 } from './textures.js';
-import { generateRoomProps } from './props.js';
+import { createRoomPropsFromPlan } from './props.js';
 
 export class SceneManager {
   /**
@@ -75,6 +75,19 @@ export class SceneManager {
       ? this.renderer.capabilities.getMaxAnisotropy()
       : 1;
 
+    // ---------- Model loader (environment props) ----------
+    this.modelManager = new THREE.LoadingManager();
+    this.modelManager.setURLModifier((url) => {
+      if (typeof url !== 'string') return url;
+      if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+      return encodeURI(url);
+    });
+    this.gltfLoader = null;
+    this.gltfLoaderPromise = null;
+    this.modelCache = new Map(); // url -> THREE.Object3D prototype
+    this.modelPromises = new Map();
+    this.worldBuildToken = 0;
+
     // ---------- Environment Map（假「光追」反射） ----------
     this.environmentMap = null;
     this._setupEnvironmentMap();
@@ -102,15 +115,56 @@ export class SceneManager {
     const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
     pmremGenerator.compileEquirectangularShader?.();
 
-    // 用 three 官方的 RoomEnvironment 當假光源環境
-    const envScene = new RoomEnvironment();
-    const envRT = pmremGenerator.fromScene(envScene);
-    this.environmentMap = envRT.texture;
+    const applyEnv = (texture) => {
+      this.environmentMap = texture;
+      this.scene.environment = this.environmentMap;
+    };
 
-    // 讓 PBR 材質自動使用這個環境
-    this.scene.environment = this.environmentMap;
+    const useFallback = () => {
+      const envScene = new RoomEnvironment();
+      const envRT = pmremGenerator.fromScene(envScene);
+      applyEnv(envRT.texture);
+      pmremGenerator.dispose();
+    };
 
-    pmremGenerator.dispose();
+    const hdrPath = CONFIG.ENVIRONMENT_HDR_ENABLED ? CONFIG.ENVIRONMENT_HDR_PATH : null;
+    if (hdrPath) {
+      import('three/examples/jsm/loaders/RGBELoader.js')
+        .then(({ RGBELoader }) => {
+          const loader = new RGBELoader(this.modelManager);
+          loader.load(
+            hdrPath,
+            (hdr) => {
+              const envRT = pmremGenerator.fromEquirectangular(hdr);
+              hdr.dispose?.();
+              applyEnv(envRT.texture);
+              pmremGenerator.dispose();
+            },
+            undefined,
+            () => useFallback()
+          );
+        })
+        .catch(() => useFallback());
+      return;
+    }
+
+    useFallback();
+  }
+
+  async getGltfLoader() {
+    if (this.gltfLoader) return this.gltfLoader;
+    if (this.gltfLoaderPromise) return this.gltfLoaderPromise;
+
+    this.gltfLoaderPromise = import('three/examples/jsm/loaders/GLTFLoader.js')
+      .then(({ GLTFLoader }) => {
+        this.gltfLoader = new GLTFLoader(this.modelManager);
+        return this.gltfLoader;
+      })
+      .finally(() => {
+        this.gltfLoaderPromise = null;
+      });
+
+    return this.gltfLoaderPromise;
   }
   
   /**
@@ -209,6 +263,8 @@ export class SceneManager {
   buildWorldFromGrid(worldState) {
     // Clear existing world meshes
     this.clearWorld();
+    this.worldBuildToken += 1;
+    const buildToken = this.worldBuildToken;
 
     const grid = worldState.getGrid();
     const roomMap = worldState.getRoomMap();
@@ -334,8 +390,9 @@ export class SceneManager {
           this.scene.add(ceiling);
           this.worldMeshes.push(ceiling);
 
-          // Generate room props (furniture, decorations)
-          const props = generateRoomProps(roomType, x, y, grid);
+          // Spawn planned props (visuals match WorldState obstacle map)
+          const planned = worldState?.getPropAt ? worldState.getPropAt(x, y) : null;
+          const props = createRoomPropsFromPlan(roomType, x, y, planned);
           props.forEach(prop => {
             this.scene.add(prop);
             this.worldMeshes.push(prop);
@@ -345,16 +402,289 @@ export class SceneManager {
     }
 
     console.log(`Built world: ${this.worldMeshes.length} meshes created (including props)`);
+
+    // Async decorations (models/textures) that are placed per-room.
+    this.spawnRoomModels(worldState, buildToken).catch((err) => {
+      console.log('⚠️ Room model spawn failed', err?.message || err);
+    });
+  }
+
+  async loadGltfPrototype(url) {
+    if (!url) throw new Error('Missing model URL');
+
+    if (this.modelCache.has(url)) {
+      return this.modelCache.get(url);
+    }
+    if (this.modelPromises.has(url)) {
+      return this.modelPromises.get(url);
+    }
+
+    const loader = await this.getGltfLoader();
+
+    const promise = new Promise((resolve, reject) => {
+      loader.load(
+        url,
+        (gltf) => {
+          const scene = gltf?.scene || null;
+          if (!scene) {
+            reject(new Error(`GLTF has no scene: ${url}`));
+            return;
+          }
+          scene.traverse((child) => {
+            if (!child?.isMesh) return;
+            child.castShadow = true;
+            child.receiveShadow = true;
+          });
+          // Mark as shared/cached asset so world disposal doesn't nuke cached resources.
+          scene.traverse((child) => {
+            child.userData = child.userData || {};
+            child.userData.__sharedAsset = true;
+          });
+          scene.userData = scene.userData || {};
+          scene.userData.__sharedAsset = true;
+          resolve(scene);
+        },
+        undefined,
+        (err) => reject(err)
+      );
+    }).then((scene) => {
+      this.modelCache.set(url, scene);
+      this.modelPromises.delete(url);
+      return scene;
+    }).catch((err) => {
+      this.modelPromises.delete(url);
+      throw err;
+    });
+
+    this.modelPromises.set(url, promise);
+    return promise;
+  }
+
+  async spawnRoomModels(worldState, buildToken) {
+    await this.spawnPoolModels(worldState, buildToken);
+  }
+
+  async spawnPoolModels(worldState, buildToken) {
+    if (!CONFIG.POOL_MODEL_ENABLED) return;
+    if (!worldState) return;
+
+    const rooms = worldState.getRooms ? worldState.getRooms() : [];
+    const poolRooms = rooms.filter((r) => r?.type === ROOM_TYPES.POOL);
+    if (poolRooms.length === 0) return;
+
+    const url = CONFIG.POOL_MODEL_PATH || '/models/pool_5.glb';
+    let prototype = null;
+    try {
+      prototype = await this.loadGltfPrototype(url);
+    } catch (err) {
+      console.log(`⚠️ Pool model load failed (${url})`, err?.message || err);
+      return;
+    }
+
+    if (!prototype) return;
+    if (buildToken !== this.worldBuildToken) return;
+
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const box = new THREE.Box3();
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    const yRotations = [0, Math.PI / 2, Math.PI, Math.PI * 3 / 2];
+
+    for (const room of poolRooms) {
+      if (buildToken !== this.worldBuildToken) return;
+      if (!room || !Number.isFinite(room.width) || !Number.isFinite(room.height)) continue;
+
+      const roomWorldW = room.width * tileSize;
+      const roomWorldH = room.height * tileSize;
+      const targetX = roomWorldW * 0.86;
+      const targetZ = roomWorldH * 0.86;
+
+      const model = prototype.clone(true);
+
+      let best = { scale: 1, rot: 0 };
+      for (const rot of yRotations) {
+        model.position.set(0, 0, 0);
+        model.rotation.set(0, rot, 0);
+        model.scale.setScalar(1);
+        model.updateMatrixWorld(true);
+        box.setFromObject(model);
+        box.getSize(size);
+        if (!Number.isFinite(size.x) || !Number.isFinite(size.z) || size.x <= 0.001 || size.z <= 0.001) {
+          continue;
+        }
+        const s = Math.min(targetX / size.x, targetZ / size.z);
+        if (s > best.scale) best = { scale: s, rot };
+      }
+
+      model.position.set(0, 0, 0);
+      model.rotation.set(0, best.rot, 0);
+      model.scale.setScalar(Math.max(0.01, best.scale));
+      model.updateMatrixWorld(true);
+      box.setFromObject(model);
+      box.getCenter(center);
+
+      const centerGX = room.x + room.width / 2 - 0.5;
+      const centerGY = room.y + room.height / 2 - 0.5;
+      const worldX = centerGX * tileSize;
+      const worldZ = centerGY * tileSize;
+
+      // Center the model on the room and sit it on the floor.
+      model.position.set(
+        worldX - center.x,
+        0.01 - box.min.y,
+        worldZ - center.z
+      );
+
+      this.scene.add(model);
+      this.worldMeshes.push(model);
+
+      if (CONFIG.POOL_FX_ENABLED && !CONFIG.LOW_PERF_MODE) {
+        const fx = this.createPoolFx(worldX, worldZ, roomWorldW, roomWorldH);
+        if (fx) {
+          this.scene.add(fx);
+          this.worldMeshes.push(fx);
+        }
+      }
+    }
+  }
+
+  createPoolFx(centerX, centerZ, roomWorldW, roomWorldH) {
+    // Lightweight animated water surface + subtle light pulse.
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const waterW = Math.max(tileSize * 1.2, roomWorldW * 0.72);
+    const waterD = Math.max(tileSize * 0.9, roomWorldH * 0.56);
+
+    const geo = new THREE.PlaneGeometry(waterW, waterD, 18, 14);
+    geo.rotateX(-Math.PI / 2);
+
+    const mat = new THREE.MeshPhysicalMaterial({
+      color: 0x4ab8ff,
+      transparent: true,
+      opacity: 0.6,
+      roughness: 0.06,
+      metalness: 0.05,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.04,
+      transmission: 0.68,
+      ior: 1.33,
+      envMap: this.environmentMap,
+      envMapIntensity: 1.2,
+      depthWrite: false
+    });
+
+    const water = new THREE.Mesh(geo, mat);
+    water.position.set(centerX, 0.54, centerZ);
+    water.receiveShadow = false;
+    water.castShadow = false;
+
+    const light = new THREE.PointLight(0x4ab8ff, 0.55, Math.max(roomWorldW, roomWorldH) * 2.2, 2);
+    light.position.set(centerX, 1.2, centerZ);
+
+    const group = new THREE.Group();
+    group.name = '__poolFx';
+    group.add(water);
+    group.add(light);
+
+    const base = geo.attributes.position.array.slice();
+    group.userData.wave = {
+      base,
+      time: Math.random() * 10,
+      amplitude: 0.08,
+      frequency: 1.5,
+      choppiness: 1.15
+    };
+    group.userData.tick = (dt) => {
+      const wave = group.userData.wave;
+      if (!wave) return;
+      wave.time += dt;
+
+      const pos = geo.attributes.position.array;
+      for (let i = 0; i < pos.length; i += 3) {
+        const ox = base[i];
+        const oz = base[i + 2];
+        const w1 = Math.sin(ox * wave.choppiness * 0.7 + wave.time * wave.frequency);
+        const w2 = Math.cos(oz * wave.choppiness + wave.time * (wave.frequency * 0.75));
+        pos[i + 1] = base[i + 1] + (w1 + w2) * 0.5 * wave.amplitude;
+      }
+      geo.attributes.position.needsUpdate = true;
+      geo.computeVertexNormals();
+
+      if (light) {
+        light.intensity = 0.45 + Math.sin(wave.time * 1.3) * 0.12;
+      }
+    };
+
+    return group;
   }
 
   /**
    * Clear all world meshes from the scene
    */
   clearWorld() {
-    this.worldMeshes.forEach(mesh => {
-      this.scene.remove(mesh);
-      mesh.geometry?.dispose();
-      mesh.material?.dispose();
+    const geometries = new Set();
+    const materials = new Set();
+    const textures = new Set();
+
+    const collectMaterial = (mat) => {
+      if (!mat) return;
+      materials.add(mat);
+
+      const texKeys = [
+        'map',
+        'normalMap',
+        'roughnessMap',
+        'metalnessMap',
+        'emissiveMap',
+        'aoMap',
+        'alphaMap',
+        'bumpMap',
+        'displacementMap'
+      ];
+      for (const key of texKeys) {
+        const tex = mat[key];
+        if (tex) textures.add(tex);
+      }
+    };
+
+    this.worldMeshes.forEach(obj => {
+      if (!obj) return;
+      this.scene.remove(obj);
+
+      obj.traverse?.((child) => {
+        if (!child) return;
+        if (child.userData?.__sharedAsset) return;
+        if (child.geometry) {
+          geometries.add(child.geometry);
+        }
+        const mat = child.material;
+        if (Array.isArray(mat)) {
+          mat.forEach(collectMaterial);
+        } else if (mat) {
+          collectMaterial(mat);
+        }
+      });
+    });
+
+    textures.forEach((tex) => {
+      try {
+        tex.dispose?.();
+      } catch (err) {
+        void err;
+      }
+    });
+    materials.forEach((mat) => {
+      try {
+        mat.dispose?.();
+      } catch (err) {
+        void err;
+      }
+    });
+    geometries.forEach((geo) => {
+      try {
+        geo.dispose?.();
+      } catch (err) {
+        void err;
+      }
     });
     this.worldMeshes = [];
   }
@@ -417,6 +747,15 @@ export class SceneManager {
    */
   getWallMeshes() {
     return this.wallMeshes || [];
+  }
+
+  refreshEnvironmentMap() {
+    try {
+      this.environmentMap?.dispose?.();
+    } catch (err) {
+      void err;
+    }
+    this._setupEnvironmentMap();
   }
 
   /**
