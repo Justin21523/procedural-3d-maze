@@ -1,0 +1,75 @@
+{
+  "id": 6,
+  "name": "L6 - Code Lock",
+  "maze": { "width": 29, "height": 29, "roomDensity": 2.7, "extraConnectionChance": 0.1 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.6,
+      "CLASSROOMS_BLOCK": 1.6,
+      "OFFICE": 1.5,
+      "LAB": 1.2,
+      "CAFETERIA": 0.75,
+      "STORAGE": 0.9,
+      "LIBRARY": 0.75,
+      "BATHROOM": 0.65,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 4,
+    "maxCount": 6,
+    "speedMultiplier": 1.0,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.0,
+    "typeWeights": { "WANDERER": 0.5, "HUNTER": 0.25, "SENTINEL": 0.15, "GREETER": 0.1 },
+    "allowSprintTypes": ["HUNTER"]
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "doorCode",
+        "template": "codeLock",
+        "required": true,
+        "params": {
+          "clues": 3,
+          "roomTypesClues": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
+          "roomTypesKeypad": ["OFFICE", "LAB"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Find the three note clues (A/B/C).",
+            "Each note reveals one digit. The code order is A→B→C.",
+            "After collecting all three, find the keypad and press E."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level.",
+            "If it stays locked, you missed a required objective."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["doorCode", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.5,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+
