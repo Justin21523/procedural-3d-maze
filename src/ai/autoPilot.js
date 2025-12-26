@@ -160,7 +160,7 @@ export class AutoPilot {
       .join('|');
 
     const objectiveKey = objective
-      ? `${String(objective.id || '')}:${String(objective.template || '')}:${String(objective.objectiveText || '')}`
+      ? `${String(objective.id || '')}:${String(objective.template || '')}`
       : '';
 
     return `${exitUnlocked === false ? '0' : '1'}:${objectiveKey}:${pending}`;
@@ -186,21 +186,35 @@ export class AutoPilot {
     const pending = targets.filter((t) => t && !t.collected && t.gridPos);
     const exitUnlocked = state.exitUnlocked;
     const objective = state.objective || null;
+    const objectiveId = String(objective?.id || '').trim();
+    const objectiveTemplate = String(objective?.template || '').trim();
 
     // Interactable objectives: go to the closest target and interact.
-    if (pending.length > 0) {
-      pending.sort((a, b) => {
-        const da = Math.abs(a.gridPos.x - playerGrid.x) + Math.abs(a.gridPos.y - playerGrid.y);
-        const db = Math.abs(b.gridPos.x - playerGrid.x) + Math.abs(b.gridPos.y - playerGrid.y);
-        return da - db;
-      });
+    const wantsInteractTargets =
+      objectiveTemplate === 'findKeycard' ||
+      objectiveTemplate === 'collectEvidence' ||
+      objectiveTemplate === 'restorePower';
 
-      const next = pending[0];
-      this.taskTargetType = 'mission';
-      this.taskRunner.setTasks([
-        new InteractTask(next.id || '', next.gridPos, { threshold: 1 })
-      ]);
-      return;
+    if (wantsInteractTargets) {
+      const objectiveTargets = (objectiveId && objectiveTemplate !== 'exit')
+        ? pending.filter((t) => String(t?.missionId || '').trim() === objectiveId)
+        : [];
+
+      const pool = objectiveTargets.length > 0 ? objectiveTargets : pending;
+      if (pool.length > 0) {
+        pool.sort((a, b) => {
+          const da = Math.abs(a.gridPos.x - playerGrid.x) + Math.abs(a.gridPos.y - playerGrid.y);
+          const db = Math.abs(b.gridPos.x - playerGrid.x) + Math.abs(b.gridPos.y - playerGrid.y);
+          return da - db;
+        });
+
+        const next = pool[0];
+        this.taskTargetType = 'mission';
+        this.taskRunner.setTasks([
+          new InteractTask(next.id || '', next.gridPos, { threshold: 1 })
+        ]);
+        return;
+      }
     }
 
     // Exit unlocked: go to exit and interact to finish.
@@ -214,7 +228,7 @@ export class AutoPilot {
     }
 
     // Exit locked but objective is to unlock it: go to exit and interact.
-    if (objective?.template === 'unlockExit' && this.exitPointRef?.getGridPosition) {
+    if (objectiveTemplate === 'unlockExit' && this.exitPointRef?.getGridPosition) {
       const exit = this.exitPointRef.getGridPosition();
       this.taskTargetType = 'exit';
       this.taskRunner.setTasks([

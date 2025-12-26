@@ -861,7 +861,7 @@ export class MissionDirector {
       if (mission.template === 'findKeycard') {
         if (mission.state.found) continue;
         const gp = mission.state.gridPos;
-        if (gp) targets.push({ collected: false, id: `keycard:${mission.id}`, gridPos: gp });
+        if (gp) targets.push({ collected: false, id: `keycard:${mission.id}`, gridPos: gp, missionId: mission.id, template: mission.template });
       } else if (mission.template === 'collectEvidence') {
         const need = (mission.state.required || 0) - (mission.state.collected || 0);
         if (need <= 0) continue;
@@ -869,14 +869,14 @@ export class MissionDirector {
         for (const item of items) {
           if (item?.collected) continue;
           if (!item?.gridPos) continue;
-          targets.push({ collected: false, id: item.id || null, gridPos: item.gridPos });
+          targets.push({ collected: false, id: item.id || null, gridPos: item.gridPos, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'restorePower') {
         const switches = Array.isArray(mission.state.switches) ? mission.state.switches : [];
         for (const sw of switches) {
           if (sw?.on) continue;
           if (!sw?.gridPos) continue;
-          targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos });
+          targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos, missionId: mission.id, template: mission.template });
         }
       }
     }
