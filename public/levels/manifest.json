@@ -1,0 +1,10 @@
+{
+  "schema": "v1",
+  "levels": [
+    "l1-tutorial.json",
+    "l2-keycard.json",
+    "l3-restore-power.json",
+    "l4-stealth-drill.json"
+  ]
+}
+
