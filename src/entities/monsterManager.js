@@ -19,6 +19,7 @@ import { Pathfinding } from '../ai/pathfinding.js';
 import { SquadCoordinator } from '../ai/components/tactics/squadCoordinator.js';
 import { getSquadRoleBrainDefaults } from '../ai/squadRoleCatalog.js';
 import { CONFIG, resolveMonsterCount } from '../core/config.js';
+import { EVENTS } from '../core/events.js';
 
 export class MonsterManager {
   /**
@@ -73,7 +74,7 @@ export class MonsterManager {
   }
 
   registerNoise(position, options = {}) {
-    this.perception?.registerNoise?.(position, options);
+    return this.perception?.registerNoise?.(position, options) ?? null;
   }
 
   updateNoise(dt) {
@@ -96,7 +97,10 @@ export class MonsterManager {
     const sprinting = this.playerRef?.isSprinting
       ? this.playerRef.isSprinting()
       : (this.playerRef?.input?.isSprinting?.() ?? false);
-    this.perception?.updatePlayerNoise?.(dt, playerPos, { sprinting });
+    const entry = this.perception?.updatePlayerNoise?.(dt, playerPos, { sprinting }) ?? null;
+    if (entry && this.eventBus?.emit) {
+      this.eventBus.emit(EVENTS.NOISE_EMITTED, entry);
+    }
   }
 
   canMonsterSeePlayer(monster, playerGrid) {

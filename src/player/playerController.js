@@ -35,6 +35,7 @@ export class PlayerController {
     this.externalMove = null;
     this.externalLookYaw = null;
     this.externalLookPitch = null;
+    this.externalSprinting = false;
 
     // Tracking
     this.lastPosition = new THREE.Vector3();
@@ -70,6 +71,7 @@ export class PlayerController {
 
     this.updateBlockState(deltaTime, externalCommand);
 
+    this.externalSprinting = false;
     if (externalCommand) {
       this.applyExternalControl(externalCommand, deltaTime);
     }
@@ -190,6 +192,7 @@ export class PlayerController {
    * @param {number} deltaTime
    */
   applyExternalControl(cmd, deltaTime = 1 / CONFIG.TARGET_FPS) {
+    this.externalSprinting = !!cmd?.sprint;
     const baseSpeed = CONFIG.PLAYER_SPEED;
     const speed = cmd?.sprint ? baseSpeed * 1.2 : baseSpeed;
 
@@ -497,7 +500,7 @@ export class PlayerController {
    * @returns {boolean} True if sprinting
    */
   isSprinting() {
-    return !!this.input?.isSprinting?.();
+    return !!this.input?.isSprinting?.() || !!this.externalSprinting;
   }
 
   isBlocking() {

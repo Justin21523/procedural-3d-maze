@@ -147,7 +147,7 @@ export class MissionDirector {
       bus.on(EVENTS.MONSTER_KILLED, (payload) => this.onMonsterKilled(payload))
     );
     this.unsubs.push(
-      bus.on(EVENTS.WEAPON_FIRED, (payload) => this.onWeaponFired(payload))
+      bus.on(EVENTS.NOISE_EMITTED, (payload) => this.onNoiseEmitted(payload))
     );
   }
 
@@ -431,8 +431,11 @@ export class MissionDirector {
     this.syncStatus();
   }
 
-  onWeaponFired(payload) {
-    void payload;
+  onNoiseEmitted(payload) {
+    const source = payload?.source;
+    if (source !== 'player') return;
+
+    const kind = String(payload?.kind || '').toLowerCase();
 
     const nowSec = this.gameState?.getElapsedTime
       ? this.gameState.getElapsedTime()
@@ -443,8 +446,13 @@ export class MissionDirector {
       if (mission.template !== 'stealthNoise') continue;
       if (this.isMissionComplete(mission)) continue;
 
-      mission.state.gunshots = (mission.state.gunshots || 0) + 1;
-      if (mission.state.resetOnGunshot) {
+      const isGunshot = kind.includes('gun') || kind.includes('shot');
+      if (isGunshot) {
+        mission.state.gunshots = (mission.state.gunshots || 0) + 1;
+        if (mission.state.resetOnGunshot) {
+          mission.state.lastNoiseAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
+        }
+      } else {
         mission.state.lastNoiseAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
       }
 

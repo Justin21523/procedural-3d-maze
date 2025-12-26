@@ -454,6 +454,24 @@ export class AutoPilot {
       combat.fire = false;
     }
 
+    const objective = this._missionState?.objective || null;
+    if (objective?.template === 'stealthNoise') {
+      const completed = !!objective?.progress?.completed;
+      const failed = !!objective?.progress?.failed;
+      const remaining = Number(objective?.progress?.remaining);
+      if (!completed && !failed && Number.isFinite(remaining) && remaining > 0) {
+        return {
+          move: { x: 0, y: 0 },
+          lookYaw: Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0,
+          lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
+          sprint: false,
+          block,
+          interact: false,
+          fire: false
+        };
+      }
+    }
+
     // Track oscillation
     this.recordRecentTile(playerPos);
     this.handleNudgeTimer(deltaTime);

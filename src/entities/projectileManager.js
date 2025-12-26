@@ -310,8 +310,36 @@ export class ProjectileManager {
   }
 
   registerNoise(position, options = {}) {
-    if (this.monsterManager?.registerNoise) {
-      this.monsterManager.registerNoise(position, options);
+    if (!position) return;
+
+    const entry = this.monsterManager?.registerNoise
+      ? this.monsterManager.registerNoise(position, options)
+      : null;
+
+    if (this.eventBus?.emit) {
+      if (entry) {
+        this.eventBus.emit(EVENTS.NOISE_EMITTED, entry);
+      } else {
+        const tileSize = CONFIG.TILE_SIZE || 1;
+        const x = Number.isFinite(position.x) ? position.x : 0;
+        const z = Number.isFinite(position.z) ? position.z : 0;
+        const grid = { x: Math.floor(x / tileSize), y: Math.floor(z / tileSize) };
+
+        const kind = options.kind || 'noise';
+        const radius = Number.isFinite(options.radius) ? options.radius : 8;
+        const ttl = Number.isFinite(options.ttl) ? options.ttl : 0.8;
+
+        this.eventBus.emit(EVENTS.NOISE_EMITTED, {
+          kind,
+          radius,
+          life: ttl,
+          maxLife: ttl,
+          grid,
+          world: new THREE.Vector3(x, Number.isFinite(position.y) ? position.y : 0, z),
+          strength: Number.isFinite(options.strength) ? options.strength : 1.0,
+          source: options.source || null
+        });
+      }
     }
   }
 
