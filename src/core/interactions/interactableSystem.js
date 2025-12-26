@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { EVENTS } from '../events.js';
+import { CONFIG } from '../config.js';
 
 function isVec3(v) {
   return !!v && typeof v.x === 'number' && typeof v.y === 'number' && typeof v.z === 'number';
@@ -21,6 +22,7 @@ export class InteractableSystem {
     this.scene = options.scene || null;
     this.camera = options.camera || null; // THREE.Camera or wrapper with getCamera()
     this.input = options.input || null;
+    this.worldState = options.worldState || null;
 
     this.maxDistance = Number.isFinite(options.maxDistance) ? options.maxDistance : 2.4;
     this.autoInteractDistance = Number.isFinite(options.autoInteractDistance)
@@ -40,11 +42,31 @@ export class InteractableSystem {
     this._tmpCamDir = new THREE.Vector3();
   }
 
-  setRefs({ eventBus, scene, camera, input } = {}) {
+  setRefs({ eventBus, scene, camera, input, worldState } = {}) {
     if (eventBus) this.eventBus = eventBus;
     if (scene) this.scene = scene;
     if (camera) this.camera = camera;
     if (input) this.input = input;
+    if (worldState) this.worldState = worldState;
+  }
+
+  getTileSize() {
+    return CONFIG.TILE_SIZE || 1;
+  }
+
+  worldToGrid(pos) {
+    if (!isVec3(pos)) return null;
+    const ts = this.getTileSize();
+    return { x: Math.floor(pos.x / ts), y: Math.floor(pos.z / ts) };
+  }
+
+  hasLineOfSight(playerPos, entry) {
+    const ws = this.worldState;
+    if (!ws?.hasLineOfSight) return true;
+    const a = this.worldToGrid(playerPos);
+    const b = entry?.gridPos;
+    if (!a || !b || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return true;
+    return !!ws.hasLineOfSight(a, b);
   }
 
   clear() {
@@ -170,6 +192,8 @@ export class InteractableSystem {
       const maxDist = this.getInteractDistanceFor(entry);
       if (!(dist <= maxDist)) continue;
 
+      if (!this.hasLineOfSight(playerPos, entry)) continue;
+
       if (entry.canInteract) {
         try {
           if (!entry.canInteract({ actorKind: 'player', entry, playerPos })) continue;
@@ -201,6 +225,8 @@ export class InteractableSystem {
       const distSq = dx * dx + dz * dz;
       if (distSq > bestDistSq) continue;
 
+      if (!this.hasLineOfSight(playerPos, entry)) continue;
+
       if (entry.canInteract) {
         try {
           if (!entry.canInteract({ actorKind: 'ai', entry, playerPos })) continue;
@@ -221,6 +247,13 @@ export class InteractableSystem {
     const actorKind = options.actorKind || 'player';
     const playerPos = options.playerPos || null;
     const nowMs = options.nowMs ?? performance.now();
+
+    if (isVec3(playerPos) && !this.hasLineOfSight(playerPos, entry)) {
+      if (actorKind === 'player') {
+        this.eventBus?.emit?.(EVENTS.INTERACTABLE_HOVER, { id: entry.id, text: 'Blocked by wall' });
+      }
+      return false;
+    }
 
     const maxDist = this.getInteractDistanceFor(entry);
     if (isVec3(playerPos) && entry.object3d) {
