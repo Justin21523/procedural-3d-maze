@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { Pathfinding } from './pathfinding.js';
 import { CONFIG } from '../core/config.js';
+import { TaskRunner } from './tasks/taskRunner.js';
+import { InteractTask } from './tasks/interactTask.js';
+import { SearchTask } from './tasks/searchTask.js';
 
 /**
  * AutoPilot: produces movement/look commands for the player
@@ -63,6 +66,15 @@ export class AutoPilot {
 
     // Interaction (mission objects use the same InteractableSystem as the player)
     this.interactCooldown = 0;
+
+    // Mission-solver tasks (Search -> MoveTo -> Interact)
+    this.taskRunner = new TaskRunner();
+    this.taskGoalKey = '';
+    this.taskTarget = null;
+    this.taskTargetType = null;
+    this.taskWantsInteract = false;
+    this.taskInteractId = null;
+    this._missionState = null;
   }
 
   setEnabled(enabled) {
@@ -107,6 +119,134 @@ export class AutoPilot {
     this.currentPath = [];
     this.currentTarget = null;
     this.lastPlanTime = 0;
+  }
+
+  readMissionState() {
+    const raw = typeof this.missionPointsRef === 'function'
+      ? this.missionPointsRef()
+      : (this.missionPointsRef || []);
+
+    if (Array.isArray(raw)) {
+      return { targets: raw, objective: null, exitUnlocked: null };
+    }
+
+    const obj = raw && typeof raw === 'object' ? raw : {};
+    return {
+      targets: Array.isArray(obj.targets) ? obj.targets : [],
+      objective: obj.objective || null,
+      exitUnlocked: obj.exitUnlocked ?? null
+    };
+  }
+
+  getMissionState() {
+    return this._missionState || this.readMissionState();
+  }
+
+  getMissionTargets() {
+    const state = this.getMissionState();
+    return Array.isArray(state?.targets) ? state.targets : [];
+  }
+
+  buildTaskGoalKey(missionState) {
+    const state = missionState || {};
+    const exitUnlocked = state.exitUnlocked;
+    const objective = state.objective || null;
+
+    const targets = Array.isArray(state.targets) ? state.targets : [];
+    const pending = targets
+      .filter((t) => t && !t.collected && t.gridPos)
+      .map((t) => t.id || `${t.gridPos.x},${t.gridPos.y}`)
+      .sort()
+      .join('|');
+
+    const objectiveKey = objective
+      ? `${String(objective.id || '')}:${String(objective.template || '')}:${String(objective.objectiveText || '')}`
+      : '';
+
+    return `${exitUnlocked === false ? '0' : '1'}:${objectiveKey}:${pending}`;
+  }
+
+  ensureTaskQueue(playerGrid, missionState) {
+    const state = missionState || {};
+    const key = this.buildTaskGoalKey(state);
+
+    if (key !== this.taskGoalKey) {
+      this.taskGoalKey = key;
+      this.taskRunner.clear();
+      this.taskTarget = null;
+      this.taskWantsInteract = false;
+      this.taskInteractId = null;
+      this.resetPath();
+    }
+
+    const hasTasks = !!this.taskRunner.current || (this.taskRunner.queue && this.taskRunner.queue.length > 0);
+    if (hasTasks) return;
+
+    const targets = Array.isArray(state.targets) ? state.targets : [];
+    const pending = targets.filter((t) => t && !t.collected && t.gridPos);
+    const exitUnlocked = state.exitUnlocked;
+    const objective = state.objective || null;
+
+    // Interactable objectives: go to the closest target and interact.
+    if (pending.length > 0) {
+      pending.sort((a, b) => {
+        const da = Math.abs(a.gridPos.x - playerGrid.x) + Math.abs(a.gridPos.y - playerGrid.y);
+        const db = Math.abs(b.gridPos.x - playerGrid.x) + Math.abs(b.gridPos.y - playerGrid.y);
+        return da - db;
+      });
+
+      const next = pending[0];
+      this.taskTargetType = 'mission';
+      this.taskRunner.setTasks([
+        new InteractTask(next.id || '', next.gridPos, { threshold: 1 })
+      ]);
+      return;
+    }
+
+    // Exit unlocked: go to exit and interact to finish.
+    if (exitUnlocked !== false && this.exitPointRef?.getGridPosition) {
+      const exit = this.exitPointRef.getGridPosition();
+      this.taskTargetType = 'exit';
+      this.taskRunner.setTasks([
+        new InteractTask('exit', exit, { threshold: 1 })
+      ]);
+      return;
+    }
+
+    // Exit locked but no interactable targets: explore/search until the objective updates.
+    const roomTypes = objective?.params?.roomTypes ?? null;
+    this.taskTargetType = 'explore';
+    this.taskRunner.setTasks([
+      new SearchTask({ roomTypes, waypoints: 4, margin: 1, minDist: 6 })
+    ]);
+  }
+
+  tickTasks(deltaTime, playerGrid, missionState) {
+    this.taskWantsInteract = false;
+    this.taskInteractId = null;
+
+    this.ensureTaskQueue(playerGrid, missionState);
+
+    const res = this.taskRunner.tick(deltaTime ?? 0, {
+      worldState: this.worldState,
+      gridPos: playerGrid,
+      getGridPos: () => playerGrid
+    });
+
+    const intent = res?.intent || null;
+    if (intent?.type === 'moveTo' && intent.target) {
+      this.taskTarget = intent.target;
+    } else if (intent?.type === 'interact') {
+      this.taskWantsInteract = true;
+      this.taskInteractId = intent.id || null;
+      // Stabilize target for the interaction frame (avoid re-planning away).
+      this.taskTarget = { x: playerGrid.x, y: playerGrid.y };
+    } else if (res?.status === 'success') {
+      // No immediate intent; allow fallback planning next tick.
+      this.taskTarget = null;
+    }
+
+    return res;
   }
 
   /**
@@ -191,9 +331,12 @@ export class AutoPilot {
    * Choose next target: nearest mission (uncollected), else exit, else exploration target
    */
   pickTarget(playerGrid) {
-    const missions = typeof this.missionPointsRef === 'function'
-      ? this.missionPointsRef()
-      : (this.missionPointsRef || []);
+    if (this.taskTarget && Number.isFinite(this.taskTarget.x) && Number.isFinite(this.taskTarget.y)) {
+      this.targetType = this.taskTargetType || 'mission';
+      return { x: this.taskTarget.x, y: this.taskTarget.y };
+    }
+
+    const missions = this.getMissionTargets();
 
     const uncollected = missions.filter(mp => !mp.collected);
     if (uncollected.length > 0) {
@@ -237,9 +380,7 @@ export class AutoPilot {
         Math.abs(this.currentTarget.x - playerGrid.x) +
         Math.abs(this.currentTarget.y - playerGrid.y);
       if (this.targetType === 'mission') {
-        const missions = typeof this.missionPointsRef === 'function'
-          ? this.missionPointsRef()
-          : (this.missionPointsRef || []);
+        const missions = this.getMissionTargets();
         const stillValid = missions.some(mp =>
           mp &&
           !mp.collected &&
@@ -301,11 +442,17 @@ export class AutoPilot {
     if (!this.enabled) return null;
 
     const playerPos = this.playerController.getGridPosition();
+    this._missionState = this.readMissionState();
+    this.tickTasks(deltaTime, playerPos, this._missionState);
+
     const threat = this.getThreatInfo(playerPos);
     const block = threat.nearestDist <= 2;
     const panicSprint = threat.nearestDist <= 4;
     const combat = this.computeCombatDirective(playerPos, deltaTime, { panic: block });
     this.interactCooldown = Math.max(0, (this.interactCooldown || 0) - (deltaTime ?? 0));
+    if (combat && this._missionState?.objective?.template === 'stealthNoise') {
+      combat.fire = false;
+    }
 
     // Track oscillation
     this.recordRecentTile(playerPos);
@@ -344,8 +491,7 @@ export class AutoPilot {
     }
 
     const wantsInteract =
-      this.targetType === 'mission' &&
-      distToGoal <= 0 &&
+      (this.taskWantsInteract || (this.targetType === 'mission' && distToGoal <= 0)) &&
       (this.interactCooldown || 0) <= 0;
 
     if (wantsInteract) {
