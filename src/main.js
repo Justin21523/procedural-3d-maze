@@ -361,7 +361,7 @@ async function initGame() {
   autopilot = new AutoPilot(
     worldState,
     monsterManager,
-    () => (missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets() : []),
+    () => (missionDirector?.getAutopilotState ? missionDirector.getAutopilotState() : []),
     exitPoint,
     player,
     levelConfig
@@ -618,7 +618,7 @@ async function initGame() {
       autopilot = new AutoPilot(
         worldState,
         monsterManager,
-        () => (missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets() : []),
+        () => (missionDirector?.getAutopilotState ? missionDirector.getAutopilotState() : []),
         exitPoint,
         player,
         levelConfig

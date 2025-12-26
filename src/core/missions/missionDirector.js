@@ -4,6 +4,7 @@ import { CONFIG } from '../config.js';
 import { normalizeMissionsConfig } from './missionTemplates.js';
 import { pickDistinctTiles, gridToWorldCenter, manhattan } from './missionUtils.js';
 import { createKeycardObject, createEvidenceObject, createPowerSwitchObject, setPowerSwitchState } from './missionObjects.js';
+import { ROOM_CONFIGS } from '../../world/tileTypes.js';
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -20,6 +21,26 @@ function toFinite(v, fallback = null) {
 
 function deepClone(obj) {
   return obj ? JSON.parse(JSON.stringify(obj)) : obj;
+}
+
+function normalizeRoomTypes(roomTypes) {
+  if (!Array.isArray(roomTypes)) return null;
+  const out = [];
+  for (const t of roomTypes) {
+    const n = Math.round(Number(t));
+    if (!Number.isFinite(n)) continue;
+    out.push(n);
+  }
+  return out.length > 0 ? out : null;
+}
+
+function formatRoomTypeList(roomTypes) {
+  const list = normalizeRoomTypes(roomTypes) || [];
+  if (list.length === 1) {
+    const name = ROOM_CONFIGS?.[list[0]]?.name || 'Room';
+    return name;
+  }
+  return 'target room';
 }
 
 export class MissionDirector {
@@ -125,6 +146,9 @@ export class MissionDirector {
     this.unsubs.push(
       bus.on(EVENTS.MONSTER_KILLED, (payload) => this.onMonsterKilled(payload))
     );
+    this.unsubs.push(
+      bus.on(EVENTS.WEAPON_FIRED, (payload) => this.onWeaponFired(payload))
+    );
   }
 
   spawnFromConfig(missionsConfig) {
@@ -165,6 +189,25 @@ export class MissionDirector {
       } else if (template === 'surviveTimer') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 60), 5, 3600);
         mission.state = { seconds, completed: false };
+      } else if (template === 'enterRoomType') {
+        const required = clamp(Math.round(mission.params.count ?? 1), 1, 999);
+        const roomTypes = normalizeRoomTypes(mission.params.roomTypes) || null;
+        mission.state = { entered: 0, required, roomTypes };
+      } else if (template === 'killCount') {
+        const required = clamp(Math.round(mission.params.count ?? 3), 1, 999);
+        mission.state = { killed: 0, required };
+      } else if (template === 'stealthNoise') {
+        const seconds = clamp(Math.round(mission.params.seconds ?? 20), 5, 3600);
+        const resetOnGunshot = mission.params.resetOnGunshot !== false;
+        const maxGunshotsTotal = toFinite(mission.params.maxGunshotsTotal, null);
+        mission.state = {
+          seconds,
+          resetOnGunshot,
+          maxGunshotsTotal,
+          gunshots: 0,
+          lastNoiseAtSec: 0,
+          completed: false
+        };
       } else {
         console.warn(`⚠️ Unknown mission template: ${template}`);
         mission.state = {};
@@ -356,13 +399,63 @@ export class MissionDirector {
   }
 
   onRoomEntered(payload) {
-    // Reserved for future: location-based missions.
-    void payload;
+    const roomType = payload?.roomType;
+    if (!Number.isFinite(roomType)) return;
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'enterRoomType') continue;
+      if (this.isMissionComplete(mission)) continue;
+
+      const allowed = normalizeRoomTypes(mission.state.roomTypes);
+      if (!allowed || allowed.length === 0) continue;
+      if (!allowed.includes(roomType)) continue;
+
+      mission.state.entered = Math.min(mission.state.required || 1, (mission.state.entered || 0) + 1);
+    }
+
+    this.syncStatus();
   }
 
   onMonsterKilled(payload) {
-    // Reserved for future: "Kill X monsters" / "Defeat boss".
     void payload;
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'killCount') continue;
+      if (this.isMissionComplete(mission)) continue;
+
+      mission.state.killed = Math.min(mission.state.required || 1, (mission.state.killed || 0) + 1);
+    }
+
+    this.syncStatus();
+  }
+
+  onWeaponFired(payload) {
+    void payload;
+
+    const nowSec = this.gameState?.getElapsedTime
+      ? this.gameState.getElapsedTime()
+      : this.elapsedSec;
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'stealthNoise') continue;
+      if (this.isMissionComplete(mission)) continue;
+
+      mission.state.gunshots = (mission.state.gunshots || 0) + 1;
+      if (mission.state.resetOnGunshot) {
+        mission.state.lastNoiseAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
+      }
+
+      const max = mission.state.maxGunshotsTotal;
+      if (Number.isFinite(max) && max >= 0 && mission.state.gunshots > max) {
+        // Soft fail: keep it locked and show the objective text; does not auto-lose.
+        mission.state.failed = true;
+      }
+    }
+
+    this.syncStatus();
   }
 
   onTimerTick(payload) {
@@ -391,6 +484,22 @@ export class MissionDirector {
       }
     }
 
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'stealthNoise') continue;
+      if (mission.state.completed) continue;
+      if (mission.state.failed) continue;
+
+      const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
+      const seconds = mission.state.seconds || 0;
+      if (seconds <= 0) continue;
+
+      const quietFor = this.elapsedSec - start;
+      if (quietFor >= seconds) {
+        mission.state.completed = true;
+      }
+    }
+
     this.syncStatus();
   }
 
@@ -408,6 +517,15 @@ export class MissionDirector {
     if (mission.template === 'surviveTimer') {
       return !!mission.state.completed;
     }
+    if (mission.template === 'enterRoomType') {
+      return (mission.state.entered || 0) >= (mission.state.required || 0);
+    }
+    if (mission.template === 'killCount') {
+      return (mission.state.killed || 0) >= (mission.state.required || 0);
+    }
+    if (mission.template === 'stealthNoise') {
+      return !!mission.state.completed;
+    }
     return false;
   }
 
@@ -421,6 +539,17 @@ export class MissionDirector {
       if (!this.isMissionComplete(mission)) return false;
     }
     return true;
+  }
+
+  getCurrentRequiredMission() {
+    const requires = this.missionsConfig?.exit?.requires || [];
+    const requiredIds = Array.isArray(requires) ? requires : [];
+    for (const id of requiredIds) {
+      const mission = this.missions.get(id);
+      if (!mission) continue;
+      if (!this.isMissionComplete(mission)) return mission;
+    }
+    return null;
   }
 
   getObjectiveText() {
@@ -442,6 +571,19 @@ export class MissionDirector {
         const remaining = Math.max(0, (mission.state.seconds || 0) - this.elapsedSec);
         return remaining > 0 ? `Survive (${remaining}s)` : 'Survive (done)';
       }
+      if (mission.template === 'enterRoomType') {
+        const roomLabel = formatRoomTypeList(mission.state.roomTypes);
+        return `Enter ${roomLabel} (${mission.state.entered || 0}/${mission.state.required || 0})`;
+      }
+      if (mission.template === 'killCount') {
+        return `Defeat monsters (${mission.state.killed || 0}/${mission.state.required || 0})`;
+      }
+      if (mission.template === 'stealthNoise') {
+        if (mission.state.failed) return 'Stay quiet (failed)';
+        const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
+        const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
+        return remaining > 0 ? `Stay quiet (${remaining}s)` : 'Stay quiet (done)';
+      }
       return mission.id;
     };
 
@@ -458,6 +600,55 @@ export class MissionDirector {
     }
 
     return 'Reach the exit.';
+  }
+
+  getObjectiveProgress(mission) {
+    if (!mission) return null;
+    if (mission.template === 'findKeycard') {
+      return { found: !!mission.state.found };
+    }
+    if (mission.template === 'collectEvidence') {
+      return {
+        collected: mission.state.collected || 0,
+        required: mission.state.required || 0,
+        total: mission.state.total || 0
+      };
+    }
+    if (mission.template === 'restorePower') {
+      return {
+        activated: mission.state.activated?.size || 0,
+        total: mission.state.total || 0
+      };
+    }
+    if (mission.template === 'surviveTimer') {
+      const remaining = Math.max(0, (mission.state.seconds || 0) - this.elapsedSec);
+      return { seconds: mission.state.seconds || 0, remaining, completed: !!mission.state.completed };
+    }
+    if (mission.template === 'enterRoomType') {
+      return {
+        entered: mission.state.entered || 0,
+        required: mission.state.required || 0,
+        roomTypes: normalizeRoomTypes(mission.state.roomTypes) || []
+      };
+    }
+    if (mission.template === 'killCount') {
+      return {
+        killed: mission.state.killed || 0,
+        required: mission.state.required || 0
+      };
+    }
+    if (mission.template === 'stealthNoise') {
+      const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
+      const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
+      return {
+        seconds: mission.state.seconds || 0,
+        remaining,
+        gunshots: mission.state.gunshots || 0,
+        failed: !!mission.state.failed,
+        completed: !!mission.state.completed
+      };
+    }
+    return null;
   }
 
   syncStatus(force = false) {
@@ -525,7 +716,7 @@ export class MissionDirector {
       if (mission.template === 'findKeycard') {
         if (mission.state.found) continue;
         const gp = mission.state.gridPos;
-        if (gp) targets.push({ collected: false, gridPos: gp });
+        if (gp) targets.push({ collected: false, id: `keycard:${mission.id}`, gridPos: gp });
       } else if (mission.template === 'collectEvidence') {
         const need = (mission.state.required || 0) - (mission.state.collected || 0);
         if (need <= 0) continue;
@@ -533,17 +724,47 @@ export class MissionDirector {
         for (const item of items) {
           if (item?.collected) continue;
           if (!item?.gridPos) continue;
-          targets.push({ collected: false, gridPos: item.gridPos });
+          targets.push({ collected: false, id: item.id || null, gridPos: item.gridPos });
         }
       } else if (mission.template === 'restorePower') {
         const switches = Array.isArray(mission.state.switches) ? mission.state.switches : [];
         for (const sw of switches) {
           if (sw?.on) continue;
           if (!sw?.gridPos) continue;
-          targets.push({ collected: false, gridPos: sw.gridPos });
+          targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos });
         }
       }
     }
     return targets;
+  }
+
+  /**
+   * For AutoPilot: state bundle containing objective + targets + exit lock state.
+   */
+  getAutopilotState() {
+    const objectiveText = this.getObjectiveText();
+    const objectiveMission = this.getCurrentRequiredMission();
+
+    const objective = objectiveMission
+      ? {
+        id: objectiveMission.id,
+        template: objectiveMission.template,
+        params: deepClone(objectiveMission.params || {}),
+        progress: this.getObjectiveProgress(objectiveMission),
+        objectiveText
+      }
+      : {
+        id: 'exit',
+        template: 'exit',
+        params: {},
+        progress: null,
+        objectiveText
+      };
+
+    return {
+      exitUnlocked: this.isExitUnlocked(),
+      objective,
+      targets: this.getAutopilotTargets()
+    };
   }
 }
