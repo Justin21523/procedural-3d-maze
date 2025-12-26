@@ -205,6 +205,9 @@ async function loadPublicLevels(manifestUrl = '/levels/manifest.json') {
     const url = `${basePath}/${file}`;
     try {
       const raw = await fetchJson(url);
+      if (raw && typeof raw === 'object') {
+        raw.__source = url;
+      }
       levels.push(raw);
     } catch (err) {
       console.warn(`⚠️ Failed to load level JSON: ${url}`, err?.message || err);
@@ -444,6 +447,7 @@ export class LevelDirector {
     return {
       id: index + 1,
       name: `Endless-${index + 1}`,
+      __source: 'generated',
       maze: {
         width,
         height,

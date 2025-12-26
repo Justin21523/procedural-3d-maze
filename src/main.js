@@ -5,6 +5,7 @@
 
 import * as THREE from 'three';
 import { CONFIG, resolveMonsterCount } from './core/config.js';
+import { EVENTS } from './core/events.js';
 import { GameLoop } from './core/gameLoop.js';
 import { GameState } from './core/gameState.js';
 import { SceneManager } from './rendering/scene.js';
@@ -60,6 +61,11 @@ async function initGame() {
   const levelJumpBtn = document.getElementById('level-jump-btn');
   const restartLevelBtn = document.getElementById('restart-level');
   const restartFirstBtn = document.getElementById('restart-first');
+  const levelDebugSourceEl = document.getElementById('level-debug-source');
+  const levelDebugObjectiveEl = document.getElementById('level-debug-objective');
+  const levelDebugExitEl = document.getElementById('level-debug-exit');
+  const levelDebugStealthEl = document.getElementById('level-debug-stealth');
+  const reloadLevelsBtn = document.getElementById('reload-levels');
 
   // Debug: Check if elements exist
   console.log('DOM Elements check:');
@@ -72,7 +78,7 @@ async function initGame() {
   }
 
   // Multi-level state (loaded from public/levels/*.json, with src/core/levelCatalog.js fallback)
-  const levelDirector = await LevelDirector.createFromPublic({
+  let levelDirector = await LevelDirector.createFromPublic({
     manifestUrl: '/levels/manifest.json',
     fallbackLevels: LEVEL_CATALOG
   });
@@ -164,6 +170,40 @@ async function initGame() {
     }, AUTO_GAMEOVER_DELAY_MS);
   }
 
+  function formatLevelSource(levelConfig) {
+    const src = levelConfig?.__source;
+    if (!src) return 'generated';
+    const s = String(src);
+    const parts = s.split('/');
+    return parts.length > 0 ? parts[parts.length - 1] : s;
+  }
+
+  function updateLevelDebugUI() {
+    if (levelDebugSourceEl) {
+      levelDebugSourceEl.textContent = formatLevelSource(levelConfig);
+    }
+
+    const state = missionDirector?.getAutopilotState ? missionDirector.getAutopilotState() : null;
+    const objectiveText = state?.objective?.objectiveText || '';
+    const exitUnlocked = state ? (state.exitUnlocked !== false) : (gameState?.exitUnlocked !== false);
+
+    if (levelDebugObjectiveEl) {
+      levelDebugObjectiveEl.textContent = objectiveText || '—';
+    }
+    if (levelDebugExitEl) {
+      levelDebugExitEl.textContent = exitUnlocked ? 'Yes' : 'No';
+    }
+
+    let stealthText = '—';
+    if (state?.objective?.template === 'stealthNoise') {
+      const remaining = Number(state?.objective?.progress?.remaining);
+      stealthText = Number.isFinite(remaining) ? `${Math.ceil(remaining)}s` : '—';
+    }
+    if (levelDebugStealthEl) {
+      levelDebugStealthEl.textContent = stealthText;
+    }
+  }
+
   function updateLevelUI() {
     const label = `${levelConfig.name || 'Endless'} (L${currentLevelIndex + 1})`;
     if (levelLabel) {
@@ -173,6 +213,7 @@ async function initGame() {
       levelJumpInput.max = levelDirector.getMaxJump();
       levelJumpInput.value = currentLevelIndex + 1;
     }
+    updateLevelDebugUI();
   }
 
   function applyGameOverButtons(isWin) {
@@ -356,6 +397,8 @@ async function initGame() {
     interactableSystem
   });
   missionDirector.startLevel(levelConfig);
+  eventBus.on(EVENTS.MISSION_UPDATED, () => updateLevelDebugUI());
+  updateLevelDebugUI();
 
   // Autopilot placeholder（會在 loadLevel 時重新建立）
   autopilot = new AutoPilot(
@@ -651,6 +694,28 @@ async function initGame() {
     })();
 
     return levelLoading;
+  }
+
+  if (reloadLevelsBtn) {
+    reloadLevelsBtn.addEventListener('click', async () => {
+      const prevText = reloadLevelsBtn.textContent;
+      reloadLevelsBtn.disabled = true;
+      reloadLevelsBtn.textContent = 'Reloading…';
+
+      try {
+        await levelLoading;
+        levelDirector = await LevelDirector.createFromPublic({
+          manifestUrl: '/levels/manifest.json',
+          fallbackLevels: LEVEL_CATALOG
+        });
+        await loadLevel(currentLevelIndex, { startLoop: true, resetGameState: true });
+      } catch (err) {
+        console.warn('⚠️ Failed to reload level JSON:', err?.message || err);
+      } finally {
+        reloadLevelsBtn.textContent = prevText;
+        reloadLevelsBtn.disabled = false;
+      }
+    });
   }
 
   // 通關後等待使用者確認
