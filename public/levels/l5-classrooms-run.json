@@ -1,0 +1,115 @@
+{
+  "id": 5,
+  "name": "L5 - Classrooms Run",
+  "maze": { "width": 31, "height": 31, "roomDensity": 2.9, "extraConnectionChance": 0.1 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 3.1,
+      "CLASSROOMS_BLOCK": 1.9,
+      "OFFICE": 1.25,
+      "LAB": 1.15,
+      "CAFETERIA": 0.8,
+      "STORAGE": 0.85,
+      "LIBRARY": 0.75,
+      "BATHROOM": 0.65,
+      "POOL": 0.18,
+      "GYM": 0.25,
+      "BEDROOM": 0.3
+    }
+  },
+  "monsters": {
+    "count": 5,
+    "maxCount": 6,
+    "speedMultiplier": 1.0,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.0,
+    "typeWeights": { "WANDERER": 0.45, "HUNTER": 0.25, "SENTINEL": 0.2, "GREETER": 0.1 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "findLibrary",
+        "template": "enterRoomType",
+        "required": true,
+        "params": {
+          "count": 1,
+          "roomTypes": ["LIBRARY"],
+          "hints": [
+            "Find and enter the library.",
+            "Explore themed rooms (Classrooms Block / Lab / Cafeteria) to locate it.",
+            "Use the minimap: push into unexplored areas until you hit a library room."
+          ]
+        }
+      },
+      {
+        "id": "power",
+        "template": "restorePower",
+        "required": true,
+        "params": {
+          "switches": 2,
+          "roomTypes": ["LAB", "STORAGE"],
+          "hints": [
+            "Activate the power switches.",
+            "Switches spawn in labs/storage rooms—look for the interact prompt.",
+            "If you cannot find one, keep exploring new rooms; switches never spawn in corridors."
+          ]
+        }
+      },
+      {
+        "id": "keycard",
+        "template": "findKeycard",
+        "required": true,
+        "params": {
+          "roomTypes": ["OFFICE", "CLASSROOM", "CLASSROOMS_BLOCK"],
+          "label": "Pick up Keycard",
+          "hints": [
+            "Search offices and classrooms for the keycard pickup.",
+            "Clear rooms one by one; the keycard is a glowing interactable.",
+            "Keep moving: it spawns away from spawn/exit, so explore deeper."
+          ]
+        }
+      },
+      {
+        "id": "stealth",
+        "template": "stealthNoise",
+        "required": true,
+        "params": {
+          "seconds": 12,
+          "resetOnGunshot": true,
+          "hints": [
+            "Stay quiet until the timer completes.",
+            "Do not shoot; footsteps also reset the timer.",
+            "Stop moving and wait—any noise restarts the countdown."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level.",
+            "If it stays locked, you missed a required objective."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["findLibrary", "power", "keycard", "stealth", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.5,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+
