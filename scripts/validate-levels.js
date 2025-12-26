@@ -112,6 +112,7 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     'enterRoomType',
     'killCount',
     'stealthNoise',
+    'codeLock',
     'unlockExit'
   ]);
   if (template && !allowedTemplates.has(template)) {
@@ -173,6 +174,15 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     if (params.seconds !== undefined && (!Number.isFinite(seconds) || seconds <= 0)) {
       pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'seconds'], 'seconds should be a positive number');
     }
+  } else if (template === 'codeLock') {
+    const clues = Number(params.clues);
+    if (params.clues !== undefined && (!Number.isFinite(clues) || clues <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'clues'], 'clues should be a positive number');
+    }
+    validateRoomTypesParam('roomTypes');
+    validateRoomTypesParam('roomTypesClues');
+    validateRoomTypesParam('roomTypesKeypad');
+    validateRoomTypesParam('keypadRoomTypes');
   } else if (template === 'unlockExit') {
     // no required params
   }
@@ -299,4 +309,3 @@ function main() {
 }
 
 main();
-
