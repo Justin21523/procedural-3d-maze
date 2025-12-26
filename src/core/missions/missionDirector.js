@@ -3,7 +3,7 @@ import { EVENTS } from '../events.js';
 import { CONFIG } from '../config.js';
 import { normalizeMissionsConfig } from './missionTemplates.js';
 import { pickDistinctTiles, gridToWorldCenter, manhattan } from './missionUtils.js';
-import { createKeycardObject, createEvidenceObject, createPowerSwitchObject, setPowerSwitchState } from './missionObjects.js';
+import { createKeycardObject, createEvidenceObject, createPowerSwitchObject, setPowerSwitchState, createClueNoteObject, createKeypadObject, setKeypadState } from './missionObjects.js';
 import { ROOM_CONFIGS } from '../../world/tileTypes.js';
 
 function clamp(v, min, max) {
@@ -12,6 +12,11 @@ function clamp(v, min, max) {
 
 function normalizeRole(role) {
   return String(role || '').trim().toLowerCase();
+}
+
+function toSlotLabel(index) {
+  const i = Number.isFinite(index) ? Math.max(0, Math.floor(index)) : 0;
+  return String.fromCharCode(65 + (i % 26));
 }
 
 function toFinite(v, fallback = null) {
@@ -41,6 +46,16 @@ function formatRoomTypeList(roomTypes) {
     return name;
   }
   return 'target room';
+}
+
+function shuffleInPlace(list) {
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = list[i];
+    list[i] = list[j];
+    list[j] = tmp;
+  }
+  return list;
 }
 
 export class MissionDirector {
@@ -204,6 +219,19 @@ export class MissionDirector {
       } else if (template === 'killCount') {
         const required = clamp(Math.round(mission.params.count ?? 3), 1, 999);
         mission.state = { killed: 0, required };
+      } else if (template === 'codeLock') {
+        const cluesTotal = clamp(Math.round(mission.params.clues ?? 3), 2, 6);
+        mission.state = {
+          cluesTotal,
+          cluesCollected: 0,
+          codeReady: false,
+          code: '',
+          unlocked: false,
+          clues: [],
+          keypadId: null,
+          keypadGridPos: null
+        };
+        this.spawnCodeLock(mission, { avoid: [spawn, exit] });
       } else if (template === 'unlockExit') {
         mission.state = { unlocked: false };
       } else if (template === 'stealthNoise') {
@@ -363,6 +391,112 @@ export class MissionDirector {
     }
   }
 
+  spawnCodeLock(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    const clueRoomTypes = Array.isArray(mission.params.roomTypesClues)
+      ? mission.params.roomTypesClues
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+    const keypadRoomTypes = Array.isArray(mission.params.roomTypesKeypad)
+      ? mission.params.roomTypesKeypad
+      : (Array.isArray(mission.params.keypadRoomTypes) ? mission.params.keypadRoomTypes : null);
+
+    let clueCount = clamp(Math.round(mission.state.cluesTotal ?? 3), 2, 6);
+
+    const clueTiles = pickDistinctTiles(ws, clueCount, {
+      allowedRoomTypes: clueRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (clueTiles.length === 0) return;
+    clueCount = clueTiles.length;
+    mission.state.cluesTotal = clueCount;
+
+    const avoidForKeypad = avoid.concat(clueTiles);
+    const keypadTiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: keypadRoomTypes,
+      minDistFrom: avoidForKeypad,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (keypadTiles.length === 0) return;
+
+    const digits = shuffleInPlace(Array.from({ length: 10 }, (_, i) => i)).slice(0, clueCount);
+
+    mission.state.clues = [];
+
+    for (let i = 0; i < clueTiles.length; i++) {
+      const pos = clueTiles[i];
+      const slot = toSlotLabel(i);
+      const digit = digits[i] ?? Math.floor(Math.random() * 10);
+
+      const object3d = createClueNoteObject(slot);
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+
+      const interactableId = `clue:${mission.id}:${slot}`;
+      const label = 'Read Note';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'clue',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: `Clue ${slot}: ${digit}` }),
+          meta: { missionId: mission.id, template: mission.template, index: i, slot, digit }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i, slot, digit });
+      mission.state.clues.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, slot, digit, collected: false });
+    }
+
+    const keypadPos = keypadTiles[0];
+    const keypadObject = createKeypadObject(false);
+    const keypadWorld = gridToWorldCenter(keypadPos);
+    keypadObject.position.set(keypadWorld.x, 0, keypadWorld.z);
+    this.scene.add(keypadObject);
+    this.spawnedObjects.push(keypadObject);
+
+    const keypadId = `keypad:${mission.id}`;
+    mission.state.keypadId = keypadId;
+    mission.state.keypadGridPos = { x: keypadPos.x, y: keypadPos.y };
+
+    const label = 'Keypad';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: keypadId,
+        kind: 'keypad',
+        label,
+        gridPos: { x: keypadPos.x, y: keypadPos.y },
+        object3d: keypadObject,
+        maxDistance: 2.6,
+        prompt: () => {
+          const ready = !!mission.state.codeReady;
+          const unlocked = !!mission.state.unlocked;
+          if (unlocked) return 'E: Keypad (Unlocked)';
+          return ready ? 'E: Keypad (Enter Code)' : 'E: Keypad (Locked)';
+        },
+        interact: ({ entry }) => {
+          if (mission.state.unlocked) return { ok: true, message: 'Keypad already unlocked', state: { unlocked: true } };
+          if (!mission.state.codeReady) return { ok: false, message: 'Keypad locked (missing clues)' };
+
+          const meta = entry?.meta || {};
+          meta.unlocked = true;
+          setKeypadState(keypadObject, true);
+          return { ok: true, message: 'Keypad unlocked', state: { unlocked: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, unlocked: false }
+      })
+    );
+    this.interactableMeta.set(keypadId, { missionId: mission.id, template: mission.template });
+  }
+
   onItemPicked(payload) {
     const id = String(payload?.id || '').trim();
     if (!id) return;
@@ -379,6 +513,24 @@ export class MissionDirector {
       if (Array.isArray(mission.state.items) && Number.isFinite(meta.index)) {
         const item = mission.state.items[meta.index];
         if (item) item.collected = true;
+      }
+    } else if (mission.template === 'codeLock') {
+      const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+      const clue = clues.find((c) => c && c.id === id);
+      if (clue && !clue.collected) {
+        clue.collected = true;
+      }
+      const collected = clues.filter((c) => c?.collected).length;
+      mission.state.cluesCollected = collected;
+      const total = Number(mission.state.cluesTotal) || clues.length || 0;
+      mission.state.cluesTotal = total;
+      if (total > 0 && collected >= total) {
+        const ordered = clues
+          .slice()
+          .sort((a, b) => String(a?.slot || '').localeCompare(String(b?.slot || '')));
+        mission.state.code = ordered.map((c) => String(c?.digit ?? '?')).join('');
+        mission.state.codeReady = true;
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All clues found. Find the keypad.', seconds: 2.2 });
       }
     }
 
@@ -435,6 +587,13 @@ export class MissionDirector {
         if (Array.isArray(mission.state.switches)) {
           const sw = mission.state.switches.find((s) => s.id === id);
           if (sw) sw.on = true;
+        }
+      }
+    } else if (mission.template === 'codeLock') {
+      if (payload?.kind === 'keypad') {
+        const unlocked = !!payload?.result?.state?.unlocked;
+        if (unlocked) {
+          mission.state.unlocked = true;
         }
       }
     }
@@ -659,6 +818,9 @@ export class MissionDirector {
     if (mission.template === 'killCount') {
       return (mission.state.killed || 0) >= (mission.state.required || 0);
     }
+    if (mission.template === 'codeLock') {
+      return !!mission.state.unlocked;
+    }
     if (mission.template === 'unlockExit') {
       return !!mission.state.unlocked;
     }
@@ -716,6 +878,23 @@ export class MissionDirector {
       }
       if (mission.template === 'killCount') {
         return `Defeat monsters (${mission.state.killed || 0}/${mission.state.required || 0})`;
+      }
+      if (mission.template === 'codeLock') {
+        const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+        const total = Number(mission.state.cluesTotal) || clues.length || 0;
+        const collected = Number(mission.state.cluesCollected) || clues.filter((c) => c?.collected).length;
+        const ordered = clues
+          .slice()
+          .sort((a, b) => String(a?.slot || '').localeCompare(String(b?.slot || '')))
+          .map((c) => `${String(c?.slot || '?')}=${c?.collected ? String(c?.digit ?? '?') : '?'}`)
+          .join(' ');
+        if (!mission.state.codeReady) {
+          return total > 0 ? `Find code notes (${collected}/${total}) — ${ordered}` : 'Find code notes';
+        }
+        if (!mission.state.unlocked) {
+          return `Use the keypad (E) — ${ordered}`;
+        }
+        return 'Keypad unlocked. Reach the exit.';
       }
       if (mission.template === 'unlockExit') {
         return mission.state.unlocked ? 'Exit unlocked. Reach the exit.' : 'Unlock the exit (press E at the exit)';
@@ -777,6 +956,17 @@ export class MissionDirector {
       return {
         killed: mission.state.killed || 0,
         required: mission.state.required || 0
+      };
+    }
+    if (mission.template === 'codeLock') {
+      const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+      return {
+        cluesCollected: Number(mission.state.cluesCollected) || clues.filter((c) => c?.collected).length,
+        cluesTotal: Number(mission.state.cluesTotal) || clues.length || 0,
+        codeReady: !!mission.state.codeReady,
+        unlocked: !!mission.state.unlocked,
+        keypadId: mission.state.keypadId || null,
+        keypadGridPos: mission.state.keypadGridPos || null
       };
     }
     if (mission.template === 'unlockExit') {
@@ -877,6 +1067,17 @@ export class MissionDirector {
           if (sw?.on) continue;
           if (!sw?.gridPos) continue;
           targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'codeLock') {
+        if (mission.state.unlocked) continue;
+        const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+        for (const clue of clues) {
+          if (!clue || clue.collected) continue;
+          if (!clue.gridPos) continue;
+          targets.push({ collected: false, id: clue.id || null, gridPos: clue.gridPos, missionId: mission.id, template: mission.template });
+        }
+        if (mission.state.codeReady && !mission.state.unlocked && mission.state.keypadGridPos && mission.state.keypadId) {
+          targets.push({ collected: false, id: mission.state.keypadId, gridPos: mission.state.keypadGridPos, missionId: mission.id, template: mission.template });
         }
       }
     }
