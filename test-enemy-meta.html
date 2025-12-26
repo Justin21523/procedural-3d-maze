@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enemy Meta Preview</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: rgba(20, 24, 32, 0.92);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: rgba(255, 255, 255, 0.92);
+      --muted: rgba(255, 255, 255, 0.65);
+      --accent: #7aa2ff;
+      --good: #2ecc71;
+      --bad: #ff5a5a;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+
+    #app {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      grid-template-columns: 420px 1fr;
+    }
+
+    #panel {
+      padding: 14px 14px 18px;
+      border-right: 1px solid var(--border);
+      background: var(--panel);
+      overflow: auto;
+    }
+
+    #panel h1 {
+      margin: 0 0 10px;
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: 0.2px;
+    }
+
+    #panel p {
+      margin: 6px 0 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      margin: 10px 0;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    select, input[type="number"], textarea {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 10px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    input[type="range"] {
+      width: 100%;
+    }
+
+    textarea {
+      min-height: 170px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    button {
+      background: rgba(122, 162, 255, 0.15);
+      border: 1px solid rgba(122, 162, 255, 0.35);
+      color: var(--text);
+      padding: 9px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    button:hover {
+      background: rgba(122, 162, 255, 0.22);
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .status-ok { color: var(--good); }
+    .status-bad { color: var(--bad); }
+
+    #canvas {
+      position: relative;
+    }
+
+    #viewport {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #hud {
+      position: absolute;
+      left: 10px;
+      bottom: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.35);
+      font-size: 12px;
+      color: var(--muted);
+      pointer-events: none;
+      max-width: 70%;
+      line-height: 1.35;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="panel">
+      <h1>Enemy Meta Preview</h1>
+      <p>
+        Loads a model from <span class="pill">/public/models</span>, previews upright/scale/ground offset,
+        and prints a <span class="pill">meta.json</span> snippet you can paste into the model folder.
+      </p>
+
+      <div class="row">
+        <div>
+          <label for="modelSelect">Model</label>
+          <select id="modelSelect"></select>
+        </div>
+        <div style="text-align:right;">
+          <div class="pill" id="metaFileHint">meta.json: (n/a)</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="typeSelect">Monster Type (base stats.scale)</label>
+          <select id="typeSelect"></select>
+        </div>
+        <div style="text-align:right;">
+          <div class="pill" id="modelInfo">height: –</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="scaleMul">scaleMultiplier <span id="scaleMulVal" class="pill">1.00</span></label>
+          <input id="scaleMul" type="range" min="0.20" max="6.00" step="0.05" value="1.00">
+        </div>
+        <div style="width:110px;">
+          <label for="scaleMulNum">Value</label>
+          <input id="scaleMulNum" type="number" min="0.01" max="100" step="0.05" value="1.00">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="groundOffset">groundOffset <span id="groundOffsetVal" class="pill">0.02</span></label>
+          <input id="groundOffset" type="range" min="-1.00" max="1.00" step="0.01" value="0.02">
+        </div>
+        <div style="width:110px;">
+          <label for="groundOffsetNum">Value</label>
+          <input id="groundOffsetNum" type="number" min="-10" max="10" step="0.01" value="0.02">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>correctionRotationDeg (X / Y / Z)</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+            <input id="rotX" type="number" min="-180" max="180" step="1" value="0">
+            <input id="rotY" type="number" min="-180" max="180" step="1" value="0">
+            <input id="rotZ" type="number" min="-180" max="180" step="1" value="0">
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <button id="reloadMetaBtn" type="button">Reload meta.json</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="jsonOut">meta.json (paste into folder)</label>
+          <textarea id="jsonOut" readonly spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="copyBtn" type="button">Copy JSON</button>
+        <div id="status" class="pill">(idle)</div>
+      </div>
+    </div>
+
+    <div id="canvas">
+      <canvas id="viewport"></canvas>
+      <div id="hud"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/ui/toolNav.js"></script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
+    import { ModelLoader } from '/src/entities/modelLoader.js';
+    import { Monster } from '/src/entities/monster.js';
+    import { MonsterTypes } from '/src/ai/monsterTypes.js';
+    import { applyEnemyMetaToTypeConfig, applyEnemyModelMeta, getCandidateMetaUrls } from '/src/ai/enemyCatalog.js';
+    import { CONFIG } from '/src/core/config.js';
+
+    const ui = {
+      modelSelect: document.getElementById('modelSelect'),
+      typeSelect: document.getElementById('typeSelect'),
+      metaFileHint: document.getElementById('metaFileHint'),
+      modelInfo: document.getElementById('modelInfo'),
+      scaleMul: document.getElementById('scaleMul'),
+      scaleMulNum: document.getElementById('scaleMulNum'),
+      scaleMulVal: document.getElementById('scaleMulVal'),
+      groundOffset: document.getElementById('groundOffset'),
+      groundOffsetNum: document.getElementById('groundOffsetNum'),
+      groundOffsetVal: document.getElementById('groundOffsetVal'),
+      rotX: document.getElementById('rotX'),
+      rotY: document.getElementById('rotY'),
+      rotZ: document.getElementById('rotZ'),
+      jsonOut: document.getElementById('jsonOut'),
+      reloadMetaBtn: document.getElementById('reloadMetaBtn'),
+      copyBtn: document.getElementById('copyBtn'),
+      status: document.getElementById('status'),
+      hud: document.getElementById('hud'),
+      canvas: document.getElementById('viewport')
+    };
+
+    const DEG2RAD = Math.PI / 180;
+
+    function setStatus(text, ok = true) {
+      ui.status.textContent = text;
+      ui.status.classList.toggle('status-ok', ok);
+      ui.status.classList.toggle('status-bad', !ok);
+    }
+
+    function clamp(n, min, max) {
+      if (!Number.isFinite(n)) return n;
+      return Math.max(min, Math.min(max, n));
+    }
+
+    function toNum(value, fallback) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function format(n, digits = 2) {
+      return Number.isFinite(n) ? n.toFixed(digits) : String(n);
+    }
+
+    function deepClone(obj) {
+      return obj ? JSON.parse(JSON.stringify(obj)) : obj;
+    }
+
+    function buildMetaFromUI(baseMeta) {
+      const scaleMultiplier = clamp(toNum(ui.scaleMulNum.value, 1), 0.01, 100);
+      const groundOffset = clamp(toNum(ui.groundOffsetNum.value, 0.02), -10, 10);
+      const correctionRotationDeg = {
+        x: clamp(toNum(ui.rotX.value, 0), -180, 180),
+        y: clamp(toNum(ui.rotY.value, 0), -180, 180),
+        z: clamp(toNum(ui.rotZ.value, 0), -180, 180)
+      };
+
+      const next = { ...(baseMeta || {}) };
+      next.scaleMultiplier = scaleMultiplier;
+      next.groundOffset = groundOffset;
+      next.correctionRotationDeg = correctionRotationDeg;
+      delete next.correctionRotationRad;
+
+      return next;
+    }
+
+    function buildMetaForRuntime(metaJson) {
+      const deg = metaJson?.correctionRotationDeg || { x: 0, y: 0, z: 0 };
+      return {
+        correctionRotationRad: {
+          x: (Number(deg.x) || 0) * DEG2RAD,
+          y: (Number(deg.y) || 0) * DEG2RAD,
+          z: (Number(deg.z) || 0) * DEG2RAD
+        }
+      };
+    }
+
+    function getSelectedModelPath() {
+      return ui.modelSelect.value || null;
+    }
+
+    function getSelectedMonsterTypeKey() {
+      return ui.typeSelect.value || 'HUNTER';
+    }
+
+    function updateSliderDisplays() {
+      ui.scaleMulVal.textContent = format(toNum(ui.scaleMulNum.value, 1), 2);
+      ui.groundOffsetVal.textContent = format(toNum(ui.groundOffsetNum.value, 0.02), 2);
+    }
+
+    function syncRangeToNumber(rangeEl, numberEl) {
+      numberEl.value = rangeEl.value;
+      updateSliderDisplays();
+    }
+
+    function syncNumberToRange(numberEl, rangeEl) {
+      rangeEl.value = numberEl.value;
+      updateSliderDisplays();
+    }
+
+    async function fetchManifest() {
+      const res = await fetch('/models/manifest.json', { cache: 'no-store' });
+      const json = await res.json();
+      const models = Array.isArray(json) ? json : json?.models;
+      const list = Array.isArray(models) ? models.filter(p => typeof p === 'string') : [];
+      return list;
+    }
+
+    async function fetchExistingMeta(modelPath) {
+      const urls = getCandidateMetaUrls(modelPath);
+      for (const url of urls) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const json = await res.json();
+          return { url, json };
+        } catch (err) {
+          void err;
+        }
+      }
+      return { url: urls[0] || null, json: null };
+    }
+
+    function applyMetaToUI(metaJson) {
+      const scaleMultiplier = toNum(metaJson?.scaleMultiplier, 1);
+      const groundOffset = toNum(metaJson?.groundOffset, 0.02);
+
+      const deg =
+        metaJson?.correctionRotationDeg ||
+        metaJson?.correctionRotationRad
+          ? {
+            x: toNum(metaJson?.correctionRotationDeg?.x, (toNum(metaJson?.correctionRotationRad?.x, 0) / DEG2RAD)),
+            y: toNum(metaJson?.correctionRotationDeg?.y, (toNum(metaJson?.correctionRotationRad?.y, 0) / DEG2RAD)),
+            z: toNum(metaJson?.correctionRotationDeg?.z, (toNum(metaJson?.correctionRotationRad?.z, 0) / DEG2RAD))
+          }
+          : { x: 0, y: 0, z: 0 };
+
+      ui.scaleMul.value = String(scaleMultiplier);
+      ui.scaleMulNum.value = String(scaleMultiplier);
+      ui.groundOffset.value = String(groundOffset);
+      ui.groundOffsetNum.value = String(groundOffset);
+
+      ui.rotX.value = String(Math.round(deg.x));
+      ui.rotY.value = String(Math.round(deg.y));
+      ui.rotZ.value = String(Math.round(deg.z));
+
+      updateSliderDisplays();
+    }
+
+    // Three.js scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0e14);
+
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 1000);
+    camera.position.set(3.5, 2.4, 3.5);
+
+    const renderer = new THREE.WebGLRenderer({ canvas: ui.canvas, antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = true;
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 1.0, 0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+    sun.position.set(6, 10, 7);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    scene.add(sun);
+
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(40, 40),
+      new THREE.MeshStandardMaterial({ color: 0x121826, roughness: 1, metalness: 0 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+    scene.add(new THREE.GridHelper(40, 40, 0x2a3246, 0x1e2638));
+    scene.add(new THREE.AxesHelper(1.2));
+
+    const loader = new ModelLoader();
+    let currentModel = null;
+    let currentHelper = null;
+    let baseMeta = null;
+    let lastMetaUrl = null;
+    let loadToken = 0;
+    let reloadTimer = null;
+
+    function clearCurrentModel() {
+      if (currentHelper) scene.remove(currentHelper);
+      currentHelper = null;
+      if (currentModel) scene.remove(currentModel);
+      currentModel = null;
+    }
+
+    function setMetaHint(modelPath, metaUrl) {
+      if (!modelPath) {
+        ui.metaFileHint.textContent = 'meta.json: (n/a)';
+        return;
+      }
+      ui.metaFileHint.textContent = metaUrl ? `meta.json: ${metaUrl}` : 'meta.json: (missing)';
+    }
+
+    function updateJsonOutput() {
+      const meta = buildMetaFromUI(baseMeta);
+      ui.jsonOut.value = JSON.stringify(meta, null, 2);
+    }
+
+    async function loadAndPreview() {
+      const token = ++loadToken;
+      const modelPath = getSelectedModelPath();
+      if (!modelPath) return;
+
+      clearCurrentModel();
+      setStatus('Loading model…');
+      updateJsonOutput();
+
+      try {
+        const selectedTypeKey = getSelectedMonsterTypeKey();
+        const typeConfig = deepClone(MonsterTypes[selectedTypeKey] || MonsterTypes.HUNTER || {});
+
+        const metaJson = buildMetaFromUI(baseMeta);
+        const runtimeMeta = buildMetaForRuntime(metaJson);
+
+        const model = await loader.loadModel(modelPath);
+        if (token !== loadToken) return;
+
+        applyEnemyModelMeta(model, runtimeMeta);
+        applyEnemyMetaToTypeConfig(typeConfig, metaJson);
+
+        const previewMonster = new Monster(model, { x: 0, y: 0 }, null, typeConfig, null);
+        const m = previewMonster.getModel();
+        m.position.x = 0;
+        m.position.z = 0;
+
+        m.traverse((child) => {
+          if (!child?.isMesh) return;
+          child.castShadow = true;
+          child.receiveShadow = true;
+        });
+
+        scene.add(m);
+        currentModel = m;
+        currentHelper = new THREE.BoxHelper(m, 0x7aa2ff);
+        scene.add(currentHelper);
+
+        const box = new THREE.Box3().setFromObject(m);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        ui.modelInfo.textContent = `height: ${format(size.y, 2)}`;
+
+        ui.hud.textContent =
+          `Model: ${modelPath}\n` +
+          `meta: ${lastMetaUrl || '(none)'}\n` +
+          `Height: ${format(size.y, 2)} (target ≈ ${(CONFIG.MONSTER_BASE_HEIGHT ?? 1.8).toFixed(2)} * scale)\n` +
+          `Tip: fix "lying down" with correctionRotationDeg X/Z.`;
+
+        setStatus('Ready', true);
+      } catch (err) {
+        console.error(err);
+        setStatus(`Failed: ${err?.message || err}`, false);
+      }
+    }
+
+    function schedulePreview() {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => {
+        void loadAndPreview();
+      }, 80);
+    }
+
+    async function reloadMetaForSelectedModel() {
+      const modelPath = getSelectedModelPath();
+      if (!modelPath) return;
+
+      setStatus('Loading meta.json…');
+      const { url, json } = await fetchExistingMeta(modelPath);
+      baseMeta = json || {};
+      lastMetaUrl = url;
+      setMetaHint(modelPath, url && json ? url : null);
+      applyMetaToUI(baseMeta);
+      updateJsonOutput();
+      schedulePreview();
+    }
+
+    function populateMonsterTypes() {
+      const keys = Object.keys(MonsterTypes);
+      for (const key of keys) {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = `${key} (${MonsterTypes[key]?.name || 'Unnamed'})`;
+        ui.typeSelect.appendChild(opt);
+      }
+      ui.typeSelect.value = 'HUNTER';
+    }
+
+    function populateModelList(models) {
+      const list = [...models];
+      list.sort((a, b) => a.localeCompare(b));
+      for (const path of list) {
+        const opt = document.createElement('option');
+        opt.value = path;
+        opt.textContent = path;
+        ui.modelSelect.appendChild(opt);
+      }
+      ui.modelSelect.value = list[0] || '';
+    }
+
+    function hookInputs() {
+      ui.scaleMul.addEventListener('input', () => {
+        syncRangeToNumber(ui.scaleMul, ui.scaleMulNum);
+        updateJsonOutput();
+        schedulePreview();
+      });
+      ui.scaleMulNum.addEventListener('input', () => {
+        syncNumberToRange(ui.scaleMulNum, ui.scaleMul);
+        updateJsonOutput();
+        schedulePreview();
+      });
+
+      ui.groundOffset.addEventListener('input', () => {
+        syncRangeToNumber(ui.groundOffset, ui.groundOffsetNum);
+        updateJsonOutput();
+        schedulePreview();
+      });
+      ui.groundOffsetNum.addEventListener('input', () => {
+        syncNumberToRange(ui.groundOffsetNum, ui.groundOffset);
+        updateJsonOutput();
+        schedulePreview();
+      });
+
+      for (const el of [ui.rotX, ui.rotY, ui.rotZ]) {
+        el.addEventListener('input', () => {
+          updateJsonOutput();
+          schedulePreview();
+        });
+      }
+
+      ui.modelSelect.addEventListener('change', () => {
+        baseMeta = {};
+        lastMetaUrl = null;
+        setMetaHint(getSelectedModelPath(), null);
+        void reloadMetaForSelectedModel();
+      });
+
+      ui.typeSelect.addEventListener('change', () => {
+        schedulePreview();
+      });
+
+      ui.reloadMetaBtn.addEventListener('click', () => {
+        void reloadMetaForSelectedModel();
+      });
+
+      ui.copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(ui.jsonOut.value);
+          setStatus('Copied', true);
+        } catch (err) {
+          void err;
+          setStatus('Copy failed (clipboard blocked)', false);
+        }
+      });
+    }
+
+    function resize() {
+      const w = ui.canvas.clientWidth;
+      const h = ui.canvas.clientHeight;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / Math.max(1, h);
+      camera.updateProjectionMatrix();
+    }
+
+    window.addEventListener('resize', resize);
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      if (currentHelper) currentHelper.update();
+      renderer.render(scene, camera);
+    }
+
+    async function init() {
+      populateMonsterTypes();
+      hookInputs();
+      updateSliderDisplays();
+
+      try {
+        const models = await fetchManifest();
+        populateModelList(models);
+        await reloadMetaForSelectedModel();
+        resize();
+        animate();
+      } catch (err) {
+        console.error(err);
+        setStatus(`Manifest load failed: ${err?.message || err}`, false);
+      }
+    }
+
+    void init();
+  </script>
+</body>
+</html>
