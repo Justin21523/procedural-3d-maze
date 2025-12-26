@@ -41,7 +41,7 @@
           "hints": [
             "Find the three note clues (A/B/C).",
             "Each note reveals one digit. The code order is A→B→C.",
-            "After collecting all three, find the keypad and press E."
+            "After collecting all three, find the keypad, press E, type the code, then press Enter."
           ]
         }
       },
@@ -72,4 +72,3 @@
     "noProgressSeconds": 0.7
   }
 }
-
