@@ -37,6 +37,7 @@ export const EVENTS = Object.freeze({
   // World / navigation
   ROOM_ENTERED: 'room:entered',
   TIMER_TICK: 'timer:tick',
+  NOISE_EMITTED: 'noise:emitted',
 
   // Interactions
   INTERACTABLE_HOVER: 'interact:hover',

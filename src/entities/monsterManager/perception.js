@@ -45,6 +45,7 @@ export class MonsterPerception {
     if (this.noiseEvents.length > maxEvents) {
       this.noiseEvents.splice(0, this.noiseEvents.length - maxEvents);
     }
+    return entry;
   }
 
   updateNoise(dt) {
@@ -145,7 +146,7 @@ export class MonsterPerception {
     const ttl = CONFIG.AI_NOISE_TTL_FOOTSTEP ?? 0.55;
     const strength = sprinting ? 1.0 : 0.65;
 
-    this.registerNoise(playerPos, { kind, radius, ttl, strength, source: 'player' });
+    return this.registerNoise(playerPos, { kind, radius, ttl, strength, source: 'player' });
   }
 
   canMonsterSeePlayer(monster, playerGrid, worldState) {
