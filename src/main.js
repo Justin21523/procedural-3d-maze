@@ -17,10 +17,9 @@ import { MonsterManager } from './entities/monsterManager.js';
 import { ProjectileManager } from './entities/projectileManager.js';
 import { PickupManager } from './entities/pickupManager.js';
 import { ExitPoint } from './world/exitPoint.js';
-import { MissionPoint } from './world/missionPoint.js';
 import { AutoPilot } from './ai/autoPilot.js';
 import { AudioManager } from './audio/audioManager.js';
-import { LEVEL_CONFIGS } from './core/levelConfigs.js';
+import { LEVEL_CATALOG } from './core/levelCatalog.js';
 import { Gun } from './player/gun.js';
 import { WeaponView } from './player/weaponView.js';
 import { LevelDirector } from './core/levelDirector.js';
@@ -29,6 +28,8 @@ import { EventBus } from './core/eventBus.js';
 import { CombatSystem } from './core/combatSystem.js';
 import { FeedbackSystem } from './core/feedbackSystem.js';
 import { UIManager } from './ui/uiManager.js';
+import { InteractableSystem } from './core/interactions/interactableSystem.js';
+import { MissionDirector } from './core/missions/missionDirector.js';
 
 /**
  * Initialize and start the game
@@ -71,10 +72,11 @@ function initGame() {
   }
 
   // 多關卡狀態
-  const levelDirector = new LevelDirector(LEVEL_CONFIGS);
+  const levelDirector = new LevelDirector(LEVEL_CATALOG);
   let currentLevelIndex = 0;
   let levelConfig = levelDirector.getLevelConfig(currentLevelIndex);
-  let missionPoints = [];
+  let missionDirector = null;
+  let interactableSystem = null;
   let exitPoint = null;
   let autopilot = null;
   let pickupManager = null;
@@ -306,7 +308,7 @@ function initGame() {
       player.getGridPosition(),
       monsterManager?.getMonsterPositions() || [],
       exitPoint?.getGridPosition() || null,
-      missionPoints.map(mp => mp.getGridPosition())
+      missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
     );
   }
 
@@ -332,20 +334,29 @@ function initGame() {
   const monsterManager = new MonsterManager(sceneManager.getScene(), worldState, player, eventBus);
   console.log('👹 Monster manager created');
 
-  // Create mission points
-  missionPoints = worldState.getMissionPoints().map(pos => {
-    const mp = new MissionPoint(pos);
-    sceneManager.getScene().add(mp.getMesh());
-    return mp;
+  // Interactions + objectives (data-driven missions)
+  interactableSystem = new InteractableSystem({
+    eventBus,
+    scene: sceneManager.getScene(),
+    camera,
+    input
   });
-  gameState.setMissionTotal(missionPoints.length);
-  console.log(`🎯 Mission points: ${missionPoints.length}`);
+
+  missionDirector = new MissionDirector({
+    eventBus,
+    worldState,
+    scene: sceneManager.getScene(),
+    gameState,
+    exitPoint,
+    interactableSystem
+  });
+  missionDirector.startLevel(levelConfig);
 
   // Autopilot placeholder（會在 loadLevel 時重新建立）
   autopilot = new AutoPilot(
     worldState,
     monsterManager,
-    () => missionPoints,
+    () => (missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets() : []),
     exitPoint,
     player,
     levelConfig
@@ -385,6 +396,7 @@ function initGame() {
     gameState,
     gun
   });
+  missionDirector?.syncStatus?.(true);
 
   pickupManager = new PickupManager(sceneManager.getScene(), player, gameState, gun, audioManager, eventBus);
   spawnDirector = new SpawnDirector(monsterManager, player, pickupManager, eventBus);
@@ -412,12 +424,14 @@ function initGame() {
     worldState,
     gameState,
     exitPoint,
-    missionPoints,
+    [],
     autopilot,
     projectileManager,
     gun,
     spawnDirector,
-    uiManager
+    uiManager,
+    interactableSystem,
+    missionDirector
   );
 
   // Combat feedback (hit marker + light shake/flash) driven by EventBus
@@ -430,7 +444,7 @@ function initGame() {
     player.getGridPosition(),
     monsterManager.getMonsterPositions(),
     exitGridPos,
-    missionPoints.map(mp => mp.getGridPosition())
+    missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
   );
   console.log('✅ Initial minimap rendered');
   updateLevelUI();
@@ -447,7 +461,7 @@ function initGame() {
       player.getGridPosition(),
       monsterManager.getMonsterPositions(),
       exitPoint?.getGridPosition?.() || null,
-      missionPoints.map(mp => mp.getGridPosition())
+      missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
     );
     return clamped;
   }
@@ -490,7 +504,7 @@ function initGame() {
         player.getGridPosition(),
         monsterManager.getMonsterPositions(),
         exitPoint.getGridPosition(),
-        missionPoints.map(mp => mp.getGridPosition())
+        missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
       );
     });
   }
@@ -528,6 +542,10 @@ function initGame() {
       gameLoop.stop();
       gameLoop.resetRoundState();
 
+      // Clear previous level objectives/interactables before rebuilding the scene
+      missionDirector?.clear?.();
+      interactableSystem?.clear?.();
+
       // 更新血量上限
       if (resetGameState && gameState) {
         const maxHp = Math.round(100 * (levelConfig.player?.maxHealthMultiplier ?? 1));
@@ -547,15 +565,6 @@ function initGame() {
       sceneManager.getScene().add(exitPoint.getMesh());
       gameLoop.exitPoint = exitPoint;
 
-      // 任務點
-      missionPoints = worldState.getMissionPoints().map(pos => {
-        const mp = new MissionPoint(pos);
-        sceneManager.getScene().add(mp.getMesh());
-        return mp;
-      });
-      gameState.setMissionTotal(missionPoints.length);
-      gameLoop.missionPoints = missionPoints;
-
       // 重置玩家位置
       const spawnPoint = worldState.getSpawnPoint();
       const tileSize = CONFIG.TILE_SIZE || 1;
@@ -570,6 +579,21 @@ function initGame() {
         gameState.reset();
         gameState.currentHealth = gameState.maxHealth;
       }
+
+      // Rebuild missions/objectives for this level (after reset so totals aren't overwritten)
+      if (missionDirector) {
+        missionDirector.setRefs({
+          worldState,
+          scene: sceneManager.getScene(),
+          gameState,
+          exitPoint,
+          interactableSystem,
+          eventBus
+        });
+        missionDirector.startLevel(levelConfig);
+      }
+      gameLoop.missionDirector = missionDirector;
+      gameLoop.interactableSystem = interactableSystem;
 
       // 隱藏 overlay，保持連續遊戲
       document.getElementById('game-over').classList.add('hidden');
@@ -588,7 +612,7 @@ function initGame() {
       autopilot = new AutoPilot(
         worldState,
         monsterManager,
-        () => missionPoints,
+        () => (missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets() : []),
         exitPoint,
         player,
         levelConfig
@@ -611,7 +635,7 @@ function initGame() {
         player.getGridPosition(),
         monsterManager.getMonsterPositions(),
         newExitPos,
-        missionPoints.map(mp => mp.getGridPosition())
+        missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
       );
 
       if (startLoop) {

@@ -1,4 +1,5 @@
 import { CONFIG } from './config.js';
+import { ROOM_TYPES } from '../world/tileTypes.js';
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -115,6 +116,67 @@ export class LevelDirector {
     const missions = 3 + Math.floor(difficulty * 0.4);
     const required = clamp(missions - 1, 2, missions);
 
+    const typeWeights = {
+      [ROOM_TYPES.CLASSROOM]: 3.0,
+      [ROOM_TYPES.CLASSROOMS_BLOCK]: 1.4,
+      [ROOM_TYPES.OFFICE]: 1.25,
+      [ROOM_TYPES.LAB]: 0.95,
+      [ROOM_TYPES.CAFETERIA]: 0.85,
+      [ROOM_TYPES.BATHROOM]: 0.75,
+      [ROOM_TYPES.STORAGE]: 0.9,
+      [ROOM_TYPES.LIBRARY]: 0.55,
+      [ROOM_TYPES.POOL]: 0.22,
+      [ROOM_TYPES.GYM]: 0.35,
+      [ROOM_TYPES.BEDROOM]: 0.45,
+    };
+
+    // Data-driven mission templates (MissionDirector consumes this directly).
+    const missionList = [
+      {
+        id: 'evidence',
+        template: 'collectEvidence',
+        required: true,
+        params: {
+          count: missions,
+          required,
+          roomTypes: [ROOM_TYPES.CLASSROOM, ROOM_TYPES.OFFICE, ROOM_TYPES.CLASSROOMS_BLOCK]
+        }
+      }
+    ];
+    const exitRequires = ['evidence'];
+
+    if (difficulty >= 2.6 && Math.random() < 0.55) {
+      missionList.push({
+        id: 'keycard',
+        template: 'findKeycard',
+        required: true,
+        params: { roomTypes: [ROOM_TYPES.OFFICE, ROOM_TYPES.CLASSROOM, ROOM_TYPES.CLASSROOMS_BLOCK] }
+      });
+      exitRequires.push('keycard');
+    }
+
+    if (difficulty >= 4.2 && Math.random() < 0.6) {
+      missionList.push({
+        id: 'power',
+        template: 'restorePower',
+        required: true,
+        params: { switches: 3, roomTypes: [ROOM_TYPES.LAB, ROOM_TYPES.STORAGE] }
+      });
+      exitRequires.push('power');
+    }
+
+    if (difficulty >= 6.5 && Math.random() < 0.35) {
+      missionList.push({
+        id: 'survive',
+        template: 'surviveTimer',
+        required: true,
+        params: { seconds: 120 }
+      });
+      exitRequires.push('survive');
+    }
+
+    const timeLimitSec = difficulty >= 6 ? clamp(480 - difficulty * 12, 240, 520) : 0;
+
     return {
       id: index + 1,
       name: `Endless-${index + 1}`,
@@ -129,6 +191,7 @@ export class LevelDirector {
         minRoomDoors: 2,
         deadEndPasses: 3
       },
+      rooms: { typeWeights },
       monsters: {
         count: monsterCount,
         speedMultiplier,
@@ -137,10 +200,9 @@ export class LevelDirector {
         allowSprintTypes: []
       },
       missions: {
-        type: 'collectAndExit',
-        missionPointCount: missions,
-        requiredToUnlockExit: required,
-        timeLimitSec: 0
+        timeLimitSec,
+        list: missionList,
+        exit: { requires: exitRequires }
       },
       player: {
         maxHealthMultiplier: clamp(1.0 - difficulty * 0.015, 0.65, 1),
