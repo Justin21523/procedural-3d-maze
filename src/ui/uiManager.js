@@ -60,6 +60,7 @@ export class UIManager {
     this.keypadMode = null; // { keypadId, codeLength }
     this.keypadBuffer = '';
     this.keypadSubmitting = false;
+    this.keypadPrevAutopilotEnabled = null;
     this._keypadKeydownCapture = (e) => this.onKeypadKeydownCapture(e);
     window.addEventListener('keydown', this._keypadKeydownCapture, true);
 
@@ -147,6 +148,12 @@ export class UIManager {
     );
 
     this.unsubscribers.push(
+      this.eventBus.on(EVENTS.MISSION_STARTED, () => {
+        this.closeKeypadInput();
+      })
+    );
+
+    this.unsubscribers.push(
       this.eventBus.on(EVENTS.INTERACT, (payload) => {
         if (payload?.actorKind !== 'player') return;
         if (payload?.kind !== 'keypad') return;
@@ -206,6 +213,10 @@ export class UIManager {
   openKeypadInput({ keypadId, codeLength } = {}) {
     const id = String(keypadId || '').trim();
     if (!id) return;
+    if (!this.keypadMode?.keypadId) {
+      this.keypadPrevAutopilotEnabled = CONFIG.AUTOPILOT_ENABLED;
+      CONFIG.AUTOPILOT_ENABLED = false;
+    }
     const len = Number.isFinite(codeLength) ? Math.max(1, Math.floor(codeLength)) : 3;
     this.keypadMode = { keypadId: id, codeLength: len };
     this.keypadBuffer = '';
@@ -217,6 +228,10 @@ export class UIManager {
     this.keypadMode = null;
     this.keypadBuffer = '';
     this.keypadSubmitting = false;
+    if (this.keypadPrevAutopilotEnabled !== null) {
+      CONFIG.AUTOPILOT_ENABLED = this.keypadPrevAutopilotEnabled;
+      this.keypadPrevAutopilotEnabled = null;
+    }
     this.renderInteractPrompt();
   }
 
@@ -247,6 +262,10 @@ export class UIManager {
   onKeypadKeydownCapture(e) {
     if (!this.keypadMode?.keypadId) return;
     if (!e?.code) return;
+
+    if (this.player?.input) {
+      this.player.input.lastInputTime = performance.now();
+    }
 
     const codeLength = Number(this.keypadMode.codeLength) || 0;
     const digit = this.codeToDigit(e.code);
