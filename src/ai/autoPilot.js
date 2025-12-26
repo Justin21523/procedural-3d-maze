@@ -60,6 +60,9 @@ export class AutoPilot {
     this.combatFireCooldown = 0;
     this.combatBurstShotsRemaining = 0;
     this.combatBurstRestTimer = 0;
+
+    // Interaction (mission objects use the same InteractableSystem as the player)
+    this.interactCooldown = 0;
   }
 
   setEnabled(enabled) {
@@ -233,9 +236,26 @@ export class AutoPilot {
       const distToTarget =
         Math.abs(this.currentTarget.x - playerGrid.x) +
         Math.abs(this.currentTarget.y - playerGrid.y);
-      if (distToTarget <= 1) {
-        this.currentTarget = null;
-        this.currentPath = [];
+      if (this.targetType === 'mission') {
+        const missions = typeof this.missionPointsRef === 'function'
+          ? this.missionPointsRef()
+          : (this.missionPointsRef || []);
+        const stillValid = missions.some(mp =>
+          mp &&
+          !mp.collected &&
+          mp.gridPos &&
+          mp.gridPos.x === this.currentTarget.x &&
+          mp.gridPos.y === this.currentTarget.y
+        );
+        if (!stillValid) {
+          this.currentTarget = null;
+          this.currentPath = [];
+        }
+      } else {
+        if (distToTarget <= 1) {
+          this.currentTarget = null;
+          this.currentPath = [];
+        }
       }
     }
 
@@ -285,6 +305,7 @@ export class AutoPilot {
     const block = threat.nearestDist <= 2;
     const panicSprint = threat.nearestDist <= 4;
     const combat = this.computeCombatDirective(playerPos, deltaTime, { panic: block });
+    this.interactCooldown = Math.max(0, (this.interactCooldown || 0) - (deltaTime ?? 0));
 
     // Track oscillation
     this.recordRecentTile(playerPos);
@@ -315,6 +336,22 @@ export class AutoPilot {
 
     this.plan(playerPos);
 
+    let distToGoal = Infinity;
+    if (this.currentTarget) {
+      distToGoal =
+        Math.abs(this.currentTarget.x - playerPos.x) +
+        Math.abs(this.currentTarget.y - playerPos.y);
+    }
+
+    const wantsInteract =
+      this.targetType === 'mission' &&
+      distToGoal <= 0 &&
+      (this.interactCooldown || 0) <= 0;
+
+    if (wantsInteract) {
+      this.interactCooldown = 0.65;
+    }
+
     if (!this.currentPath || this.currentPath.length === 0) {
       return {
         move: { x: 0, y: 0 },
@@ -322,6 +359,7 @@ export class AutoPilot {
         lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
         sprint: false,
         block,
+        interact: wantsInteract,
         fire: !!combat?.fire
       };
     }
@@ -360,13 +398,6 @@ export class AutoPilot {
     const lookPitch = Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null;
 
     // 依距離與目標類型調整是否衝刺，避免在房間內狂暴衝刺貼牆
-    let distToGoal = Infinity;
-    if (this.currentTarget) {
-      distToGoal =
-        Math.abs(this.currentTarget.x - playerPos.x) +
-        Math.abs(this.currentTarget.y - playerPos.y);
-    }
-
     let sprint = false;
     if (this.targetType === 'mission' || this.targetType === 'exit') {
       // 任務/出口：距離 > 4 格才用跑的，接近時改走路避免 overshoot
@@ -418,7 +449,7 @@ export class AutoPilot {
       this.plan(playerPos);
     }
 
-    return { moveWorld, lookYaw, lookPitch, sprint, block, fire: !!combat?.fire };
+    return { moveWorld, lookYaw, lookPitch, sprint, block, interact: wantsInteract, fire: !!combat?.fire };
   }
 
   computeCombatDirective(playerGrid, deltaTime, options = {}) {

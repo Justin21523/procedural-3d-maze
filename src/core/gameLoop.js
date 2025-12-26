@@ -22,7 +22,7 @@ export class GameLoop {
    * @param {GameState} gameState - Game state manager (optional)
    * @param {ExitPoint} exitPoint - Exit point (optional)
    */
-  constructor(sceneManager, player, minimap = null, monsterManager = null, lights = null, worldState = null, gameState = null, exitPoint = null, missionPoints = [], autopilot = null, projectileManager = null, gun = null, spawnDirector = null, uiManager = null) {
+  constructor(sceneManager, player, minimap = null, monsterManager = null, lights = null, worldState = null, gameState = null, exitPoint = null, missionPoints = [], autopilot = null, projectileManager = null, gun = null, spawnDirector = null, uiManager = null, interactableSystem = null, missionDirector = null) {
     this.sceneManager = sceneManager;
     this.player = player;
     this.minimap = minimap;
@@ -32,6 +32,8 @@ export class GameLoop {
     this.gun = gun;
     this.spawnDirector = spawnDirector;
     this.uiManager = uiManager;
+    this.interactableSystem = interactableSystem;
+    this.missionDirector = missionDirector;
 
     this.worldState = worldState;
     this.gameState = gameState;
@@ -54,6 +56,7 @@ export class GameLoop {
     // Monster damage tracking
     this.lastMonsterDamageTime = 0;
     this.monsterDamageCooldown = 1.0; // 1 second between damage
+    this.lastExitLockedAnnounceAt = 0;
 
     // Visual effects
     this.visualEffects = new VisualEffects();
@@ -74,6 +77,9 @@ export class GameLoop {
       externalCommand: null,
       playerPos: null,
     };
+
+    this.lastTimerTickSec = -1;
+    this.lastRoomType = null;
 
     this.systemRegistry = new SystemRegistry();
     this.registerSystems();
@@ -126,6 +132,13 @@ export class GameLoop {
     systems.add('timer', () => {
       if (this.gameState && !this.gameState.gameOver) {
         this.gameState.updateTimer();
+
+        const bus = this.gameState?.eventBus || null;
+        const elapsedSec = this.gameState?.getElapsedTime ? this.gameState.getElapsedTime() : null;
+        if (bus?.emit && Number.isFinite(elapsedSec) && elapsedSec !== this.lastTimerTickSec) {
+          this.lastTimerTickSec = elapsedSec;
+          bus.emit(EVENTS.TIMER_TICK, { elapsedSec });
+        }
       }
     }, { order: 5 });
 
@@ -203,6 +216,29 @@ export class GameLoop {
       this.player.update(dt, !!ctx.autopilotActive, ctx.externalCommand || null);
       ctx.playerPos = this.player.getPosition ? this.player.getPosition() : null;
     }, { order: 20 });
+
+    systems.add('roomTracker', (dt, ctx) => {
+      void dt;
+      if (this.gameState?.gameOver) return;
+      if (!this.worldState?.getRoomType) return;
+      if (!this.player?.getGridPosition) return;
+
+      const gridPos = this.player.getGridPosition();
+      const roomType = this.worldState.getRoomType(gridPos.x, gridPos.y);
+      if (roomType === this.lastRoomType) return;
+      this.lastRoomType = roomType;
+
+      this.gameState?.visitRoom?.(roomType);
+      this.gameState?.eventBus?.emit?.(EVENTS.ROOM_ENTERED, {
+        gridPos,
+        roomType
+      });
+    }, { order: 22 });
+
+    systems.add('interactables', (dt, ctx) => {
+      if (this.gameState?.gameOver) return;
+      this.interactableSystem?.update?.(dt, ctx);
+    }, { order: 25 });
 
     systems.add('gun', (dt, ctx) => {
       if (this.gameState?.gameOver) return;
@@ -324,6 +360,18 @@ export class GameLoop {
       const playerPos = ctx.playerPos || this.player.getPosition();
       if (!this.exitPoint.isPlayerNear(playerPos, 2)) return;
 
+      // Missions can lock the exit until objectives are met.
+      if (this.gameState.exitUnlocked === false) {
+        const nowMs = Number.isFinite(ctx?.nowMs) ? ctx.nowMs : performance.now();
+        if (nowMs - (this.lastExitLockedAnnounceAt || 0) > 950) {
+          this.lastExitLockedAnnounceAt = nowMs;
+          this.gameState?.eventBus?.emit?.(EVENTS.EXIT_LOCKED, {
+            message: this.gameState.exitLockedReason || 'Exit locked'
+          });
+        }
+        return;
+      }
+
       if (this.visualEffects) {
         this.visualEffects.victoryFlash();
       }
@@ -336,20 +384,6 @@ export class GameLoop {
         }
       }
     }, { order: 100 });
-
-    systems.add('missions', () => {
-      if (this.gameState?.gameOver) return;
-      if (!this.gameState || !this.missionPoints || this.missionPoints.length === 0) return;
-      const playerPos = this.player?.getPosition ? this.player.getPosition() : null;
-      if (!playerPos) return;
-
-      this.missionPoints.forEach(mp => {
-        if (!mp.collected && mp.isPlayerNear(playerPos, 2)) {
-          mp.collect(this.sceneManager.getScene());
-          this.gameState.collectMission();
-        }
-      });
-    }, { order: 110 });
 
     systems.add('exitAnim', (dt) => {
       if (this.exitPoint?.update) {
@@ -425,8 +459,9 @@ export class GameLoop {
       const playerGridPos = this.player.getGridPosition();
       const monsterPositions = this.monsterManager ? this.monsterManager.getMonsterPositions() : [];
       const exitPosition = this.exitPoint ? this.exitPoint.getGridPosition() : null;
-      const missionPositions =
-        this.missionPoints?.filter(mp => !mp.collected).map(mp => mp.getGridPosition()) || [];
+      const missionPositions = this.missionDirector?.getAutopilotTargets
+        ? this.missionDirector.getAutopilotTargets().map(t => t.gridPos)
+        : [];
       this.minimap.render(playerGridPos, monsterPositions, exitPosition, missionPositions);
     }
   }
