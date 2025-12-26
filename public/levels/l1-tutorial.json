@@ -1,0 +1,57 @@
+{
+  "id": 1,
+  "name": "L1 - Tutorial",
+  "maze": { "width": 21, "height": 21, "roomDensity": 1.8, "extraConnectionChance": 0.04 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 3.0,
+      "CLASSROOMS_BLOCK": 1.2,
+      "OFFICE": 1.2,
+      "BATHROOM": 0.8,
+      "STORAGE": 0.7,
+      "LIBRARY": 0.6,
+      "LAB": 0.7,
+      "CAFETERIA": 0.6,
+      "POOL": 0.25,
+      "GYM": 0.4,
+      "BEDROOM": 0.5
+    }
+  },
+  "monsters": {
+    "count": 4,
+    "maxCount": 6,
+    "speedMultiplier": 1.0,
+    "visionMultiplier": 0.85,
+    "memoryMultiplier": 0.7,
+    "typeWeights": { "WANDERER": 0.7, "HUNTER": 0.3 },
+    "allowSprintTypes": ["HUNTER"]
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "evidence",
+        "template": "collectEvidence",
+        "required": true,
+        "params": {
+          "count": 3,
+          "required": 3,
+          "roomTypes": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"]
+        }
+      }
+    ],
+    "exit": { "requires": ["evidence"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 4,
+    "replanInterval": 0.6,
+    "stuckSeconds": 1.2,
+    "noProgressSeconds": 0.8
+  }
+}
+

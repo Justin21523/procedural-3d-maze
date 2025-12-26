@@ -5,6 +5,10 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
+function isPlainObject(v) {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
 function ensureOdd(n) {
   const rounded = Math.round(n);
   return rounded % 2 === 0 ? rounded + 1 : rounded;
@@ -14,6 +18,200 @@ function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
+function toNumber(v, fallback = null) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function toInt(v, fallback = null) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeStringArray(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((s) => String(s || '').trim()).filter(Boolean);
+}
+
+function normalizeRoomType(value) {
+  if (Number.isFinite(Number(value))) {
+    const n = Math.round(Number(value));
+    const ok = Object.values(ROOM_TYPES).includes(n);
+    return ok ? n : null;
+  }
+
+  const key = String(value || '').trim().toUpperCase();
+  if (!key) return null;
+  const id = ROOM_TYPES[key];
+  return Number.isFinite(id) ? id : null;
+}
+
+function normalizeRoomTypes(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const v of list) {
+    const id = normalizeRoomType(v);
+    if (Number.isFinite(id)) out.push(id);
+  }
+  return out.length > 0 ? out : null;
+}
+
+function normalizeRoomTypeWeights(rawWeights) {
+  if (!isPlainObject(rawWeights)) return null;
+
+  const out = {};
+  for (const [k, v] of Object.entries(rawWeights)) {
+    const id = normalizeRoomType(k);
+    if (!Number.isFinite(id)) continue;
+    const w = toNumber(v, null);
+    if (!Number.isFinite(w)) continue;
+    const weight = Math.max(0, w);
+    if (weight <= 0) continue;
+    out[id] = weight;
+  }
+
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function normalizeMissionEntry(raw, index = 0) {
+  const entry = isPlainObject(raw) ? raw : {};
+  const id = String(entry.id || entry.missionId || `m${index + 1}`).trim();
+  const template = String(entry.template || entry.type || '').trim();
+  const required = entry.required !== false;
+
+  const params = isPlainObject(entry.params) ? deepClone(entry.params) : {};
+  if (Array.isArray(params.roomTypes)) {
+    const roomTypes = normalizeRoomTypes(params.roomTypes);
+    if (roomTypes) params.roomTypes = roomTypes;
+    else delete params.roomTypes;
+  }
+
+  return id && template ? { id, template, required, params } : null;
+}
+
+function normalizeMissionsConfig(rawMissions) {
+  const missions = isPlainObject(rawMissions) ? rawMissions : {};
+
+  const timeLimitSec = clamp(toInt(missions.timeLimitSec, 0) || 0, 0, 24 * 60 * 60);
+  const listRaw = Array.isArray(missions.list) ? missions.list : [];
+  const list = listRaw.map((m, idx) => normalizeMissionEntry(m, idx)).filter(Boolean);
+
+  const requires = normalizeStringArray(missions?.exit?.requires);
+
+  return {
+    timeLimitSec,
+    list,
+    exit: { requires }
+  };
+}
+
+function normalizeLevelConfig(raw, index = 0) {
+  const src = isPlainObject(raw) ? deepClone(raw) : {};
+
+  const id = clamp(toInt(src.id, index + 1) || (index + 1), 1, 9999);
+  const name = String(src.name || `L${id}`).trim();
+
+  const maze = isPlainObject(src.maze) ? src.maze : {};
+  const width = ensureOdd(clamp(toInt(maze.width, CONFIG.MAZE_WIDTH || 31), 11, 201));
+  const height = ensureOdd(clamp(toInt(maze.height, CONFIG.MAZE_HEIGHT || 31), 11, 201));
+  const roomDensity = clamp(toNumber(maze.roomDensity, 2.8) ?? 2.8, 0.5, 20);
+  const extraConnectionChance = clamp(toNumber(maze.extraConnectionChance, 0.1) ?? 0.1, 0, 0.8);
+
+  const rooms = isPlainObject(src.rooms) ? src.rooms : {};
+  const roomTypeWeights = normalizeRoomTypeWeights(rooms.typeWeights) || null;
+
+  const monsters = isPlainObject(src.monsters) ? src.monsters : {};
+  const monstersOut = {
+    ...monsters,
+    count: clamp(toInt(monsters.count, CONFIG.MONSTER_COUNT || 8) || (CONFIG.MONSTER_COUNT || 8), 0, 120),
+    maxCount: clamp(toInt(monsters.maxCount, 0) || 0, 0, 240),
+    speedMultiplier: clamp(toNumber(monsters.speedMultiplier, 1.0) ?? 1.0, 0.2, 5),
+    visionMultiplier: clamp(toNumber(monsters.visionMultiplier, 1.0) ?? 1.0, 0.1, 5),
+    memoryMultiplier: clamp(toNumber(monsters.memoryMultiplier, 1.0) ?? 1.0, 0.1, 5),
+    typeWeights: isPlainObject(monsters.typeWeights) ? monsters.typeWeights : null,
+    allowSprintTypes: normalizeStringArray(monsters.allowSprintTypes)
+  };
+
+  const player = isPlainObject(src.player) ? src.player : {};
+  const playerOut = {
+    ...player,
+    maxHealthMultiplier: clamp(toNumber(player.maxHealthMultiplier, 1.0) ?? 1.0, 0.1, 5),
+    upgradeChoices: normalizeStringArray(player.upgradeChoices),
+    upgradesPerLevel: clamp(toInt(player.upgradesPerLevel, 0) || 0, 0, 10)
+  };
+
+  const autopilot = isPlainObject(src.autopilot) ? src.autopilot : {};
+  const autopilotOut = {
+    ...autopilot,
+    avoidRadius: clamp(toNumber(autopilot.avoidRadius, CONFIG.AUTOPILOT_AVOID_RADIUS ?? 5) ?? 5, 0, 40),
+    replanInterval: clamp(toNumber(autopilot.replanInterval, CONFIG.AUTOPILOT_REPLAN_INTERVAL ?? 0.6) ?? 0.6, 0.1, 5),
+    stuckSeconds: clamp(toNumber(autopilot.stuckSeconds, 1.2) ?? 1.2, 0.1, 10),
+    noProgressSeconds: clamp(toNumber(autopilot.noProgressSeconds, 0.8) ?? 0.8, 0.1, 10)
+  };
+
+  const missionsSrc = isPlainObject(src.missions) ? src.missions : {};
+  const missionsOut = Array.isArray(missionsSrc.list)
+    ? (() => {
+      const normalized = normalizeMissionsConfig(missionsSrc);
+      return {
+        ...missionsSrc,
+        ...normalized,
+        exit: { ...(missionsSrc.exit || {}), ...(normalized.exit || {}) }
+      };
+    })()
+    : missionsSrc;
+
+  return {
+    ...src,
+    id,
+    name,
+    maze: {
+      ...maze,
+      width,
+      height,
+      roomDensity,
+      extraConnectionChance
+    },
+    rooms: {
+      ...rooms,
+      typeWeights: roomTypeWeights
+    },
+    monsters: monstersOut,
+    missions: missionsOut,
+    player: playerOut,
+    autopilot: autopilotOut
+  };
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  return res.json();
+}
+
+async function loadPublicLevels(manifestUrl = '/levels/manifest.json') {
+  const manifest = await fetchJson(manifestUrl);
+  const files = Array.isArray(manifest?.levels) ? manifest.levels : null;
+  if (!files || files.length === 0) return [];
+
+  const basePath = manifestUrl.split('/').slice(0, -1).join('/') || '/levels';
+  const levels = [];
+
+  for (const f of files) {
+    const file = String(f || '').trim();
+    if (!file) continue;
+    const url = `${basePath}/${file}`;
+    try {
+      const raw = await fetchJson(url);
+      levels.push(raw);
+    } catch (err) {
+      console.warn(`⚠️ Failed to load level JSON: ${url}`, err?.message || err);
+    }
+  }
+
+  return levels;
+}
+
 /**
  * LevelDirector
  * - Generates endless, room-first levels with rising difficulty.
@@ -21,9 +219,24 @@ function deepClone(obj) {
  */
 export class LevelDirector {
   constructor(baseLevels = []) {
-    this.baseLevels = baseLevels;
+    this.baseLevels = Array.isArray(baseLevels) ? baseLevels.map((l, idx) => normalizeLevelConfig(l, idx)) : [];
     this.generated = [];
     this.lastDifficulty = 1;
+  }
+
+  static async createFromPublic({ manifestUrl = '/levels/manifest.json', fallbackLevels = [] } = {}) {
+    let loaded = [];
+    try {
+      loaded = await loadPublicLevels(manifestUrl);
+    } catch (err) {
+      console.warn('⚠️ Failed to load public level manifest:', err?.message || err);
+    }
+
+    const baseLevels = loaded.length > 0
+      ? loaded
+      : (Array.isArray(fallbackLevels) ? fallbackLevels : []);
+
+    return new LevelDirector(baseLevels);
   }
 
   /**
@@ -173,6 +386,40 @@ export class LevelDirector {
         params: { seconds: 120 }
       });
       exitRequires.push('survive');
+    }
+
+    if (difficulty >= 2.8 && Math.random() < 0.55) {
+      const candidates = [ROOM_TYPES.LAB, ROOM_TYPES.CAFETERIA, ROOM_TYPES.CLASSROOMS_BLOCK];
+      const roomType = candidates[Math.floor(Math.random() * candidates.length)];
+      missionList.push({
+        id: 'enter',
+        template: 'enterRoomType',
+        required: true,
+        params: { count: 1, roomTypes: [roomType] }
+      });
+      exitRequires.push('enter');
+    }
+
+    if (difficulty >= 4.8 && Math.random() < 0.55) {
+      const count = clamp(Math.round(2 + difficulty * 0.55), 3, 30);
+      missionList.push({
+        id: 'hunt',
+        template: 'killCount',
+        required: true,
+        params: { count }
+      });
+      exitRequires.push('hunt');
+    }
+
+    if (difficulty >= 6.0 && Math.random() < 0.35) {
+      const seconds = clamp(Math.round(12 + difficulty * 2), 12, 60);
+      missionList.push({
+        id: 'stealth',
+        template: 'stealthNoise',
+        required: true,
+        params: { seconds, resetOnGunshot: true }
+      });
+      exitRequires.push('stealth');
     }
 
     const timeLimitSec = difficulty >= 6 ? clamp(480 - difficulty * 12, 240, 520) : 0;

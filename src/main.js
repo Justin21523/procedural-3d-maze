@@ -34,7 +34,7 @@ import { MissionDirector } from './core/missions/missionDirector.js';
 /**
  * Initialize and start the game
  */
-function initGame() {
+async function initGame() {
   console.log('='.repeat(80));
   console.log('🎮 GAME INITIALIZATION STARTED');
   console.log('📦 VERSION: 2.0.2 - Debug Version');
@@ -71,8 +71,11 @@ function initGame() {
     console.log(`  minimap size: ${minimapCanvas.width}x${minimapCanvas.height}`);
   }
 
-  // 多關卡狀態
-  const levelDirector = new LevelDirector(LEVEL_CATALOG);
+  // Multi-level state (loaded from public/levels/*.json, with src/core/levelCatalog.js fallback)
+  const levelDirector = await LevelDirector.createFromPublic({
+    manifestUrl: '/levels/manifest.json',
+    fallbackLevels: LEVEL_CATALOG
+  });
   let currentLevelIndex = 0;
   let levelConfig = levelDirector.getLevelConfig(currentLevelIndex);
   let missionDirector = null;

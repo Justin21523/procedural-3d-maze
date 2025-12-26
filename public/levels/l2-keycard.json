@@ -1,0 +1,66 @@
+{
+  "id": 2,
+  "name": "L2 - Keycard",
+  "maze": { "width": 25, "height": 25, "roomDensity": 2.2, "extraConnectionChance": 0.07 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 3.2,
+      "CLASSROOMS_BLOCK": 1.6,
+      "OFFICE": 1.4,
+      "LAB": 0.8,
+      "CAFETERIA": 0.7,
+      "BATHROOM": 0.7,
+      "STORAGE": 0.8,
+      "LIBRARY": 0.6,
+      "POOL": 0.25,
+      "GYM": 0.35,
+      "BEDROOM": 0.45
+    }
+  },
+  "monsters": {
+    "count": 6,
+    "maxCount": 6,
+    "speedMultiplier": 1.0,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.0,
+    "typeWeights": { "WANDERER": 0.45, "HUNTER": 0.25, "SENTINEL": 0.2, "GREETER": 0.1 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "keycard",
+        "template": "findKeycard",
+        "required": true,
+        "params": {
+          "roomTypes": ["OFFICE", "CLASSROOM", "CLASSROOMS_BLOCK"],
+          "label": "Pick up Keycard"
+        }
+      },
+      {
+        "id": "evidence",
+        "template": "collectEvidence",
+        "required": true,
+        "params": {
+          "count": 4,
+          "required": 3,
+          "roomTypes": ["CLASSROOM", "OFFICE", "CAFETERIA"]
+        }
+      }
+    ],
+    "exit": { "requires": ["keycard", "evidence"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.5,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.6
+  }
+}
+

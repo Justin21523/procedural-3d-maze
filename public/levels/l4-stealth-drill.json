@@ -1,0 +1,59 @@
+{
+  "id": 4,
+  "name": "L4 - Stealth Drill",
+  "maze": { "width": 27, "height": 27, "roomDensity": 2.6, "extraConnectionChance": 0.08 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.6,
+      "CLASSROOMS_BLOCK": 1.4,
+      "OFFICE": 1.2,
+      "LAB": 1.2,
+      "CAFETERIA": 0.85,
+      "BATHROOM": 0.7,
+      "STORAGE": 0.85,
+      "LIBRARY": 0.55,
+      "POOL": 0.18,
+      "GYM": 0.28,
+      "BEDROOM": 0.38
+    }
+  },
+  "monsters": {
+    "count": 5,
+    "maxCount": 6,
+    "speedMultiplier": 1.0,
+    "visionMultiplier": 0.95,
+    "memoryMultiplier": 0.9,
+    "typeWeights": { "WANDERER": 0.55, "SENTINEL": 0.25, "HUNTER": 0.2 },
+    "allowSprintTypes": ["HUNTER"]
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "findLab",
+        "template": "enterRoomType",
+        "required": true,
+        "params": { "count": 1, "roomTypes": ["LAB"] }
+      },
+      {
+        "id": "stealth",
+        "template": "stealthNoise",
+        "required": true,
+        "params": { "seconds": 15, "resetOnGunshot": true }
+      }
+    ],
+    "exit": { "requires": ["findLab", "stealth"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.5,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+
