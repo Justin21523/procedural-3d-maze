@@ -1,0 +1,7 @@
+{
+  "scaleMultiplier": 1,
+  "groundOffset": 0.02,
+  "stats": {
+    "hitRadius": 1.0
+  }
+}

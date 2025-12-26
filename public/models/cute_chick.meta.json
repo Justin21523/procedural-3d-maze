@@ -1,0 +1,36 @@
+{
+  "scaleMultiplier": 1,
+  "groundOffset": 0.02,
+  "stats": {
+    "hitRadius": 1
+  },
+  "correctionRotationDeg": {
+    "x": -180,
+    "y": 5,
+    "z": -180
+  },
+  "correctionOffset": {
+    "x": 2.87,
+    "y": 0,
+    "z": -0.25
+  },
+  "combat": {
+    "ranged": {
+      "enabled": true,
+      "kind": "bolt",
+      "damage": 8,
+      "range": 14,
+      "minRange": 4,
+      "fireChance": 0.75,
+      "spread": 0.04,
+      "shotInterval": 1.05,
+      "magSize": 6,
+      "reloadSeconds": 1.65,
+      "burstMin": 1,
+      "burstMax": 2,
+      "burstRestSeconds": 0.7,
+      "fireAlignDeg": 16,
+      "turnSpeed": 6.5
+    }
+  }
+}
