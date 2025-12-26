@@ -39,6 +39,10 @@ export const EVENTS = Object.freeze({
   TIMER_TICK: 'timer:tick',
   NOISE_EMITTED: 'noise:emitted',
 
+  // Hints / UI
+  MISSION_HINT_REQUESTED: 'mission:hintRequested',
+  UI_TOAST: 'ui:toast',
+
   // Interactions
   INTERACTABLE_HOVER: 'interact:hover',
   INTERACT: 'interact:performed',

@@ -65,6 +65,9 @@ export class MissionDirector {
     this.exitUnlocked = true;
     this.exitLockMessage = '';
 
+    this.hintTier = 0;
+    this.hintObjectiveKey = '';
+
     this.unsubs = [];
   }
 
@@ -111,6 +114,8 @@ export class MissionDirector {
     this.exitUnlocked = true;
     this.exitLockMessage = '';
     this.lastStatusKey = '';
+    this.hintTier = 0;
+    this.hintObjectiveKey = '';
   }
 
   startLevel(levelConfig) {
@@ -148,6 +153,9 @@ export class MissionDirector {
     );
     this.unsubs.push(
       bus.on(EVENTS.NOISE_EMITTED, (payload) => this.onNoiseEmitted(payload))
+    );
+    this.unsubs.push(
+      bus.on(EVENTS.MISSION_HINT_REQUESTED, (payload) => this.onHintRequested(payload))
     );
   }
 
@@ -500,6 +508,90 @@ export class MissionDirector {
     }
 
     this.syncStatus();
+  }
+
+  onHintRequested(payload) {
+    const actorKind = payload?.actorKind || 'player';
+    if (actorKind !== 'player') return;
+
+    const objectiveMission = this.getCurrentRequiredMission();
+    const objectiveKey = objectiveMission
+      ? `${String(objectiveMission.id || '')}:${String(objectiveMission.template || '')}`
+      : 'exit';
+
+    if (objectiveKey !== this.hintObjectiveKey) {
+      this.hintObjectiveKey = objectiveKey;
+      this.hintTier = 0;
+    }
+
+    this.hintTier = Math.min(3, (this.hintTier || 0) + 1);
+    const tier = this.hintTier;
+
+    const paramHints = objectiveMission?.params?.hints;
+    const hints = Array.isArray(paramHints) ? paramHints.map((h) => String(h || '').trim()).filter(Boolean) : [];
+    let hintText = hints[tier - 1] || '';
+
+    if (!hintText) {
+      const m = objectiveMission;
+      if (!m) {
+        hintText = tier === 1
+          ? 'Follow the objective and reach the exit.'
+          : tier === 2
+            ? 'Use the minimap to find unexplored rooms and corridors.'
+            : 'If the exit is locked, complete the listed objectives first.';
+      } else if (m.template === 'findKeycard') {
+        hintText = tier === 1
+          ? 'Search the target room types for a keycard pickup.'
+          : tier === 2
+            ? 'Sweep offices/classrooms and interact with the glowing keycard.'
+            : 'Keep moving: the keycard spawns away from the spawn/exit.';
+      } else if (m.template === 'collectEvidence') {
+        hintText = tier === 1
+          ? 'Collect evidence pickups in the listed room types.'
+          : tier === 2
+            ? 'Evidence spawns as small glowing items—interact to collect.'
+            : 'Use the minimap: enter rooms, scan corners, and clear multiple rooms.';
+      } else if (m.template === 'restorePower') {
+        hintText = tier === 1
+          ? 'Find and activate the power switches.'
+          : tier === 2
+            ? 'Switches spawn in labs/storage—interact to turn them on.'
+            : 'If you are stuck, explore new rooms; switches never spawn in walls/corridors.';
+      } else if (m.template === 'enterRoomType') {
+        const roomLabel = formatRoomTypeList(m.params?.roomTypes);
+        hintText = tier === 1
+          ? `Find and enter the ${roomLabel}.`
+          : tier === 2
+            ? 'Explore: move through corridors until you discover new themed rooms.'
+            : 'Check large room clusters (Classrooms Block / Lab / Cafeteria) on the minimap.';
+      } else if (m.template === 'killCount') {
+        hintText = tier === 1
+          ? 'Defeat monsters to reach the required count.'
+          : tier === 2
+            ? 'Keep distance and use bursts; reloading at safe moments helps.'
+            : 'If overwhelmed, retreat down corridors to separate targets.';
+      } else if (m.template === 'stealthNoise') {
+        hintText = tier === 1
+          ? 'Stay quiet until the timer completes.'
+          : tier === 2
+            ? 'Do not shoot; footsteps also reset the timer.'
+            : 'Stop moving and wait—any noise will restart the countdown.';
+      } else if (m.template === 'unlockExit') {
+        hintText = tier === 1
+          ? 'Go to the exit and press E to unlock it.'
+          : tier === 2
+            ? 'After unlocking, press E again to finish the level.'
+            : 'If it stays locked, you missed a required objective.';
+      } else {
+        hintText = tier === 1
+          ? 'Follow the current objective.'
+          : tier === 2
+            ? 'Use the minimap and interact prompts to find objectives.'
+            : 'Try exploring new rooms; objectives never require guessing.';
+      }
+    }
+
+    this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Hint ${tier}/3: ${hintText}`, seconds: 2.4 });
   }
 
   onTimerTick(payload) {
