@@ -196,6 +196,8 @@ export class MissionDirector {
       } else if (template === 'killCount') {
         const required = clamp(Math.round(mission.params.count ?? 3), 1, 999);
         mission.state = { killed: 0, required };
+      } else if (template === 'unlockExit') {
+        mission.state = { unlocked: false };
       } else if (template === 'stealthNoise') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 20), 5, 3600);
         const resetOnGunshot = mission.params.resetOnGunshot !== false;
@@ -378,6 +380,40 @@ export class MissionDirector {
   onInteract(payload) {
     const id = String(payload?.id || '').trim();
     if (!id) return;
+
+    if (id === 'exit') {
+      const requires = this.missionsConfig?.exit?.requires || [];
+      const requiredIds = Array.isArray(requires) ? requires : [];
+
+      let changed = false;
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'unlockExit') continue;
+        if (this.isMissionComplete(mission)) continue;
+
+        const prereqs = requiredIds.filter((rid) => rid !== mission.id);
+        let ok = true;
+        for (const rid of prereqs) {
+          const reqMission = this.missions.get(rid);
+          if (!reqMission) continue;
+          if (!this.isMissionComplete(reqMission)) {
+            ok = false;
+            break;
+          }
+        }
+
+        if (!ok) continue;
+        mission.state.unlocked = true;
+        changed = true;
+      }
+
+      if (changed) {
+        this.syncStatus();
+      }
+
+      return;
+    }
+
     const meta = this.interactableMeta.get(id);
     if (!meta) return;
 
@@ -531,6 +567,9 @@ export class MissionDirector {
     if (mission.template === 'killCount') {
       return (mission.state.killed || 0) >= (mission.state.required || 0);
     }
+    if (mission.template === 'unlockExit') {
+      return !!mission.state.unlocked;
+    }
     if (mission.template === 'stealthNoise') {
       return !!mission.state.completed;
     }
@@ -585,6 +624,9 @@ export class MissionDirector {
       }
       if (mission.template === 'killCount') {
         return `Defeat monsters (${mission.state.killed || 0}/${mission.state.required || 0})`;
+      }
+      if (mission.template === 'unlockExit') {
+        return mission.state.unlocked ? 'Exit unlocked. Reach the exit.' : 'Unlock the exit (press E at the exit)';
       }
       if (mission.template === 'stealthNoise') {
         if (mission.state.failed) return 'Stay quiet (failed)';
@@ -644,6 +686,9 @@ export class MissionDirector {
         killed: mission.state.killed || 0,
         required: mission.state.required || 0
       };
+    }
+    if (mission.template === 'unlockExit') {
+      return { unlocked: !!mission.state.unlocked };
     }
     if (mission.template === 'stealthNoise') {
       const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;

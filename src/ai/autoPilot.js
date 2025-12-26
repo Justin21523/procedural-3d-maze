@@ -213,6 +213,16 @@ export class AutoPilot {
       return;
     }
 
+    // Exit locked but objective is to unlock it: go to exit and interact.
+    if (objective?.template === 'unlockExit' && this.exitPointRef?.getGridPosition) {
+      const exit = this.exitPointRef.getGridPosition();
+      this.taskTargetType = 'exit';
+      this.taskRunner.setTasks([
+        new InteractTask('exit', exit, { threshold: 1 })
+      ]);
+      return;
+    }
+
     // Exit locked but no interactable targets: explore/search until the objective updates.
     const roomTypes = objective?.params?.roomTypes ?? null;
     this.taskTargetType = 'explore';

@@ -424,6 +424,21 @@ export class LevelDirector {
       exitRequires.push('stealth');
     }
 
+    const hasKeycard = missionList.some((m) => m?.template === 'findKeycard');
+    if (hasKeycard) {
+      if (!missionList.some((m) => m?.template === 'unlockExit')) {
+        missionList.push({
+          id: 'unlockExit',
+          template: 'unlockExit',
+          required: true,
+          params: {}
+        });
+      }
+      if (!exitRequires.includes('unlockExit')) {
+        exitRequires.push('unlockExit');
+      }
+    }
+
     const timeLimitSec = difficulty >= 6 ? clamp(480 - difficulty * 12, 240, 520) : 0;
 
     return {
