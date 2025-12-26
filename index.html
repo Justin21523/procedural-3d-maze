@@ -61,6 +61,24 @@
       mix-blend-mode: screen;
     }
 
+    #interact-prompt {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, calc(-50% + 44px));
+      padding: 6px 10px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255, 215, 0, 0.7);
+      border-radius: 6px;
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 250;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+    }
+
     #crosshair::before,
     #crosshair::after {
       content: '';
@@ -307,6 +325,7 @@
   <!-- Canvas container for Three.js -->
   <div id="canvas-container"></div>
   <div id="crosshair"></div>
+  <div id="interact-prompt" class="hidden"></div>
 
   <!-- UI Overlay -->
   <div id="ui-overlay">
@@ -319,12 +338,13 @@
     <p>Weapon: <span id="hud-weapon" style="color: #ffd700; font-weight: bold;">Rifle</span></p>
     <p>Ammo: <span id="hud-ammo" style="color: #ffd700; font-weight: bold;">0/0</span> <span id="hud-reload" style="color: #66ff99;"></span></p>
     <p>Mode: <span id="hud-mode" style="color: #88ffcc;">—</span></p>
-    <p style="font-size: 12px; color: #66aaff;">Q Grenade: <span id="hud-skill-q">Ready</span> | E EMP: <span id="hud-skill-e">Ready</span></p>
+    <p style="font-size: 12px; color: #66aaff;">Q Grenade: <span id="hud-skill-q">Ready</span> | X EMP: <span id="hud-skill-x">Ready</span></p>
     <p>Position: <span id="position">0, 0, 0</span></p>
     <p>Room: <span id="current-room" style="color: #ffd700; font-weight: bold;">Corridor</span></p>
     <p>FPS: <span id="fps">60</span></p>
     <p style="font-size: 12px; color: #32cd32;">Pointer: <span id="pointer-status">Not Locked</span></p>
-    <p style="font-size: 12px; color: #ffd700;">Missions: <span id="mission-status">0/0</span></p>
+    <p style="font-size: 12px; color: #ffd700;">Objectives: <span id="mission-status">0/0</span></p>
+    <p style="font-size: 12px; color: #ffffff;">Objective: <span id="mission-objective" style="color: #66ff99;">—</span></p>
   </div>
 
   <!-- Minimap -->
@@ -382,8 +402,9 @@
       <li><strong>1/2/3</strong> - Switch Weapon</li>
       <li><strong>R</strong> - Reload</li>
       <li><strong>B</strong> - Ammo Mode</li>
+      <li><strong>E</strong> - Interact</li>
       <li><strong>Q</strong> - Grenade Skill</li>
-      <li><strong>E</strong> - EMP Skill</li>
+      <li><strong>X</strong> - EMP Skill</li>
       <li><strong>ESC</strong> - Release Mouse</li>
       <li><strong>Tab</strong> - Settings</li>
     </ul>
