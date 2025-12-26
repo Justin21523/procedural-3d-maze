@@ -7,6 +7,7 @@ pnpm-lock.yaml
 # Build output
 dist/
 build/
+dist-test/
 
 # Development
 .vite/
@@ -48,4 +49,20 @@ test.html
 *_final.*
 
 # Large art assets: keep out of git
-public/models/
+public/models/**
+!public/models/**/
+!public/models/**/meta.json
+!public/models/**/*.meta.json
+public/models/manifest.json
+public/textures/
+public/*.fbx
+public/*.hdr
+public/*.exr
+public/*.png
+public/*.jpg
+public/*.jpeg
+public/*.webp
+public/README.txt
+
+# Local data (do not commit)
+data/
