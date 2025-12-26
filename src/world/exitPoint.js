@@ -16,12 +16,16 @@ export class ExitPoint {
     this.gridY = gridPosition.y;
 
     // World position
-    this.worldX = gridPosition.x * CONFIG.TILE_SIZE;
-    this.worldZ = gridPosition.y * CONFIG.TILE_SIZE;
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    // Tile spans [x*tileSize, (x+1)*tileSize); center at (x+0.5)*tileSize
+    this.worldX = gridPosition.x * tileSize + tileSize / 2;
+    this.worldZ = gridPosition.y * tileSize + tileSize / 2;
 
     // Create visual representation
     this.mesh = this.createExitMesh();
-    this.mesh.position.set(this.worldX, 1.5, this.worldZ); // Raise to eye level
+    // Place the group at floor level; the portal visuals are positioned within the group.
+    this.baseY = 0;
+    this.mesh.position.set(this.worldX, this.baseY, this.worldZ);
 
     // Animation
     this.time = 0;
@@ -128,7 +132,7 @@ export class ExitPoint {
     }
 
     // Bob up and down
-    this.mesh.position.y = Math.sin(this.time * this.bobSpeed) * this.bobAmount;
+    this.mesh.position.y = this.baseY + Math.sin(this.time * this.bobSpeed) * this.bobAmount;
 
     // Animate particles
     this.mesh.children.forEach((child, index) => {

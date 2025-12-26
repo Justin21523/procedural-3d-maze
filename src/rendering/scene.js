@@ -270,6 +270,7 @@ export class SceneManager {
     const roomMap = worldState.getRoomMap();
     const height = grid.length;
     const width = grid[0].length;
+    const tileSize = CONFIG.TILE_SIZE || 1;
 
     // Create textures for each room type
     const roomMaterials = {};
@@ -345,19 +346,24 @@ export class SceneManager {
     
     // Geometry for walls (reuse for efficiency)
     const wallGeometry = new THREE.BoxGeometry(
-      CONFIG.TILE_SIZE,
+      tileSize,
       CONFIG.WALL_HEIGHT,
-      CONFIG.TILE_SIZE
+      tileSize
     );
 
     // Geometries for floor and ceiling tiles
-    const floorGeometry = new THREE.PlaneGeometry(CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
-    const ceilingGeometry = new THREE.PlaneGeometry(CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+    const floorGeometry = new THREE.PlaneGeometry(tileSize, tileSize);
+    const ceilingGeometry = new THREE.PlaneGeometry(tileSize, tileSize);
 
     // Build walls, floors, and ceilings
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const worldPos = gridToWorld(x, y, CONFIG.TILE_SIZE);
+        const worldPos = gridToWorld(x, y, tileSize);
+        // All gameplay collision uses worldToGrid=floor(world/tileSize), meaning a tile spans:
+        // [x*tileSize, (x+1)*tileSize) with its center at (x+0.5)*tileSize.
+        // Keep visuals aligned to that convention to avoid apparent "clipping through walls".
+        const centerX = worldPos.x + tileSize / 2;
+        const centerZ = worldPos.z + tileSize / 2;
         const roomType = roomMap[y][x];
         const materials = roomMaterials[roomType] || roomMaterials[ROOM_TYPES.CORRIDOR];
 
@@ -365,9 +371,9 @@ export class SceneManager {
           // Create wall
           const wall = new THREE.Mesh(wallGeometry, materials.wall);
           wall.position.set(
-            worldPos.x,
+            centerX,
             CONFIG.WALL_HEIGHT / 2,
-            worldPos.z
+            centerZ
           );
           wall.castShadow = true;
           wall.receiveShadow = true;
@@ -378,7 +384,7 @@ export class SceneManager {
           // Create floor tile
           const floor = new THREE.Mesh(floorGeometry, materials.floor);
           floor.rotation.x = -Math.PI / 2; // Rotate to be horizontal
-          floor.position.set(worldPos.x, 0, worldPos.z);
+          floor.position.set(centerX, 0, centerZ);
           floor.receiveShadow = true;
           this.scene.add(floor);
           this.worldMeshes.push(floor);
@@ -386,7 +392,7 @@ export class SceneManager {
           // Create ceiling tile
           const ceiling = new THREE.Mesh(ceilingGeometry, materials.ceiling);
           ceiling.rotation.x = Math.PI / 2; // Rotate to face down
-          ceiling.position.set(worldPos.x, CONFIG.WALL_HEIGHT, worldPos.z);
+          ceiling.position.set(centerX, CONFIG.WALL_HEIGHT, centerZ);
           this.scene.add(ceiling);
           this.worldMeshes.push(ceiling);
 
@@ -523,8 +529,10 @@ export class SceneManager {
       box.setFromObject(model);
       box.getCenter(center);
 
-      const centerGX = room.x + room.width / 2 - 0.5;
-      const centerGY = room.y + room.height / 2 - 0.5;
+      // Room bounds are in grid tiles. With tile centers at (x+0.5)*tileSize,
+      // the room center is (room.x + room.width/2)*tileSize.
+      const centerGX = room.x + room.width / 2;
+      const centerGY = room.y + room.height / 2;
       const worldX = centerGX * tileSize;
       const worldZ = centerGY * tileSize;
 
