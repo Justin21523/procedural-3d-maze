@@ -80,6 +80,24 @@ export class FogManager {
       density: 0.04,
       color: new THREE.Color(0xe8dcc8)
     });
+
+    // Classroom block: very bright, clean air
+    this.presets.set(ROOM_TYPES.CLASSROOMS_BLOCK, {
+      density: 0.035,
+      color: new THREE.Color(0xf5f7ff)
+    });
+
+    // Lab: slightly colder
+    this.presets.set(ROOM_TYPES.LAB, {
+      density: 0.045,
+      color: new THREE.Color(0xe6fbff)
+    });
+
+    // Cafeteria: warm haze
+    this.presets.set(ROOM_TYPES.CAFETERIA, {
+      density: 0.045,
+      color: new THREE.Color(0xfff0dd)
+    });
   }
 
   /**
