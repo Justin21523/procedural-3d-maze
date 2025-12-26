@@ -5,6 +5,7 @@
 
 import * as THREE from 'three';
 import { CONFIG } from '../core/config.js';
+import { EVENTS } from '../core/events.js';
 
 export class ExitPoint {
   /**
@@ -233,5 +234,43 @@ export class ExitPoint {
    */
   getWorldPosition() {
     return { x: this.worldX, z: this.worldZ };
+  }
+
+  /**
+   * Register the exit as an interactable. Exit completion is driven by E interact, not proximity.
+   * @param {InteractableSystem} interactableSystem
+   * @param {Object} options
+   * @param {EventBus} options.eventBus
+   * @param {GameState} options.gameState
+   * @returns {string|null} interactable id
+   */
+  registerInteractable(interactableSystem, { eventBus = null, gameState = null } = {}) {
+    if (!interactableSystem?.register) return null;
+
+    return interactableSystem.register({
+      id: 'exit',
+      kind: 'exit',
+      label: 'Exit',
+      gridPos: this.getGridPosition(),
+      object3d: this.mesh,
+      maxDistance: 2.6,
+      prompt: () => {
+        const locked = gameState?.exitUnlocked === false;
+        return locked ? 'E: Exit (Locked)' : 'E: Exit';
+      },
+      interact: () => {
+        if (gameState?.gameOver) return { ok: false };
+
+        const unlocked = gameState?.exitUnlocked !== false;
+        if (!unlocked) {
+          const message = String(gameState?.exitLockedReason || 'Exit locked');
+          eventBus?.emit?.(EVENTS.EXIT_LOCKED, { message });
+          return { ok: false, message };
+        }
+
+        gameState?.win?.('You found the exit!');
+        return { ok: true };
+      }
+    });
   }
 }

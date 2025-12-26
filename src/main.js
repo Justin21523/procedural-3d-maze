@@ -342,8 +342,10 @@ async function initGame() {
     eventBus,
     scene: sceneManager.getScene(),
     camera,
-    input
+    input,
+    worldState
   });
+  exitPoint?.registerInteractable?.(interactableSystem, { eventBus, gameState });
 
   missionDirector = new MissionDirector({
     eventBus,
@@ -567,6 +569,7 @@ async function initGame() {
       exitPoint = new ExitPoint(newExitPos);
       sceneManager.getScene().add(exitPoint.getMesh());
       gameLoop.exitPoint = exitPoint;
+      exitPoint?.registerInteractable?.(interactableSystem, { eventBus, gameState });
 
       // 重置玩家位置
       const spawnPoint = worldState.getSpawnPoint();
