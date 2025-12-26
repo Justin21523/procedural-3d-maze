@@ -47,9 +47,15 @@
           "required": 3,
           "roomTypes": ["CLASSROOM", "OFFICE", "CAFETERIA"]
         }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {}
       }
     ],
-    "exit": { "requires": ["keycard", "evidence"] }
+    "exit": { "requires": ["keycard", "evidence", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,
@@ -63,4 +69,3 @@
     "noProgressSeconds": 0.6
   }
 }
-
