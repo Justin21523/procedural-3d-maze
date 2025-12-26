@@ -206,7 +206,7 @@ function carveRoomsFromCorridors(grid, options = {}) {
     // 門設為 DOOR
     grid[doorY][doorX] = TILE_TYPES.DOOR;
 
-    const roomType = pickRoomType();
+    const roomType = pickRoomType(options.roomTypeWeights);
     const room = {
       type: roomType,
       x,
@@ -318,10 +318,13 @@ function tryAddExtraDoors(grid, room, minDoors = 2) {
 /**
  * 隨機選一種房間類型
  */
-function pickRoomType() {
+function pickRoomType(roomTypeWeights = null) {
   const types = [
     ROOM_TYPES.CLASSROOM,
+    ROOM_TYPES.CLASSROOMS_BLOCK,
     ROOM_TYPES.OFFICE,
+    ROOM_TYPES.LAB,
+    ROOM_TYPES.CAFETERIA,
     ROOM_TYPES.BATHROOM,
     ROOM_TYPES.STORAGE,
     ROOM_TYPES.LIBRARY,
@@ -329,7 +332,33 @@ function pickRoomType() {
     ROOM_TYPES.GYM,
     ROOM_TYPES.BEDROOM,
   ];
-  return types[randomInt(0, types.length - 1)];
+
+  const weights = roomTypeWeights && typeof roomTypeWeights === 'object' ? roomTypeWeights : null;
+  if (!weights) {
+    return types[randomInt(0, types.length - 1)];
+  }
+
+  const entries = [];
+  let total = 0;
+  for (const t of types) {
+    const wRaw = weights[t] ?? weights[String(t)] ?? null;
+    const w = Number(wRaw);
+    const weight = Number.isFinite(w) ? Math.max(0, w) : 1;
+    if (weight <= 0) continue;
+    entries.push({ type: t, weight });
+    total += weight;
+  }
+
+  if (entries.length === 0 || total <= 0) {
+    return types[randomInt(0, types.length - 1)];
+  }
+
+  let r = Math.random() * total;
+  for (const e of entries) {
+    r -= e.weight;
+    if (r <= 0) return e.type;
+  }
+  return entries[entries.length - 1].type;
 }
 
 /**

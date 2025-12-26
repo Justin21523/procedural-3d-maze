@@ -40,6 +40,9 @@ export class Minimap {
       [ROOM_TYPES.POOL]: '#00acc1',       // Teal
       [ROOM_TYPES.GYM]: '#4caf50',        // Green
       [ROOM_TYPES.BEDROOM]: '#bcaaa4',    // Beige
+      [ROOM_TYPES.CLASSROOMS_BLOCK]: '#64b5f6', // Light blue
+      [ROOM_TYPES.LAB]: '#80deea',              // Light cyan
+      [ROOM_TYPES.CAFETERIA]: '#ffcc80',        // Light orange
     };
 
     // Calculate scale to fit maze in canvas

@@ -23,6 +23,9 @@ export const ROOM_TYPES = {
   POOL: 6,          // 游泳池
   GYM: 7,           // 健身房
   BEDROOM: 8,       // 卧室/宿舍
+  CLASSROOMS_BLOCK: 9, // Classroom block / wing
+  LAB: 10,             // Laboratory
+  CAFETERIA: 11,       // Cafeteria / canteen
 };
 
 /**
@@ -92,6 +95,27 @@ export const ROOM_CONFIGS = {
     floorColor: 0xc8a97e,
     ceilingColor: 0xf3e9dc,
     lighting: { intensity: 0.65, color: 0xfff0d9 },
+  },
+  [ROOM_TYPES.CLASSROOMS_BLOCK]: {
+    name: 'Classrooms Block',
+    wallColor: 0xf7f7f7,
+    floorColor: 0x90caf9,
+    ceilingColor: 0xffffff,
+    lighting: { intensity: 0.9, color: 0xffffff },
+  },
+  [ROOM_TYPES.LAB]: {
+    name: 'Lab',
+    wallColor: 0xe0f7fa,
+    floorColor: 0xb0bec5,
+    ceilingColor: 0xf0ffff,
+    lighting: { intensity: 0.8, color: 0xe0ffff },
+  },
+  [ROOM_TYPES.CAFETERIA]: {
+    name: 'Cafeteria',
+    wallColor: 0xfff3e0,
+    floorColor: 0xa1887f,
+    ceilingColor: 0xfff8e1,
+    lighting: { intensity: 0.75, color: 0xfff3d6 },
   },
 };
 

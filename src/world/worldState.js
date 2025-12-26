@@ -42,7 +42,9 @@ export class WorldState {
       minRoomSize: mazeCfg.minRoomSize,
       maxRoomSize: mazeCfg.maxRoomSize,
       minRoomDoors: mazeCfg.minRoomDoors ?? 2,
-      deadEndPasses: mazeCfg.deadEndPasses ?? 3
+      deadEndPasses: mazeCfg.deadEndPasses ?? 3,
+      // Optional per-level room type weights to steer the theme (Classrooms-like maps).
+      roomTypeWeights: levelConfig?.rooms?.typeWeights ?? mazeCfg.roomTypeWeights ?? null
     });
     this.grid = result.grid;
     this.rooms = result.rooms;

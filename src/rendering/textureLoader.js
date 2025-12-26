@@ -80,6 +80,21 @@ export class PBRTextureLoader {
         wall: 'bedroom_wall',       // beige_wall_002
         floor: 'bedroom_floor',     // wood_floor
         ceiling: 'bedroom_ceiling'  // plastered_wall_02
+      },
+      [ROOM_TYPES.CLASSROOMS_BLOCK]: {
+        wall: 'classroom_wall',
+        floor: 'classroom_floor',
+        ceiling: 'classroom_ceiling'
+      },
+      [ROOM_TYPES.LAB]: {
+        wall: 'bathroom_tile',
+        floor: 'storage_floor',
+        ceiling: 'bathroom_ceiling'
+      },
+      [ROOM_TYPES.CAFETERIA]: {
+        wall: 'corridor_wall',
+        floor: 'office_carpet',
+        ceiling: 'corridor_ceiling'
       }
     };
   }
