@@ -4,7 +4,7 @@
  */
 
 import * as THREE from 'three';
-import { CONFIG } from './core/config.js';
+import { CONFIG, resolveMonsterCount } from './core/config.js';
 import { GameLoop } from './core/gameLoop.js';
 import { GameState } from './core/gameState.js';
 import { SceneManager } from './rendering/scene.js';
@@ -15,13 +15,20 @@ import { InputHandler } from './player/input.js';
 import { PlayerController } from './player/playerController.js';
 import { MonsterManager } from './entities/monsterManager.js';
 import { ProjectileManager } from './entities/projectileManager.js';
+import { PickupManager } from './entities/pickupManager.js';
 import { ExitPoint } from './world/exitPoint.js';
 import { MissionPoint } from './world/missionPoint.js';
 import { AutoPilot } from './ai/autoPilot.js';
 import { AudioManager } from './audio/audioManager.js';
 import { LEVEL_CONFIGS } from './core/levelConfigs.js';
 import { Gun } from './player/gun.js';
+import { WeaponView } from './player/weaponView.js';
 import { LevelDirector } from './core/levelDirector.js';
+import { SpawnDirector } from './core/spawnDirector.js';
+import { EventBus } from './core/eventBus.js';
+import { CombatSystem } from './core/combatSystem.js';
+import { FeedbackSystem } from './core/feedbackSystem.js';
+import { UIManager } from './ui/uiManager.js';
 
 /**
  * Initialize and start the game
@@ -31,6 +38,8 @@ function initGame() {
   console.log('🎮 GAME INITIALIZATION STARTED');
   console.log('📦 VERSION: 2.0.2 - Debug Version');
   console.log('='.repeat(80));
+
+  const eventBus = new EventBus();
 
   // Get container elements
   const container = document.getElementById('canvas-container');
@@ -42,6 +51,7 @@ function initGame() {
   const minimapSizeValue = document.getElementById('minimap-size-value');
   const minimapZoomSlider = document.getElementById('minimap-zoom');
   const minimapZoomValue = document.getElementById('minimap-zoom-value');
+  const minimapResetButton = document.getElementById('minimap-reset');
   const levelLabel = document.getElementById('level-label');
   const levelPrevBtn = document.getElementById('level-prev');
   const levelNextBtn = document.getElementById('level-next');
@@ -67,10 +77,87 @@ function initGame() {
   let missionPoints = [];
   let exitPoint = null;
   let autopilot = null;
+  let pickupManager = null;
+  let spawnDirector = null;
   let levelLoading = Promise.resolve();
   let lastOutcome = null;
   let lastRunStats = null;
   let minimapHidden = false;
+
+  // Auto-advance / auto-restart after game over
+  const AUTO_GAMEOVER_DELAY_MS = 3000;
+  let autoGameOverTimer = null;
+  let autoGameOverInterval = null;
+  let autoGameOverCancelUnsubs = [];
+
+  function setGameOverAutoText(text) {
+    const el = document.getElementById('game-over-auto');
+    if (!el) return;
+    el.textContent = text || '';
+  }
+
+  function clearAutoGameOverTimer() {
+    if (autoGameOverTimer) {
+      clearTimeout(autoGameOverTimer);
+      autoGameOverTimer = null;
+    }
+    if (autoGameOverInterval) {
+      clearInterval(autoGameOverInterval);
+      autoGameOverInterval = null;
+    }
+    for (const off of autoGameOverCancelUnsubs) {
+      try { off?.(); } catch { /* ignore */ }
+    }
+    autoGameOverCancelUnsubs = [];
+    setGameOverAutoText('');
+  }
+
+  function startAutoGameOverCountdown(mode, onDone) {
+    clearAutoGameOverTimer();
+    const startedAt = performance.now();
+    const deadline = startedAt + AUTO_GAMEOVER_DELAY_MS;
+
+    const verb = mode === 'win' ? 'Next level' : 'Restarting';
+    let lastSeconds = null;
+
+    const updateText = () => {
+      const remainingMs = Math.max(0, deadline - performance.now());
+      const seconds = Math.max(0, Math.ceil(remainingMs / 1000));
+      if (seconds === lastSeconds) return;
+      lastSeconds = seconds;
+      setGameOverAutoText(`${verb} in ${seconds}… (press any key/mouse to cancel)`);
+    };
+
+    const cancel = () => {
+      clearAutoGameOverTimer();
+      setGameOverAutoText('Auto action canceled.');
+    };
+
+    const listenOnce = (eventName) => {
+      const handler = () => cancel();
+      window.addEventListener(eventName, handler, { capture: true, passive: true, once: true });
+      autoGameOverCancelUnsubs.push(() => window.removeEventListener(eventName, handler, { capture: true }));
+    };
+
+    listenOnce('keydown');
+    listenOnce('mousedown');
+    listenOnce('mousemove');
+    listenOnce('touchstart');
+
+    updateText();
+    autoGameOverInterval = setInterval(updateText, 50);
+
+    autoGameOverTimer = setTimeout(() => {
+      // Only proceed if the overlay is still visible (no manual navigation).
+      const overlay = document.getElementById('game-over');
+      if (!overlay || overlay.classList.contains('hidden')) {
+        clearAutoGameOverTimer();
+        return;
+      }
+      clearAutoGameOverTimer();
+      if (typeof onDone === 'function') onDone();
+    }, AUTO_GAMEOVER_DELAY_MS);
+  }
 
   function updateLevelUI() {
     const label = `${levelConfig.name || 'Endless'} (L${currentLevelIndex + 1})`;
@@ -88,7 +175,7 @@ function initGame() {
       nextLevelButton.style.display = isWin ? 'inline-block' : 'none';
     }
     if (restartButton) {
-      restartButton.textContent = isWin ? '重玩本关' : '重新开始';
+      restartButton.textContent = isWin ? 'Replay Level' : 'Restart';
     }
   }
 
@@ -111,6 +198,8 @@ function initGame() {
   const aspect = container.clientWidth / container.clientHeight;
   const camera = new FirstPersonCamera(aspect);
   sceneManager.setCamera(camera);
+  // Add camera to scene so first-person attachments (weapon view) can render.
+  sceneManager.getScene().add(camera.getCamera());
   console.log('Camera created');
 
   // Create audio manager (requires camera for AudioListener)
@@ -126,18 +215,93 @@ function initGame() {
   console.log('Creating minimap with canvas:', minimapCanvas);
   const minimap = new Minimap(minimapCanvas, worldState);
   console.log('Minimap created');
+
+  const MINIMAP_STORAGE_SIZE = 'maze:minimap:size';
+  const MINIMAP_STORAGE_ZOOM = 'maze:minimap:zoom';
+  const DEFAULT_MINIMAP_SIZE = 240;
+  const DEFAULT_MINIMAP_ZOOM = 1.1;
+  const MINIMAP_SIZE_MIN = 140;
+  const MINIMAP_SIZE_MAX = 320;
+  const MINIMAP_ZOOM_MIN = 1.0;
+  const MINIMAP_ZOOM_MAX = 3.0;
+
+  const safeStorageGet = (key) => {
+    try {
+      return window.localStorage?.getItem?.(key) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const safeStorageSet = (key, value) => {
+    try {
+      window.localStorage?.setItem?.(key, String(value));
+    } catch {
+      // Ignore (privacy mode / blocked storage)
+    }
+  };
+  const safeStorageRemove = (key) => {
+    try {
+      window.localStorage?.removeItem?.(key);
+    } catch {
+      // Ignore
+    }
+  };
+
+  function clampMinimapSize(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    return Math.max(MINIMAP_SIZE_MIN, Math.min(MINIMAP_SIZE_MAX, Math.round(n)));
+  }
+
+  function clampMinimapZoom(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    return Math.max(MINIMAP_ZOOM_MIN, Math.min(MINIMAP_ZOOM_MAX, n));
+  }
+
+  // Restore minimap size/zoom from storage (applied before first render).
+  let initialMinimapSize = minimapCanvas?.width || DEFAULT_MINIMAP_SIZE;
+  const storedSize = clampMinimapSize(parseInt(safeStorageGet(MINIMAP_STORAGE_SIZE) || '', 10));
+  initialMinimapSize = storedSize ?? clampMinimapSize(initialMinimapSize) ?? DEFAULT_MINIMAP_SIZE;
+
+  let initialMinimapZoom = DEFAULT_MINIMAP_ZOOM;
+  const storedZoom = clampMinimapZoom(parseFloat(safeStorageGet(MINIMAP_STORAGE_ZOOM) || ''));
+  initialMinimapZoom = storedZoom ?? DEFAULT_MINIMAP_ZOOM;
+
+  if (minimapCanvas) {
+    minimapCanvas.width = initialMinimapSize;
+    minimapCanvas.height = initialMinimapSize;
+    minimapCanvas.style.width = `${initialMinimapSize}px`;
+    minimapCanvas.style.height = `${initialMinimapSize}px`;
+    minimap.resize(initialMinimapSize);
+    minimap.setZoom(initialMinimapZoom);
+  }
+
+  function ensureMinimapVisibleForAdjust() {
+    if (!minimapCanvas) return;
+    if (!minimapHidden) return;
+    minimapHidden = false;
+    minimapCanvas.style.display = 'block';
+    const controls = document.getElementById('minimap-controls');
+    if (controls) controls.style.display = 'block';
+    if (minimapToggle) minimapToggle.textContent = 'Hide';
+  }
+
   function applyMinimapSize(size) {
-    const clamped = Math.max(140, Math.min(320, size));
+    ensureMinimapVisibleForAdjust();
+    const clamped = clampMinimapSize(size) ?? clampMinimapSize(minimapCanvas?.width) ?? DEFAULT_MINIMAP_SIZE;
     minimapCanvas.width = clamped;
     minimapCanvas.height = clamped;
     minimapCanvas.style.width = `${clamped}px`;
     minimapCanvas.style.height = `${clamped}px`;
     minimap.resize(clamped);
+    safeStorageSet(MINIMAP_STORAGE_SIZE, clamped);
     if (minimapZoomSlider) {
-      const zoom = parseFloat(minimapZoomSlider.value) || minimap.zoom || 1;
+      const zoom = clampMinimapZoom(parseFloat(minimapZoomSlider.value)) ?? minimap.zoom ?? DEFAULT_MINIMAP_ZOOM;
+      minimapZoomSlider.value = String(zoom);
       minimap.setZoom(zoom);
     }
-    minimapSizeValue.textContent = `${clamped}px`;
+    if (minimapSizeValue) minimapSizeValue.textContent = `${clamped}px`;
     minimap.render(
       player.getGridPosition(),
       monsterManager?.getMonsterPositions() || [],
@@ -151,7 +315,7 @@ function initGame() {
   console.log('Input handler created');
 
   // Create game state manager
-  const gameState = new GameState();
+  const gameState = new GameState(eventBus);
   console.log('🎮 Game state created');
 
   // Create player controller (with gameState and audioManager)
@@ -165,24 +329,8 @@ function initGame() {
   console.log('🚪 Exit point created at grid:', exitGridPos);
 
   // Create monster manager
-  const monsterManager = new MonsterManager(sceneManager.getScene(), worldState, player);
+  const monsterManager = new MonsterManager(sceneManager.getScene(), worldState, player, eventBus);
   console.log('👹 Monster manager created');
-
-  // Load monsters with mixed types
-  console.log('🎮 Loading monsters with mixed types...');
-  const MONSTER_COUNT = levelConfig?.monsters?.count ?? CONFIG.MONSTER_COUNT;
-  console.log(`📊 Spawning ${MONSTER_COUNT} monsters`);
-
-  // Initialize monsters with mixed types (Hunter, Wanderer, Sentinel, etc.)
-  monsterManager.initializeForLevel(levelConfig)
-    .then(() => {
-      console.log(`✅ ${MONSTER_COUNT} monsters initialized successfully!`);
-      console.log(`   Monster manager has ${monsterManager.getMonsters().length} monsters`);
-    })
-    .catch(err => {
-      console.error('❌ Failed to initialize monsters:', err);
-      console.error('   Error details:', err.message);
-    });
 
   // Create mission points
   missionPoints = worldState.getMissionPoints().map(pos => {
@@ -206,7 +354,17 @@ function initGame() {
   const projectileManager = new ProjectileManager(
     sceneManager.getScene(),
     worldState,
-    monsterManager
+    monsterManager,
+    player,
+    eventBus
+  );
+
+  monsterManager.setProjectileManager(projectileManager);
+
+  const weaponView = new WeaponView(
+    sceneManager.getScene(),
+    camera,
+    player
   );
 
   const gun = new Gun(
@@ -214,8 +372,35 @@ function initGame() {
     camera,
     input,
     projectileManager,
-    audioManager
+    audioManager,
+    weaponView,
+    eventBus
   );
+  autopilot?.setGun?.(gun);
+
+  const uiManager = new UIManager({
+    eventBus,
+    player,
+    worldState,
+    gameState,
+    gun
+  });
+
+  pickupManager = new PickupManager(sceneManager.getScene(), player, gameState, gun, audioManager, eventBus);
+  spawnDirector = new SpawnDirector(monsterManager, player, pickupManager, eventBus);
+  spawnDirector.setGameState(gameState);
+  spawnDirector.setGun(gun);
+  levelLoading = spawnDirector.startLevel(levelConfig);
+
+  // Combat resolution (damage/explosions) driven by EventBus.
+  const combatSystem = new CombatSystem({
+    eventBus,
+    monsterManager,
+    projectileManager,
+    playerRef: player,
+    gameState
+  });
+  void combatSystem;
 
   // Create game loop with all systems（autopilot 實體可後續更新）
   let gameLoop = new GameLoop(
@@ -230,8 +415,14 @@ function initGame() {
     missionPoints,
     autopilot,
     projectileManager,
-    gun
+    gun,
+    spawnDirector,
+    uiManager
   );
+
+  // Combat feedback (hit marker + light shake/flash) driven by EventBus
+  const feedbackSystem = new FeedbackSystem(eventBus, audioManager, gameLoop?.visualEffects || null);
+  void feedbackSystem;
 
   // Render initial minimap (before game starts)
   console.log('🗺️ Rendering initial minimap...');
@@ -245,9 +436,26 @@ function initGame() {
   updateLevelUI();
 
   // Minimap controls
+  function applyMinimapZoom(zoom) {
+    ensureMinimapVisibleForAdjust();
+    const clamped = clampMinimapZoom(zoom) ?? minimap.zoom ?? DEFAULT_MINIMAP_ZOOM;
+    minimap.setZoom(clamped);
+    safeStorageSet(MINIMAP_STORAGE_ZOOM, clamped);
+    if (minimapZoomSlider) minimapZoomSlider.value = String(clamped);
+    if (minimapZoomValue) minimapZoomValue.textContent = `${clamped.toFixed(1)}x`;
+    minimap.render(
+      player.getGridPosition(),
+      monsterManager.getMonsterPositions(),
+      exitPoint?.getGridPosition?.() || null,
+      missionPoints.map(mp => mp.getGridPosition())
+    );
+    return clamped;
+  }
+
   if (minimapSizeSlider) {
-    minimapSizeSlider.value = minimapCanvas.width;
-    minimapSizeValue.textContent = `${minimapCanvas.width}px`;
+    const initSize = clampMinimapSize(minimapCanvas.width) ?? DEFAULT_MINIMAP_SIZE;
+    minimapSizeSlider.value = String(initSize);
+    if (minimapSizeValue) minimapSizeValue.textContent = `${initSize}px`;
     minimapSizeSlider.addEventListener('input', (e) => {
       const size = parseInt(e.target.value, 10);
       applyMinimapSize(size);
@@ -255,10 +463,29 @@ function initGame() {
   }
 
   if (minimapZoomSlider) {
+    minimapZoomSlider.value = String(clampMinimapZoom(initialMinimapZoom) ?? DEFAULT_MINIMAP_ZOOM);
+    if (minimapZoomValue) {
+      const z = clampMinimapZoom(parseFloat(minimapZoomSlider.value)) ?? DEFAULT_MINIMAP_ZOOM;
+      minimapZoomValue.textContent = `${z.toFixed(1)}x`;
+    }
     minimapZoomSlider.addEventListener('input', (e) => {
-      const zoom = parseFloat(e.target.value) || 1.0;
-      minimap.setZoom(zoom);
-      minimapZoomValue.textContent = `${zoom.toFixed(1)}x`;
+      applyMinimapZoom(parseFloat(e.target.value));
+    });
+    // Ensure runtime zoom matches the UI value (including restored storage).
+    applyMinimapZoom(parseFloat(minimapZoomSlider.value));
+  }
+
+  if (minimapResetButton) {
+    minimapResetButton.addEventListener('click', () => {
+      safeStorageRemove(MINIMAP_STORAGE_SIZE);
+      safeStorageRemove(MINIMAP_STORAGE_ZOOM);
+
+      if (minimapSizeSlider) minimapSizeSlider.value = String(DEFAULT_MINIMAP_SIZE);
+      if (minimapZoomSlider) minimapZoomSlider.value = String(DEFAULT_MINIMAP_ZOOM);
+
+      applyMinimapSize(DEFAULT_MINIMAP_SIZE);
+      applyMinimapZoom(DEFAULT_MINIMAP_ZOOM);
+
       minimap.render(
         player.getGridPosition(),
         monsterManager.getMonsterPositions(),
@@ -266,8 +493,6 @@ function initGame() {
         missionPoints.map(mp => mp.getGridPosition())
       );
     });
-    minimapZoomValue.textContent = `${parseFloat(minimapZoomSlider.value || '1.4').toFixed(1)}x`;
-    minimap.setZoom(parseFloat(minimapZoomSlider.value || '1.4'));
   }
 
   if (minimapToggle) {
@@ -288,6 +513,7 @@ function initGame() {
    */
   async function loadLevel(levelIndex, { startLoop = false, resetGameState = true } = {}) {
     levelLoading = (async () => {
+      clearAutoGameOverTimer();
       currentLevelIndex = Math.max(0, levelIndex);
       levelConfig = levelDirector.getLevelConfig(currentLevelIndex, lastRunStats, lastOutcome);
       console.log(`🔄 Loading level: ${levelConfig.name}`);
@@ -332,10 +558,11 @@ function initGame() {
 
       // 重置玩家位置
       const spawnPoint = worldState.getSpawnPoint();
+      const tileSize = CONFIG.TILE_SIZE || 1;
       player.setPosition(
-        spawnPoint.x * CONFIG.TILE_SIZE,
+        spawnPoint.x * tileSize + tileSize / 2,
         CONFIG.PLAYER_HEIGHT,
-        spawnPoint.y * CONFIG.TILE_SIZE
+        spawnPoint.y * tileSize + tileSize / 2
       );
 
       // 重置遊戲狀態
@@ -350,7 +577,12 @@ function initGame() {
 
       // 重建怪物
       monsterManager.clear();
-      await monsterManager.initializeForLevel(levelConfig);
+      if (spawnDirector) {
+        await spawnDirector.startLevel(levelConfig);
+      } else {
+        await monsterManager.initializeForLevel(levelConfig);
+      }
+      monsterManager.setProjectileManager(projectileManager);
 
       // 重建自動駕駛
       autopilot = new AutoPilot(
@@ -361,14 +593,17 @@ function initGame() {
         player,
         levelConfig
       );
+      autopilot?.setGun?.(gun);
       gameLoop.autopilot = autopilot;
       gameLoop.autopilotActive = CONFIG.AUTOPILOT_ENABLED;
       projectileManager.worldState = worldState;
       projectileManager.monsterManager = monsterManager;
+      projectileManager.setPlayerRef?.(player);
       projectileManager.reset?.();
       gameLoop.projectileManager = projectileManager;
       gameLoop.gun = gun;
-      gun.cooldown = 0;
+      gameLoop.spawnDirector = spawnDirector;
+      gun.reset?.();
 
       // 更新 minimap
       minimap.updateScale();
@@ -393,11 +628,19 @@ function initGame() {
     lastOutcome = 'win';
     lastRunStats = gameState.getStats();
     applyGameOverButtons(true);
+    startAutoGameOverCountdown('win', () => {
+      if (!gameState?.gameOver || !gameState?.hasWon) return;
+      void loadLevel(currentLevelIndex + 1, { startLoop: true, resetGameState: true });
+    });
   };
   gameLoop.onLose = () => {
     lastOutcome = 'lose';
     lastRunStats = gameState.getStats();
     applyGameOverButtons(false);
+    startAutoGameOverCountdown('lose', () => {
+      if (!gameState?.gameOver || !gameState?.hasLost) return;
+      void loadLevel(currentLevelIndex, { startLoop: true, resetGameState: true });
+    });
   };
 
   // Level control UI
@@ -510,6 +753,7 @@ function initGame() {
 
   restartButton.addEventListener('click', async () => {
     console.log('🔄 Restarting game...');
+    clearAutoGameOverTimer();
 
     // Hide game over screen
     document.getElementById('game-over').classList.add('hidden');
@@ -522,6 +766,7 @@ function initGame() {
   if (nextLevelButton) {
     nextLevelButton.addEventListener('click', async () => {
       console.log('⏭️ Proceeding to next level...');
+      clearAutoGameOverTimer();
       document.getElementById('game-over').classList.add('hidden');
       lastOutcome = null;
       await loadLevel(currentLevelIndex + 1, { startLoop: true, resetGameState: true });
@@ -531,6 +776,7 @@ function initGame() {
 
   menuButton.addEventListener('click', () => {
     console.log('📋 Returning to menu...');
+    clearAutoGameOverTimer();
 
     // Hide game over screen
     document.getElementById('game-over').classList.add('hidden');
@@ -548,7 +794,29 @@ function initGame() {
   });
 
   // Setup settings panel
-  setupSettingsPanel(sceneManager, camera, input, worldState, player, gameLoop, minimap, gameState);
+  setupSettingsPanel(sceneManager, camera, input, worldState, player, gameLoop, minimap, gameState, {
+    regenerateMap: async () => loadLevel(currentLevelIndex, { startLoop: true, resetGameState: true }),
+    respawnEnemies: async () => {
+      const sd = spawnDirector || gameLoop?.spawnDirector || null;
+      const mm = monsterManager || gameLoop?.monsterManager || null;
+      const cfg = levelConfig || mm?.levelConfig || sd?.levelConfig || null;
+
+      if (!mm) return;
+
+      const prevEnabled = sd?.enabled ?? true;
+      sd?.setEnabled?.(false);
+      mm.clear();
+
+      if (sd?.startLevel && cfg) {
+        await sd.startLevel(cfg);
+      } else if (mm.initializeForLevel) {
+        await mm.initializeForLevel(cfg);
+      }
+
+      sd?.setEnabled?.(prevEnabled);
+    },
+    weaponView
+  });
 
   // Setup debug panel
   setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, monsterManager, sceneManager);
@@ -570,15 +838,22 @@ function initGame() {
 /**
  * Setup settings panel controls
  */
-function setupSettingsPanel(sceneManager, camera, input, worldState, player, gameLoop, minimap, gameState) {
-  const toggleButton = document.getElementById('toggle-settings');
-  const settingsPanel = document.getElementById('settings-panel');
-  const autopilotToggle = document.getElementById('autopilot-toggle');
-  const autopilotDelaySlider = document.getElementById('autopilot-delay');
-  const autopilotDelayValue = document.getElementById('autopilot-delay-value');
+	function setupSettingsPanel(sceneManager, camera, input, worldState, player, gameLoop, minimap, gameState, hooks = {}) {
+	  const toggleButton = document.getElementById('toggle-settings');
+	  const settingsPanel = document.getElementById('settings-panel');
+	  const autopilotToggle = document.getElementById('autopilot-toggle');
+	  const autopilotDelaySlider = document.getElementById('autopilot-delay');
+	  const autopilotDelayValue = document.getElementById('autopilot-delay-value');
+	  const autopilotCombatToggle = document.getElementById('autopilot-combat-toggle');
+	  const autopilotFireRangeSlider = document.getElementById('autopilot-fire-range');
+	  const autopilotFireRangeValue = document.getElementById('autopilot-fire-range-value');
+	  const autopilotFireFovSlider = document.getElementById('autopilot-fire-fov');
+	  const autopilotFireFovValue = document.getElementById('autopilot-fire-fov-value');
+	  const autopilotTurnSpeedSlider = document.getElementById('autopilot-turn-speed');
+	  const autopilotTurnSpeedValue = document.getElementById('autopilot-turn-speed-value');
 
-  const speedSlider = document.getElementById('speed-slider');
-  const speedValue = document.getElementById('speed-value');
+	  const speedSlider = document.getElementById('speed-slider');
+	  const speedValue = document.getElementById('speed-value');
 
   const sensitivitySlider = document.getElementById('sensitivity-slider');
   const sensitivityValue = document.getElementById('sensitivity-value');
@@ -594,14 +869,43 @@ function setupSettingsPanel(sceneManager, camera, input, worldState, player, gam
   const mazeSizeValue = document.getElementById('maze-size-value');
   const roomDensitySlider = document.getElementById('room-density-slider');
   const roomDensityValue = document.getElementById('room-density-value');
-  const missionCountSlider = document.getElementById('mission-count-slider');
-  const missionCountValue = document.getElementById('mission-count-value');
-  const lowPerfToggle = document.getElementById('low-perf-toggle');
+	  const missionCountSlider = document.getElementById('mission-count-slider');
+	  const missionCountValue = document.getElementById('mission-count-value');
+	  const lowPerfToggle = document.getElementById('low-perf-toggle');
+	  const obstacleMapToggle = document.getElementById('obstacle-map-toggle');
+	  const propObstacleChanceSlider = document.getElementById('prop-obstacle-chance-slider');
+	  const propObstacleChanceValue = document.getElementById('prop-obstacle-chance-value');
+	  const propObstacleMarginSlider = document.getElementById('prop-obstacle-margin-slider');
+	  const propObstacleMarginValue = document.getElementById('prop-obstacle-margin-value');
+	  const rebuildObstaclesButton = document.getElementById('rebuild-obstacles');
 
-  let settingsVisible = false;
+  // Advanced settings
+  const aiDifficultySlider = document.getElementById('ai-difficulty-slider');
+  const aiDifficultyValue = document.getElementById('ai-difficulty-value');
+  const monsterRangedToggle = document.getElementById('monster-ranged-toggle');
+  const monsterModelsToggle = document.getElementById('monster-models-toggle');
+  const respawnEnemiesButton = document.getElementById('respawn-enemies');
 
-  // Toggle settings panel
-  function toggleSettings() {
+  const weaponViewToggle = document.getElementById('weapon-view-toggle');
+  const crosshairToggle = document.getElementById('crosshair-toggle');
+  const recoilSlider = document.getElementById('weapon-recoil-slider');
+  const recoilValue = document.getElementById('weapon-recoil-value');
+
+  const poolFxToggle = document.getElementById('pool-fx-toggle');
+  const hdrToggle = document.getElementById('hdr-toggle');
+  const crosshairEl = document.getElementById('crosshair');
+
+	  let settingsVisible = false;
+
+	  function rebuildObstacles() {
+	    if (!worldState?.applyEnvironmentObstacles || !worldState?.applyPropObstacles) return;
+	    worldState.applyEnvironmentObstacles(null);
+	    worldState.applyPropObstacles(null);
+	    sceneManager?.buildWorldFromGrid?.(worldState);
+	  }
+
+	  // Toggle settings panel
+	  function toggleSettings() {
     settingsVisible = !settingsVisible;
     if (settingsVisible) {
       settingsPanel.classList.remove('hidden');
@@ -683,13 +987,43 @@ function setupSettingsPanel(sceneManager, camera, input, worldState, player, gam
     CONFIG.MISSION_POINT_COUNT = value;
   });
 
-  lowPerfToggle.addEventListener('change', (e) => {
-    CONFIG.LOW_PERF_MODE = e.target.checked;
-  });
+	  lowPerfToggle.addEventListener('change', (e) => {
+	    CONFIG.LOW_PERF_MODE = e.target.checked;
+	  });
 
-  autopilotToggle.addEventListener('change', (e) => {
-    CONFIG.AUTOPILOT_ENABLED = e.target.checked;
-  });
+	  if (obstacleMapToggle) {
+	    obstacleMapToggle.addEventListener('change', (e) => {
+	      const enabled = e.target.checked;
+	      CONFIG.MINIMAP_SHOW_OBSTACLES = enabled;
+	      minimap?.setShowObstacles?.(enabled);
+	    });
+	  }
+
+	  if (propObstacleChanceSlider && propObstacleChanceValue) {
+	    propObstacleChanceSlider.addEventListener('input', (e) => {
+	      const value = parseFloat(e.target.value);
+	      propObstacleChanceValue.textContent = value.toFixed(2);
+	      CONFIG.PROP_OBSTACLE_ROOM_CHANCE = value;
+	    });
+	    propObstacleChanceSlider.addEventListener('change', () => rebuildObstacles());
+	  }
+
+	  if (propObstacleMarginSlider && propObstacleMarginValue) {
+	    propObstacleMarginSlider.addEventListener('input', (e) => {
+	      const value = parseInt(e.target.value, 10);
+	      propObstacleMarginValue.textContent = String(value);
+	      CONFIG.PROP_OBSTACLE_MARGIN = value;
+	    });
+	    propObstacleMarginSlider.addEventListener('change', () => rebuildObstacles());
+	  }
+
+	  if (rebuildObstaclesButton) {
+	    rebuildObstaclesButton.addEventListener('click', () => rebuildObstacles());
+	  }
+
+	  autopilotToggle.addEventListener('change', (e) => {
+	    CONFIG.AUTOPILOT_ENABLED = e.target.checked;
+	  });
 
   autopilotDelaySlider.addEventListener('input', (e) => {
     const value = parseFloat(e.target.value);
@@ -697,24 +1031,198 @@ function setupSettingsPanel(sceneManager, camera, input, worldState, player, gam
     CONFIG.AUTOPILOT_DELAY = value;
   });
 
+  // Autopilot combat controls
+  if (autopilotCombatToggle) {
+    autopilotCombatToggle.addEventListener('change', (e) => {
+      CONFIG.AUTOPILOT_COMBAT_ENABLED = e.target.checked;
+    });
+  }
+
+  if (autopilotFireRangeSlider && autopilotFireRangeValue) {
+    autopilotFireRangeSlider.addEventListener('input', (e) => {
+      const value = parseInt(e.target.value, 10);
+      autopilotFireRangeValue.textContent = String(value);
+      CONFIG.AUTOPILOT_COMBAT_FIRE_RANGE_TILES = value;
+    });
+  }
+
+  if (autopilotFireFovSlider && autopilotFireFovValue) {
+    autopilotFireFovSlider.addEventListener('input', (e) => {
+      const value = parseInt(e.target.value, 10);
+      autopilotFireFovValue.textContent = String(value);
+      CONFIG.AUTOPILOT_COMBAT_FOV_DEG = value;
+    });
+  }
+
+  if (autopilotTurnSpeedSlider && autopilotTurnSpeedValue) {
+    autopilotTurnSpeedSlider.addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      autopilotTurnSpeedValue.textContent = value.toFixed(1);
+      CONFIG.AUTOPILOT_TURN_SPEED = value;
+    });
+  }
+
   // Regenerate map button
   regenerateButton.addEventListener('click', async () => {
     console.log('🔄 Regenerating map...');
-    await loadLevel(currentLevelIndex, { startLoop: true, resetGameState: true });
+    if (typeof hooks.regenerateMap === 'function') {
+      await hooks.regenerateMap();
+    } else {
+      console.warn('⚠️ regenerateMap hook not available');
+    }
     console.log('✅ Map regenerated!');
   });
 
-  // Initialize UI from CONFIG
-  mazeSizeSlider.value = CONFIG.MAZE_WIDTH;
-  mazeSizeValue.textContent = CONFIG.MAZE_WIDTH;
-  roomDensitySlider.value = CONFIG.ROOM_DENSITY;
-  roomDensityValue.textContent = CONFIG.ROOM_DENSITY.toFixed(1);
-  missionCountSlider.value = CONFIG.MISSION_POINT_COUNT;
-  missionCountValue.textContent = CONFIG.MISSION_POINT_COUNT;
-  lowPerfToggle.checked = CONFIG.LOW_PERF_MODE;
-  autopilotToggle.checked = CONFIG.AUTOPILOT_ENABLED || false;
-  autopilotDelaySlider.value = CONFIG.AUTOPILOT_DELAY || 2;
-  autopilotDelayValue.textContent = (CONFIG.AUTOPILOT_DELAY || 2).toFixed(1);
+  // AI difficulty
+  if (aiDifficultySlider && aiDifficultyValue) {
+    aiDifficultySlider.addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      aiDifficultyValue.textContent = value.toFixed(1);
+      CONFIG.AI_DIFFICULTY = value;
+    });
+  }
+
+  if (monsterRangedToggle) {
+    monsterRangedToggle.addEventListener('change', (e) => {
+      CONFIG.AI_RANGED_GLOBAL_ENABLED = e.target.checked;
+    });
+  }
+
+  if (monsterModelsToggle) {
+    monsterModelsToggle.addEventListener('change', (e) => {
+      CONFIG.MONSTER_USE_ASSET_MODELS = e.target.checked;
+    });
+  }
+
+  if (respawnEnemiesButton) {
+    respawnEnemiesButton.addEventListener('click', async () => {
+      if (typeof hooks.respawnEnemies === 'function') {
+        await hooks.respawnEnemies();
+      } else {
+        console.warn('⚠️ respawnEnemies hook not available');
+      }
+    });
+  }
+
+  // Weapon
+  if (weaponViewToggle) {
+    weaponViewToggle.addEventListener('change', (e) => {
+      const enabled = e.target.checked;
+      CONFIG.PLAYER_WEAPON_VIEW_ENABLED = enabled;
+      hooks.weaponView?.setEnabled?.(enabled);
+    });
+  }
+
+  if (crosshairToggle && crosshairEl) {
+    crosshairToggle.addEventListener('change', (e) => {
+      const enabled = e.target.checked;
+      CONFIG.PLAYER_CROSSHAIR_ENABLED = enabled;
+      crosshairEl.classList.toggle('hidden', !enabled);
+    });
+  }
+
+  if (recoilSlider && recoilValue) {
+    recoilSlider.addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      recoilValue.textContent = value.toFixed(1);
+      CONFIG.PLAYER_WEAPON_RECOIL = value;
+    });
+  }
+
+  // Pool / env
+  if (poolFxToggle) {
+    poolFxToggle.addEventListener('change', (e) => {
+      CONFIG.POOL_FX_ENABLED = e.target.checked;
+      sceneManager.buildWorldFromGrid(worldState);
+    });
+  }
+
+  if (hdrToggle) {
+    hdrToggle.addEventListener('change', (e) => {
+      CONFIG.ENVIRONMENT_HDR_ENABLED = e.target.checked;
+      if (sceneManager.refreshEnvironmentMap) {
+        sceneManager.refreshEnvironmentMap();
+      }
+      sceneManager.buildWorldFromGrid(worldState);
+    });
+  }
+
+	  // Initialize UI from CONFIG
+	  mazeSizeSlider.value = CONFIG.MAZE_WIDTH;
+	  mazeSizeValue.textContent = CONFIG.MAZE_WIDTH;
+	  roomDensitySlider.value = CONFIG.ROOM_DENSITY;
+	  roomDensityValue.textContent = CONFIG.ROOM_DENSITY.toFixed(1);
+	  missionCountSlider.value = CONFIG.MISSION_POINT_COUNT;
+	  missionCountValue.textContent = CONFIG.MISSION_POINT_COUNT;
+	  lowPerfToggle.checked = CONFIG.LOW_PERF_MODE;
+	  if (obstacleMapToggle) {
+	    obstacleMapToggle.checked = CONFIG.MINIMAP_SHOW_OBSTACLES ?? false;
+	    minimap?.setShowObstacles?.(obstacleMapToggle.checked);
+	  }
+	  if (propObstacleChanceSlider && propObstacleChanceValue) {
+	    const value = Number.isFinite(CONFIG.PROP_OBSTACLE_ROOM_CHANCE) ? CONFIG.PROP_OBSTACLE_ROOM_CHANCE : 0.12;
+	    propObstacleChanceSlider.value = String(value);
+	    propObstacleChanceValue.textContent = Number(value).toFixed(2);
+	  }
+	  if (propObstacleMarginSlider && propObstacleMarginValue) {
+	    const value = Number.isFinite(CONFIG.PROP_OBSTACLE_MARGIN) ? CONFIG.PROP_OBSTACLE_MARGIN : 1;
+	    propObstacleMarginSlider.value = String(value);
+	    propObstacleMarginValue.textContent = String(value);
+	  }
+	  autopilotToggle.checked = CONFIG.AUTOPILOT_ENABLED ?? false;
+	  const autopilotDelay = CONFIG.AUTOPILOT_DELAY ?? 2;
+	  autopilotDelaySlider.value = autopilotDelay;
+	  autopilotDelayValue.textContent = autopilotDelay.toFixed(1);
+
+  if (autopilotCombatToggle) {
+    autopilotCombatToggle.checked = CONFIG.AUTOPILOT_COMBAT_ENABLED ?? true;
+  }
+  if (autopilotFireRangeSlider && autopilotFireRangeValue) {
+    const value = CONFIG.AUTOPILOT_COMBAT_FIRE_RANGE_TILES ?? 12;
+    autopilotFireRangeSlider.value = value;
+    autopilotFireRangeValue.textContent = String(value);
+  }
+  if (autopilotFireFovSlider && autopilotFireFovValue) {
+    const value = CONFIG.AUTOPILOT_COMBAT_FOV_DEG ?? 110;
+    autopilotFireFovSlider.value = value;
+    autopilotFireFovValue.textContent = String(value);
+  }
+  if (autopilotTurnSpeedSlider && autopilotTurnSpeedValue) {
+    const value = CONFIG.AUTOPILOT_TURN_SPEED ?? 3.0;
+    autopilotTurnSpeedSlider.value = value;
+    autopilotTurnSpeedValue.textContent = value.toFixed(1);
+  }
+
+  // Init advanced UI from CONFIG
+  if (aiDifficultySlider && aiDifficultyValue) {
+    aiDifficultySlider.value = CONFIG.AI_DIFFICULTY ?? 1.0;
+    aiDifficultyValue.textContent = (CONFIG.AI_DIFFICULTY ?? 1.0).toFixed(1);
+  }
+  if (monsterRangedToggle) {
+    monsterRangedToggle.checked = CONFIG.AI_RANGED_GLOBAL_ENABLED ?? true;
+  }
+  if (monsterModelsToggle) {
+    monsterModelsToggle.checked = CONFIG.MONSTER_USE_ASSET_MODELS ?? true;
+  }
+
+  if (weaponViewToggle) {
+    weaponViewToggle.checked = CONFIG.PLAYER_WEAPON_VIEW_ENABLED ?? true;
+  }
+  if (crosshairToggle && crosshairEl) {
+    crosshairToggle.checked = CONFIG.PLAYER_CROSSHAIR_ENABLED ?? true;
+    crosshairEl.classList.toggle('hidden', !(CONFIG.PLAYER_CROSSHAIR_ENABLED ?? true));
+  }
+  if (recoilSlider && recoilValue) {
+    recoilSlider.value = CONFIG.PLAYER_WEAPON_RECOIL ?? 1.0;
+    recoilValue.textContent = (CONFIG.PLAYER_WEAPON_RECOIL ?? 1.0).toFixed(1);
+  }
+
+  if (poolFxToggle) {
+    poolFxToggle.checked = CONFIG.POOL_FX_ENABLED ?? true;
+  }
+  if (hdrToggle) {
+    hdrToggle.checked = CONFIG.ENVIRONMENT_HDR_ENABLED ?? true;
+  }
 }
 
 /**
@@ -779,19 +1287,31 @@ function setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, mon
   // Teleport buttons
   document.getElementById('debug-tp-spawn').addEventListener('click', () => {
     const spawn = worldState.getSpawnPoint();
-    player.setPosition(spawn.x * CONFIG.TILE_SIZE, CONFIG.PLAYER_HEIGHT, spawn.y * CONFIG.TILE_SIZE);
+    player.setPosition(
+      spawn.x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
+      CONFIG.PLAYER_HEIGHT,
+      spawn.y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
+    );
     console.log('🔧 DEBUG: Teleported to spawn');
   });
 
   document.getElementById('debug-tp-exit').addEventListener('click', () => {
     const exit = exitPoint.getGridPosition();
-    player.setPosition(exit.x * CONFIG.TILE_SIZE, CONFIG.PLAYER_HEIGHT, exit.y * CONFIG.TILE_SIZE);
+    player.setPosition(
+      exit.x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
+      CONFIG.PLAYER_HEIGHT,
+      exit.y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
+    );
     console.log('🔧 DEBUG: Teleported to exit');
   });
 
   document.getElementById('debug-tp-random').addEventListener('click', () => {
     const random = worldState.findRandomWalkableTile();
-    player.setPosition(random.x * CONFIG.TILE_SIZE, CONFIG.PLAYER_HEIGHT, random.y * CONFIG.TILE_SIZE);
+    player.setPosition(
+      random.x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
+      CONFIG.PLAYER_HEIGHT,
+      random.y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
+    );
     console.log('🔧 DEBUG: Teleported to random location');
   });
 
@@ -799,7 +1319,11 @@ function setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, mon
     const monsters = monsterManager.getMonsters();
     if (monsters.length > 0) {
       const monsterPos = monsters[0].getGridPosition();
-      player.setPosition(monsterPos.x * CONFIG.TILE_SIZE, CONFIG.PLAYER_HEIGHT, monsterPos.y * CONFIG.TILE_SIZE);
+      player.setPosition(
+        monsterPos.x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
+        CONFIG.PLAYER_HEIGHT,
+        monsterPos.y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
+      );
       console.log('🔧 DEBUG: Teleported to monster');
     }
   });
@@ -808,7 +1332,11 @@ function setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, mon
     const x = parseInt(document.getElementById('debug-tp-x').value);
     const y = parseInt(document.getElementById('debug-tp-y').value);
     if (!isNaN(x) && !isNaN(y) && worldState.isWalkable(x, y)) {
-      player.setPosition(x * CONFIG.TILE_SIZE, CONFIG.PLAYER_HEIGHT, y * CONFIG.TILE_SIZE);
+      player.setPosition(
+        x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
+        CONFIG.PLAYER_HEIGHT,
+        y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
+      );
       console.log(`🔧 DEBUG: Teleported to (${x}, ${y})`);
     } else {
       console.warn('❌ Invalid coordinates or not walkable');
@@ -888,14 +1416,12 @@ function setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, mon
 
   // Game control buttons
   document.getElementById('debug-win').addEventListener('click', () => {
-    gameState.win('强制胜利（调试）');
-    gameLoop.showGameOver(true);
+    gameState.win('Forced win (debug)');
     console.log('🔧 DEBUG: Forced win');
   });
 
   document.getElementById('debug-lose').addEventListener('click', () => {
-    gameState.lose('强制失败（调试）');
-    gameLoop.showGameOver(false);
+    gameState.lose('Forced loss (debug)');
     console.log('🔧 DEBUG: Forced lose');
   });
 

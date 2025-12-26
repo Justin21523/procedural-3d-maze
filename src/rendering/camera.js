@@ -127,4 +127,26 @@ export class FirstPersonCamera {
     this.camera.rotation.y = this.yaw;
     this.camera.rotation.x = this.pitch;
   }
+
+  /**
+   * Directly set pitch (in radians) while keeping current yaw.
+   * Useful for autopilot/AI aiming.
+   */
+  setPitch(pitch) {
+    this.pitch = clamp(pitch, -Math.PI / 2 + 0.1, Math.PI / 2 - 0.1);
+    this.camera.rotation.order = 'YXZ';
+    this.camera.rotation.y = this.yaw;
+    this.camera.rotation.x = this.pitch;
+  }
+
+  /**
+   * Directly set yaw and pitch (in radians).
+   */
+  setYawPitch(yaw, pitch) {
+    this.yaw = yaw;
+    this.pitch = clamp(pitch, -Math.PI / 2 + 0.1, Math.PI / 2 - 0.1);
+    this.camera.rotation.order = 'YXZ';
+    this.camera.rotation.y = this.yaw;
+    this.camera.rotation.x = this.pitch;
+  }
 }

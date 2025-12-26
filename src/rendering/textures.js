@@ -8,10 +8,10 @@ import { ROOM_TYPES, getRoomConfig } from '../world/tileTypes.js';
 
 export function createNormalMap(scale = 2) {
   const size = 128;
-  const data = new Uint8Array(size * size * 3);
+  const data = new Uint8Array(size * size * 4);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const i = (y * size + x) * 3;
+      const i = (y * size + x) * 4;
       // Simple tiling noise to fake bumps
       const nx = Math.sin((x + Math.random() * 2) * 0.15) * 0.5;
       const ny = Math.cos((y + Math.random() * 2) * 0.15) * 0.5;
@@ -19,9 +19,10 @@ export function createNormalMap(scale = 2) {
       data[i] = Math.floor((nx * 0.5 + 0.5) * 255);
       data[i + 1] = Math.floor((ny * 0.5 + 0.5) * 255);
       data[i + 2] = 255;
+      data[i + 3] = 255;
     }
   }
-  const texture = new THREE.DataTexture(data, size, size, THREE.RGBFormat);
+  const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(scale, scale);

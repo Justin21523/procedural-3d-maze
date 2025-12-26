@@ -4,15 +4,19 @@
  */
 
 import { TILE_TYPES, ROOM_TYPES, isWalkable as isWalkableTile } from './tileTypes.js';
-import { CONFIG } from '../core/config.js';
+import { CONFIG, resolveMonsterCount } from '../core/config.js';
 import { randomInt } from '../utils/math.js';
 import { generateMazeDFS, analyzeMaze, createRoomMapFromRooms } from './mapGenerator.js';
+import { planPropObstacles } from './propPlanner.js';
 
 export class WorldState {
   constructor() {
     this.grid = null;
     this.roomMap = null;  // Stores room type for each tile
     this.rooms = null;    // Stores room objects
+    this.obstacleMap = null; // Additional per-tile obstacles (models / props)
+    this.propPlan = null; // Planned prop descriptors (visuals align to obstacles)
+    this.propSeed = 0;
     this.width = 0;
     this.height = 0;
     this.spawnPoint = null;
@@ -50,6 +54,11 @@ export class WorldState {
     console.log('Generating room types...');
     this.roomMap = createRoomMapFromRooms(this.grid, this.rooms);
 
+    // Apply environment obstacles (e.g., large room props like the pool model)
+    this.initializeObstacleMap();
+    this.applyEnvironmentObstacles(levelConfig);
+    this.applyPropObstacles(levelConfig);
+
     // Debug: Verify roomMap was created
     console.log('✅ WorldState roomMap created:', this.roomMap ? 'YES' : 'NO');
     if (this.roomMap) {
@@ -63,12 +72,68 @@ export class WorldState {
     // Find a random walkable spawn point for player
     this.spawnPoint = this.findRandomWalkableTile();
     // Find spawn points for monsters (future use)
-    const monsterCount = levelConfig?.monsters?.count ?? CONFIG.MONSTER_COUNT;
+    const monsterCount = resolveMonsterCount(levelConfig);
     this.monsterSpawns = this.findMonsterSpawns(monsterCount);
     // Mission points
     const missionCount = levelConfig?.missions?.missionPointCount ?? CONFIG.MISSION_POINT_COUNT;
     this.missionPoints = this.findMissionPoints(missionCount);
   
+  }
+
+  initializeObstacleMap() {
+    this.obstacleMap = new Array(this.height);
+    for (let y = 0; y < this.height; y++) {
+      this.obstacleMap[y] = new Array(this.width).fill(false);
+    }
+  }
+
+  clearObstacles() {
+    if (!this.obstacleMap) return;
+    for (let y = 0; y < this.height; y++) {
+      this.obstacleMap[y].fill(false);
+    }
+  }
+
+  setObstacle(x, y, blocked = true) {
+    if (!this.obstacleMap) return;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (x < 0 || y < 0 || y >= this.height || x >= this.width) return;
+    this.obstacleMap[y][x] = !!blocked;
+  }
+
+  applyEnvironmentObstacles(levelConfig = null) {
+    if (!this.obstacleMap) this.initializeObstacleMap();
+    this.clearObstacles();
+    this.propPlan = null;
+
+    // Pool room: the pool model is an enormous prop with no mesh collision;
+    // mark its room tiles as blocked so pathing + movement never "walks through" it.
+    const poolEnabled = CONFIG.POOL_MODEL_ENABLED ?? true;
+    if (!poolEnabled) return;
+
+    const rooms = Array.isArray(this.rooms) ? this.rooms : [];
+    for (const room of rooms) {
+      if (!room || room.type !== ROOM_TYPES.POOL) continue;
+      const tiles = Array.isArray(room.tiles) ? room.tiles : [];
+      for (const t of tiles) {
+        this.setObstacle(t.x, t.y, true);
+      }
+    }
+  }
+
+  applyPropObstacles(levelConfig = null) {
+    const seed = levelConfig?.props?.seed;
+    planPropObstacles(this, { seed });
+  }
+
+  getPropPlan() {
+    return this.propPlan;
+  }
+
+  getPropAt(x, y) {
+    if (!this.propPlan) return null;
+    if (x < 0 || y < 0 || y >= this.height || x >= this.width) return null;
+    return this.propPlan?.[y]?.[x] || null;
   }
 
   /**
@@ -86,7 +151,13 @@ export class WorldState {
       return false;
     }
 
-    return isWalkableTile(this.grid[y][x]);
+    if (!isWalkableTile(this.grid[y][x])) {
+      return false;
+    }
+    if (this.obstacleMap && this.obstacleMap[y] && this.obstacleMap[y][x]) {
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -132,6 +203,14 @@ export class WorldState {
   }
 
   /**
+   * Get the list of generated rooms (with type + bounds).
+   * @returns {Array<Object>}
+   */
+  getRooms() {
+    return Array.isArray(this.rooms) ? this.rooms : [];
+  }
+
+  /**
    * Find a random walkable tile for spawning
    * @returns {Object} Grid coordinates {x, y}
    */
@@ -173,39 +252,59 @@ export class WorldState {
    */
   findMonsterSpawns(count) {
     const spawns = [];
-    const attempts = count * 10; // Try multiple times to find good spawns
+    const used = new Set();
 
-    for (let i = 0; i < attempts && spawns.length < count; i++) {
-      const candidate = this.findRandomWalkableTile();
-      if (!this.isWalkableWithMargin(candidate.x, candidate.y, 1)) {
-        continue; // 避開貼牆的出生點
-      }
+    const passes = [
+      { attemptsMult: 10, minPlayerDist: 5, minSpawnDist: 3 },
+      { attemptsMult: 18, minPlayerDist: 4, minSpawnDist: 2 },
+      { attemptsMult: 26, minPlayerDist: 3, minSpawnDist: 1 },
+    ];
 
-      // Make sure it's not too close to player spawn
-      if (this.spawnPoint) {
-        const dx = candidate.x - this.spawnPoint.x;
-        const dy = candidate.y - this.spawnPoint.y;
-        const distSq = dx * dx + dy * dy;
+    for (const pass of passes) {
+      if (spawns.length >= count) break;
 
-        if (distSq < 25) { // Minimum distance squared (5 tiles)
-          continue;
+      const attempts = Math.max(0, count) * pass.attemptsMult;
+      const minPlayerDistSq = pass.minPlayerDist * pass.minPlayerDist;
+      const minSpawnDistSq = pass.minSpawnDist * pass.minSpawnDist;
+
+      for (let i = 0; i < attempts && spawns.length < count; i++) {
+        const candidate = this.findRandomWalkableTile();
+        if (!candidate) continue;
+
+        const key = `${candidate.x},${candidate.y}`;
+        if (used.has(key)) continue;
+
+        if (!this.isWalkableWithMargin(candidate.x, candidate.y, 1)) {
+          continue; // 避開貼牆的出生點
         }
-      }
 
-      // Make sure it's not too close to other monster spawns
-      let tooClose = false;
-      for (const spawn of spawns) {
-        const dx = candidate.x - spawn.x;
-        const dy = candidate.y - spawn.y;
-        const distSq = dx * dx + dy * dy;
+        // Make sure it's not too close to player spawn
+        if (this.spawnPoint) {
+          const dx = candidate.x - this.spawnPoint.x;
+          const dy = candidate.y - this.spawnPoint.y;
+          const distSq = dx * dx + dy * dy;
 
-        if (distSq < 9) { // Minimum distance squared (3 tiles)
-          tooClose = true;
-          break;
+          if (distSq < minPlayerDistSq) {
+            continue;
+          }
         }
-      }
 
-      if (!tooClose) {
+        // Make sure it's not too close to other monster spawns
+        let tooClose = false;
+        for (const spawn of spawns) {
+          const dx = candidate.x - spawn.x;
+          const dy = candidate.y - spawn.y;
+          const distSq = dx * dx + dy * dy;
+
+          if (distSq < minSpawnDistSq) {
+            tooClose = true;
+            break;
+          }
+        }
+
+        if (tooClose) continue;
+
+        used.add(key);
         spawns.push(candidate);
       }
     }
@@ -326,20 +425,33 @@ export class WorldState {
     if (!a || !b || !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(b.x) || !Number.isFinite(b.y)) {
       return false;
     }
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    const steps = Math.ceil(distance);
 
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const x = Math.round(a.x + dx * t);
-      const y = Math.round(a.y + dy * t);
+    // Bresenham line traversal over grid tiles (more conservative than rounding-based sampling).
+    let x0 = Math.round(a.x);
+    let y0 = Math.round(a.y);
+    const x1 = Math.round(b.x);
+    const y1 = Math.round(b.y);
 
-      if (!this.isWalkable(x, y)) {
-        return false;
+    let dx = Math.abs(x1 - x0);
+    let sx = x0 < x1 ? 1 : -1;
+    let dy = -Math.abs(y1 - y0);
+    let sy = y0 < y1 ? 1 : -1;
+    let err = dx + dy;
+
+    while (true) {
+      if (!this.isWalkable(x0, y0)) return false;
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 >= dy) {
+        err += dy;
+        x0 += sx;
+      }
+      if (e2 <= dx) {
+        err += dx;
+        y0 += sy;
       }
     }
+
     return true;
   }
 }

@@ -56,7 +56,22 @@ export class VisualEffects {
     this.flashOpacity = opacity;
 
     // Apply flash immediately
-    this.overlay.style.backgroundColor = this.flashColor;
+    this.overlay.style.background = this.flashColor;
+    this.overlay.style.opacity = this.flashOpacity;
+  }
+
+  /**
+   * Trigger a cheap "damage ring" (red circle) overlay.
+   * This avoids extra particles/shake and is GPU-friendly.
+   */
+  damageRing(duration = 0.35, opacity = 0.55) {
+    this.flashColor = 'rgba(255, 0, 0, 1)';
+    this.flashDuration = duration;
+    this.flashTimer = duration;
+    this.flashOpacity = opacity;
+
+    this.overlay.style.background =
+      'radial-gradient(circle at center, rgba(255, 0, 0, 0) 35%, rgba(255, 0, 0, 0) 52%, rgba(255, 0, 0, 1) 100%)';
     this.overlay.style.opacity = this.flashOpacity;
   }
 

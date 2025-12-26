@@ -15,7 +15,8 @@ export class Minimap {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.worldState = worldState;
-    this.zoom = 1.4;
+    this.zoom = 1.1;
+    this.showObstacles = false;
 
     // Colors
     this.colors = {
@@ -43,6 +44,14 @@ export class Minimap {
 
     // Calculate scale to fit maze in canvas
     this.updateScale();
+  }
+
+  /**
+   * Toggle obstacleMap overlay rendering.
+   * @param {boolean} enabled
+   */
+  setShowObstacles(enabled) {
+    this.showObstacles = !!enabled;
   }
 
   /**
@@ -146,6 +155,7 @@ export class Minimap {
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     // Draw grid
+    const obstacleMap = this.worldState?.obstacleMap || null;
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const px = this.offsetX + x * this.tileSize;
@@ -172,6 +182,23 @@ export class Minimap {
         }
 
         ctx.fillRect(px, py, this.tileSize, this.tileSize);
+
+        // Optional obstacleMap overlay (tiles blocked by environment/props)
+        if (this.showObstacles && obstacleMap?.[y]?.[x] && grid[y][x] !== TILE_TYPES.WALL) {
+          ctx.fillStyle = 'rgba(255, 0, 0, 0.32)';
+          ctx.fillRect(px, py, this.tileSize, this.tileSize);
+
+          if (this.tileSize >= 8) {
+            ctx.strokeStyle = 'rgba(255, 0, 0, 0.55)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(px + 1, py + 1);
+            ctx.lineTo(px + this.tileSize - 1, py + this.tileSize - 1);
+            ctx.moveTo(px + this.tileSize - 1, py + 1);
+            ctx.lineTo(px + 1, py + this.tileSize - 1);
+            ctx.stroke();
+          }
+        }
 
         // Draw grid lines (optional, for better visibility)
         if (this.tileSize > 4) {

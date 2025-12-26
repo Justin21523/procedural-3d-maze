@@ -13,6 +13,7 @@ export class AutoPilot {
     this.missionPointsRef = missionPointsRef; // function or array reference
     this.exitPointRef = exitPointRef;         // function or object with getGridPosition
     this.playerController = playerController;
+    this.gun = null;
 
     this.pathfinder = new Pathfinding(worldState);
     this.currentPath = [];
@@ -51,10 +52,28 @@ export class AutoPilot {
     this.lastWorldPos = null;
     this.noProgressTimer = 0;
     this.noProgressThreshold = apCfg.noProgressSeconds ?? 0.8;
+
+    // Combat (AI player aiming/firing)
+    this.combatTargetId = null;
+    this.combatRetargetTimer = 0;
+    this.lastCombatTargetIdForRhythm = null;
+    this.combatFireCooldown = 0;
+    this.combatBurstShotsRemaining = 0;
+    this.combatBurstRestTimer = 0;
   }
 
   setEnabled(enabled) {
     this.enabled = enabled;
+  }
+
+  setGun(gun) {
+    this.gun = gun || null;
+  }
+
+  resetCombatRhythm() {
+    this.combatFireCooldown = 0;
+    this.combatBurstShotsRemaining = 0;
+    this.combatBurstRestTimer = 0;
   }
 
   /**
@@ -262,6 +281,10 @@ export class AutoPilot {
     if (!this.enabled) return null;
 
     const playerPos = this.playerController.getGridPosition();
+    const threat = this.getThreatInfo(playerPos);
+    const block = threat.nearestDist <= 2;
+    const panicSprint = threat.nearestDist <= 4;
+    const combat = this.computeCombatDirective(playerPos, deltaTime, { panic: block });
 
     // Track oscillation
     this.recordRecentTile(playerPos);
@@ -277,8 +300,13 @@ export class AutoPilot {
     if (this.nudgeTimer > 0 && this.nudgeDir) {
       const cmd = {
         moveWorld: { x: this.nudgeDir.x, z: this.nudgeDir.y },
-        lookYaw: Math.atan2(-this.nudgeDir.x, -this.nudgeDir.y),
+        lookYaw: Number.isFinite(combat?.lookYaw)
+          ? combat.lookYaw
+          : Math.atan2(-this.nudgeDir.x, -this.nudgeDir.y),
+        lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
         sprint: false,
+        block,
+        fire: !!combat?.fire,
       };
       return cmd;
     }
@@ -288,7 +316,14 @@ export class AutoPilot {
     this.plan(playerPos);
 
     if (!this.currentPath || this.currentPath.length === 0) {
-      return { move: { x: 0, y: 0 }, lookYaw: 0, sprint: false };
+      return {
+        move: { x: 0, y: 0 },
+        lookYaw: Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0,
+        lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
+        sprint: false,
+        block,
+        fire: !!combat?.fire
+      };
     }
 
     // 連續跳過過近的 waypoint，避免在邊界磨
@@ -319,9 +354,10 @@ export class AutoPilot {
     // 世界座標的移動向量（只表示方向）
     const moveWorld = { x: dx / len, z: dz / len };
     
-    // Look towards target（絕對 yaw）
-    const yaw = Math.atan2(dx, dz);
-    const lookYaw = yaw;
+    // Look towards target (absolute yaw, aligned with FirstPersonCamera where yaw=0 faces -Z)
+    const yaw = Math.atan2(-dx, -dz);
+    const lookYaw = Number.isFinite(combat?.lookYaw) ? combat.lookYaw : yaw;
+    const lookPitch = Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null;
 
     // 依距離與目標類型調整是否衝刺，避免在房間內狂暴衝刺貼牆
     let distToGoal = Infinity;
@@ -339,6 +375,7 @@ export class AutoPilot {
       // 探索：距離很遠才跑，避免在房間內左右橫衝
       sprint = distToGoal > 8;
     }
+    if (panicSprint) sprint = true;
 
     // --- 簡易卡住偵測：同一格逾 1.2 秒就強制重規劃 ---
     if (this.lastGrid && this.lastGrid.x === playerPos.x && this.lastGrid.y === playerPos.y) {
@@ -381,7 +418,227 @@ export class AutoPilot {
       this.plan(playerPos);
     }
 
-    return { moveWorld, lookYaw, sprint };
+    return { moveWorld, lookYaw, lookPitch, sprint, block, fire: !!combat?.fire };
+  }
+
+  computeCombatDirective(playerGrid, deltaTime, options = {}) {
+    const enabled = CONFIG.AUTOPILOT_COMBAT_ENABLED ?? true;
+    if (!enabled) return null;
+    if (!playerGrid) return null;
+
+    const dt = deltaTime ?? 0;
+    this.combatRetargetTimer = Math.max(0, (this.combatRetargetTimer || 0) - dt);
+    this.combatFireCooldown = Math.max(0, (this.combatFireCooldown || 0) - dt);
+    this.combatBurstRestTimer = Math.max(0, (this.combatBurstRestTimer || 0) - dt);
+
+    const monsters = this.monsterManager?.getMonsters
+      ? this.monsterManager.getMonsters()
+      : [];
+    if (!Array.isArray(monsters) || monsters.length === 0) {
+      this.combatTargetId = null;
+      this.lastCombatTargetIdForRhythm = null;
+      this.resetCombatRhythm();
+      return null;
+    }
+
+    const maxRange = CONFIG.AUTOPILOT_COMBAT_MAX_RANGE_TILES ?? 16;
+    const fireRange = CONFIG.AUTOPILOT_COMBAT_FIRE_RANGE_TILES ?? 12;
+    const requireLOS = CONFIG.AUTOPILOT_COMBAT_REQUIRE_LOS ?? true;
+    const fovDeg = CONFIG.AUTOPILOT_COMBAT_FOV_DEG ?? 110;
+    const fovRad = (Math.max(10, Math.min(180, fovDeg)) * Math.PI) / 180;
+
+    const getMonsterById = (id) => {
+      for (const m of monsters) {
+        if (!m || m.isDead || m.isDying) continue;
+        if (m.id === id) return m;
+      }
+      return null;
+    };
+
+    let target = this.combatTargetId ? getMonsterById(this.combatTargetId) : null;
+    if (!target || this.combatRetargetTimer <= 0) {
+      target = this.pickBestCombatTarget(playerGrid, monsters, {
+        maxRange,
+        requireLOS
+      });
+      this.combatTargetId = target?.id ?? null;
+      this.combatRetargetTimer = CONFIG.AUTOPILOT_COMBAT_RETARGET_SECONDS ?? 0.35;
+    }
+
+    if (!target) return null;
+    if (this.lastCombatTargetIdForRhythm !== target.id) {
+      this.lastCombatTargetIdForRhythm = target.id;
+      this.resetCombatRhythm();
+    }
+
+    const monsterGrid = target.getGridPosition ? target.getGridPosition() : null;
+    if (!monsterGrid) return null;
+
+    const distTiles = Math.abs(monsterGrid.x - playerGrid.x) + Math.abs(monsterGrid.y - playerGrid.y);
+    if (distTiles > maxRange) return null;
+
+    if (requireLOS && this.worldState?.hasLineOfSight) {
+      if (!this.worldState.hasLineOfSight(playerGrid, monsterGrid)) return null;
+    }
+
+    const cam = this.playerController?.camera || null;
+    const camObj = cam?.getCamera ? cam.getCamera() : null;
+    const playerWorld = camObj?.position || this.playerController?.position || null;
+    const monsterWorld = target.getWorldPosition ? target.getWorldPosition() : null;
+    if (!playerWorld || !monsterWorld) return null;
+
+    // Aim at a slightly elevated "center mass" so we don't shoot at the floor.
+    const baseHeight = CONFIG.MONSTER_BASE_HEIGHT ?? 1.6;
+    const scale = target?.scale || target?.typeConfig?.stats?.scale || 1;
+    const targetHeight = baseHeight * scale;
+
+    const aimPoint = monsterWorld.clone();
+    aimPoint.y += Math.max(0.2, targetHeight * 0.55);
+
+    const dx = aimPoint.x - playerWorld.x;
+    const dy = aimPoint.y - playerWorld.y;
+    const dz = aimPoint.z - playerWorld.z;
+
+    // FirstPersonCamera convention: yaw=0 faces -Z, pitch>0 looks up.
+    const aimYaw = Math.atan2(-dx, -dz);
+    const aimPitch = Math.atan2(dy, Math.hypot(dx, dz));
+
+    const currentYaw = this.getCurrentYaw();
+    const deltaYaw = this.wrapAngle(aimYaw - currentYaw);
+    const withinFov = Math.abs(deltaYaw) <= fovRad * 0.5;
+
+    const alignYawDeg = CONFIG.AUTOPILOT_COMBAT_FIRE_ALIGN_DEG ?? 8;
+    const alignYawRad = (Math.max(1, Math.min(45, alignYawDeg)) * Math.PI) / 180;
+    const alignedYaw = Math.abs(deltaYaw) <= alignYawRad;
+
+    const currentPitch = this.getCurrentPitch();
+    const deltaPitch = aimPitch - currentPitch;
+    const alignPitchDeg = CONFIG.AUTOPILOT_COMBAT_FIRE_ALIGN_PITCH_DEG ?? 10;
+    const alignPitchRad = (Math.max(1, Math.min(60, alignPitchDeg)) * Math.PI) / 180;
+    const alignedPitch = Math.abs(deltaPitch) <= alignPitchRad;
+
+    const shouldShoot = !options.panic && distTiles <= fireRange && withinFov && alignedYaw && alignedPitch;
+    const fire = this.computeCombatFire(shouldShoot);
+    return { lookYaw: aimYaw, lookPitch: aimPitch, fire };
+  }
+
+  computeCombatFire(shouldShoot) {
+    if (!shouldShoot) return false;
+
+    const gun = this.gun || null;
+    const hud = gun?.getHudState ? gun.getHudState() : null;
+    const def = gun?.getActiveWeaponDef ? gun.getActiveWeaponDef() : null;
+
+    const weaponInterval = Math.max(
+      0.04,
+      Number(def?.fireInterval ?? CONFIG.PLAYER_FIRE_INTERVAL ?? 0.08) || 0.08
+    );
+
+    if (hud?.isReloading) return false;
+
+    // Trigger auto-reload via the existing Gun logic (wantsFire when empty => tryStartReload()).
+    if ((hud?.ammoInMag || 0) <= 0 && (hud?.ammoReserve || 0) > 0) {
+      if ((this.combatFireCooldown || 0) > 0) return false;
+      this.combatFireCooldown = Math.max(0.25, weaponInterval);
+      return true;
+    }
+
+    const burstEnabled = CONFIG.AUTOPILOT_COMBAT_BURST_ENABLED ?? true;
+    if (!burstEnabled) {
+      if ((this.combatFireCooldown || 0) > 0) return false;
+      this.combatFireCooldown = weaponInterval;
+      return true;
+    }
+
+    const burstMin = Math.max(1, Math.round(CONFIG.AUTOPILOT_COMBAT_BURST_MIN_SHOTS ?? 3));
+    const burstMax = Math.max(burstMin, Math.round(CONFIG.AUTOPILOT_COMBAT_BURST_MAX_SHOTS ?? 6));
+    const restMin = Math.max(0, Number(CONFIG.AUTOPILOT_COMBAT_BURST_REST_MIN_SECONDS ?? 0.35) || 0.35);
+    const restMax = Math.max(restMin, Number(CONFIG.AUTOPILOT_COMBAT_BURST_REST_MAX_SECONDS ?? 0.75) || 0.75);
+
+    if ((this.combatBurstRestTimer || 0) > 0) return false;
+
+    if ((this.combatBurstShotsRemaining || 0) <= 0) {
+      const span = burstMax - burstMin + 1;
+      this.combatBurstShotsRemaining = burstMin + Math.floor(Math.random() * span);
+    }
+
+    if ((this.combatFireCooldown || 0) > 0) return false;
+
+    this.combatFireCooldown = weaponInterval;
+    this.combatBurstShotsRemaining = Math.max(0, (this.combatBurstShotsRemaining || 0) - 1);
+
+    if ((this.combatBurstShotsRemaining || 0) <= 0) {
+      this.combatBurstRestTimer = restMin + Math.random() * (restMax - restMin);
+    }
+
+    return true;
+  }
+
+  pickBestCombatTarget(playerGrid, monsters, options = {}) {
+    const maxRange = Number.isFinite(options.maxRange) ? options.maxRange : 16;
+    const requireLOS = options.requireLOS ?? true;
+
+    let best = null;
+    for (const m of monsters) {
+      if (!m || m.isDead || m.isDying) continue;
+      const mg = m.getGridPosition ? m.getGridPosition() : null;
+      if (!mg) continue;
+
+      const dist = Math.abs(mg.x - playerGrid.x) + Math.abs(mg.y - playerGrid.y);
+      if (dist > maxRange) continue;
+
+      if (requireLOS && this.worldState?.hasLineOfSight) {
+        if (!this.worldState.hasLineOfSight(playerGrid, mg)) continue;
+      }
+
+      // Prefer nearer targets; add a tiny bias to reduce flicker.
+      const score = dist + Math.random() * 0.2;
+      if (!best || score < best.score) {
+        best = { monster: m, score };
+      }
+    }
+
+    return best ? best.monster : null;
+  }
+
+  wrapAngle(a) {
+    const twoPi = Math.PI * 2;
+    let v = a;
+    v = ((v + Math.PI) % twoPi + twoPi) % twoPi - Math.PI;
+    return v;
+  }
+
+  getCurrentYaw() {
+    const cam = this.playerController?.camera || null;
+    if (cam && typeof cam.getYaw === 'function') return cam.getYaw();
+    if (cam && typeof cam.yaw === 'number') return cam.yaw;
+    return 0;
+  }
+
+  getCurrentPitch() {
+    const cam = this.playerController?.camera || null;
+    if (cam && typeof cam.getPitch === 'function') return cam.getPitch();
+    if (cam && typeof cam.pitch === 'number') return cam.pitch;
+    return 0;
+  }
+
+  getThreatInfo(playerGrid) {
+    const monsters = this.monsterManager?.getMonsterPositions
+      ? this.monsterManager.getMonsterPositions()
+      : [];
+
+    let nearestDist = Infinity;
+    let nearestGrid = null;
+    for (const m of monsters) {
+      if (!m) continue;
+      const d = Math.abs(m.x - playerGrid.x) + Math.abs(m.y - playerGrid.y);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearestGrid = m;
+      }
+    }
+
+    return { nearestDist, nearestGrid };
   }
 
   recordRecentTile(gridPos) {

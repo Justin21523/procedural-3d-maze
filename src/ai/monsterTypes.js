@@ -8,8 +8,9 @@ export const MonsterTypes = {
    * HUNTER - Fast, aggressive, persistent tracker
    */
   HUNTER: {
+    id: 'HUNTER',
     name: 'Hunter',
-    aiType: 'autopilotWanderer',
+    aiType: 'hunter',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
     spriteFramesPath: '../assets/moonman-sequence',
@@ -37,6 +38,23 @@ export const MonsterTypes = {
       preferredMode: 'chase'
     },
 
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 1.7,
+      contactChance: 0.65,
+      ranged: {
+        enabled: true,
+        kind: 'bolt',
+        damage: 8,
+        cooldown: 1.05,
+        fireChance: 0.75,
+        range: 14,
+        minRange: 4,
+        spread: 0.045,
+        color: 0xff8844
+      }
+    },
+
     // Animation mappings
     animations: {
       idle: ['Idle', 'idle'],
@@ -56,6 +74,7 @@ export const MonsterTypes = {
    * WANDERER - Slow, oblivious, autonomous
    */
   WANDERER: {
+    id: 'WANDERER',
     name: 'Wanderer',
     aiType: 'autopilotWanderer',
     model: '/models/monster.png',
@@ -83,6 +102,12 @@ export const MonsterTypes = {
       preferredMode: 'wander'
     },
 
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 2.6,
+      contactChance: 0.35
+    },
+
     animations: {
       idle: ['Idle', 'idle'],
       walk: ['Walk', 'walk'],
@@ -99,8 +124,9 @@ export const MonsterTypes = {
    * SENTINEL - Zone guardian with wide vision
    */
   SENTINEL: {
+    id: 'SENTINEL',
     name: 'Sentinel',
-    aiType: 'autopilotWanderer',
+    aiType: 'roomHunter',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
     spriteFramesPath: '../assets/moonman-sequence',
@@ -127,6 +153,23 @@ export const MonsterTypes = {
       preferredMode: 'patrol'
     },
 
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 2.0,
+      contactChance: 0.55,
+      ranged: {
+        enabled: true,
+        kind: 'bolt',
+        damage: 7,
+        cooldown: 1.5,
+        fireChance: 0.72,
+        range: 18,
+        minRange: 5,
+        spread: 0.02,
+        color: 0x66ccff
+      }
+    },
+
     animations: {
       idle: ['Idle', 'idle'],
       walk: ['Walk', 'walk'],
@@ -143,8 +186,9 @@ export const MonsterTypes = {
    * STALKER - Follows at distance, sneaky
    */
   STALKER: {
+    id: 'STALKER',
     name: 'Stalker',
-    aiType: 'autopilotWanderer',
+    aiType: 'distanceStalker',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
     spriteFramesPath: '../assets/moonman-sequence',
@@ -171,6 +215,23 @@ export const MonsterTypes = {
       followDistance: 8        // Stays 8 units away
     },
 
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 2.2,
+      contactChance: 0.45,
+      ranged: {
+        enabled: true,
+        kind: 'bolt',
+        damage: 6,
+        cooldown: 1.8,
+        range: 16,
+        minRange: 6,
+        spread: 0.03,
+        fireChance: 0.55,
+        color: 0xaa66ff
+      }
+    },
+
     animations: {
       idle: ['Idle', 'idle'],
       walk: ['Walk', 'walk'],
@@ -187,8 +248,9 @@ export const MonsterTypes = {
    * RUSHER - Extremely fast but short memory
    */
   RUSHER: {
+    id: 'RUSHER',
     name: 'Rusher',
-    aiType: 'autopilotWanderer',
+    aiType: 'speedJitter',
     model: '/models/monster.png',
     sprite: '/models/monster.png',
     spriteFramesPath: '../assets/moonman-sequence',
@@ -214,6 +276,20 @@ export const MonsterTypes = {
       preferredMode: 'chase'
     },
 
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 1.25,
+      contactChance: 0.9
+    },
+
+    // Optional modular AI additions (composed in createMonsterBrain)
+    brain: {
+      modules: {
+        noiseInvestigation: true,
+        flankCoverTactics: true
+      }
+    },
+
     animations: {
       idle: ['Idle', 'idle'],
       walk: ['Run', 'run'],    // Always runs
@@ -230,8 +306,9 @@ export const MonsterTypes = {
    * GREETER - Friendly-ish guide that keeps some distance
    */
   GREETER: {
-    name: 'GREETER',
-    aiType: 'autopilotWanderer',
+    id: 'GREETER',
+    name: 'Greeter',
+    aiType: 'shyGreeter',
     sprite: '/models/greeter.png',
     spriteFramesPath: '../assets/moonman-sequence',
     spriteFrameRate: 7,
@@ -249,6 +326,10 @@ export const MonsterTypes = {
       greetDistance: 4,
       avoidPlayerDistance: 2,
       memoryDuration: 4000,
+    },
+
+    combat: {
+      contactDamage: 0
     },
   }
 };

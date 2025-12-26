@@ -4,7 +4,7 @@
 export const LEVEL_CONFIGS = [
   {
     id: 1,
-    name: 'L1-新手教學',
+    name: 'L1 - Tutorial',
     maze: { width: 21, height: 21, roomDensity: 1.5, extraConnectionChance: 0.02 },
     monsters: {
       count: 4,
@@ -34,7 +34,7 @@ export const LEVEL_CONFIGS = [
   },
   {
     id: 2,
-    name: 'L2-正式迷宮',
+    name: 'L2 - Main Maze',
     maze: { width: 25, height: 25, roomDensity: 2.0, extraConnectionChance: 0.05 },
     monsters: {
       count: 6,
@@ -65,7 +65,7 @@ export const LEVEL_CONFIGS = [
   },
   {
     id: 3,
-    name: 'L3-時間壓力',
+    name: 'L3 - Time Pressure',
     maze: { width: 29, height: 29, roomDensity: 2.5, extraConnectionChance: 0.08 },
     monsters: {
       count: 8,
@@ -95,7 +95,7 @@ export const LEVEL_CONFIGS = [
   },
   {
     id: 4,
-    name: 'L4-守衛走廊',
+    name: 'L4 - Guarded Halls',
     maze: { width: 31, height: 31, roomDensity: 3.0, extraConnectionChance: 0.12 },
     monsters: {
       count: 10,
@@ -137,7 +137,7 @@ export const LEVEL_CONFIGS = [
   },
   {
     id: 5,
-    name: 'L5-終局迷宮',
+    name: 'L5 - Final Maze',
     maze: { width: 35, height: 35, roomDensity: 3.5, extraConnectionChance: 0.15 },
     monsters: {
       count: 12,
@@ -182,7 +182,7 @@ export const LEVEL_CONFIGS = [
   // -----------------
   {
     id: 6,
-    name: 'L6-幻影交錯',
+    name: 'L6 - Phantom Shift',
     maze: { width: 35, height: 35, roomDensity: 3.2, extraConnectionChance: 0.18 },
     monsters: {
       count: 11, // 仍然維持 <=12
@@ -209,7 +209,7 @@ export const LEVEL_CONFIGS = [
   },
   {
     id: 7,
-    name: 'L7-極限試煉',
+    name: 'L7 - Extreme Trial',
     maze: { width: 35, height: 35, roomDensity: 3.5, extraConnectionChance: 0.2 },
     monsters: {
       count: 12,
