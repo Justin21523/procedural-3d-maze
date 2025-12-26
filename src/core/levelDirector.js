@@ -96,7 +96,9 @@ function normalizeMissionsConfig(rawMissions) {
   const listRaw = Array.isArray(missions.list) ? missions.list : [];
   const list = listRaw.map((m, idx) => normalizeMissionEntry(m, idx)).filter(Boolean);
 
-  const requires = normalizeStringArray(missions?.exit?.requires);
+  const requires = Array.isArray(missions?.exit?.requires)
+    ? normalizeStringArray(missions.exit.requires)
+    : list.filter((m) => m.required).map((m) => m.id);
 
   return {
     timeLimitSec,
