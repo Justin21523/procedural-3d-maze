@@ -43,6 +43,10 @@ export const EVENTS = Object.freeze({
   MISSION_HINT_REQUESTED: 'mission:hintRequested',
   UI_TOAST: 'ui:toast',
 
+  // Puzzle interactions
+  KEYPAD_CODE_SUBMITTED: 'puzzle:keypadCodeSubmitted',
+  KEYPAD_CODE_RESULT: 'puzzle:keypadCodeResult',
+
   // Interactions
   INTERACTABLE_HOVER: 'interact:hover',
   INTERACT: 'interact:performed',
