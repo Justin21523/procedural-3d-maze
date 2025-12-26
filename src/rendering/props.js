@@ -295,8 +295,9 @@ export function createRoomPropsFromPlan(roomType, gridX, gridY, planEntry) {
   if (CONFIG.LOW_PERF_MODE) return props;
   if (!planEntry || typeof planEntry !== 'object') return props;
 
-  const worldX = gridX * CONFIG.TILE_SIZE;
-  const worldZ = gridY * CONFIG.TILE_SIZE;
+  const tileSize = CONFIG.TILE_SIZE || 1;
+  const worldX = gridX * tileSize + tileSize / 2;
+  const worldZ = gridY * tileSize + tileSize / 2;
   const rot = Number.isFinite(planEntry.rotation) ? planEntry.rotation : 0;
   const kind = String(planEntry.kind || '');
 
@@ -450,8 +451,9 @@ export function createRoomPropsFromPlan(roomType, gridX, gridY, planEntry) {
  */
 export function generateRoomProps(roomType, gridX, gridY, grid) {
   const props = [];
-  const worldX = gridX * CONFIG.TILE_SIZE;
-  const worldZ = gridY * CONFIG.TILE_SIZE;
+  const tileSize = CONFIG.TILE_SIZE || 1;
+  const worldX = gridX * tileSize + tileSize / 2;
+  const worldZ = gridY * tileSize + tileSize / 2;
 
   // 性能模式：直接不擺放裝飾
   if (CONFIG.LOW_PERF_MODE) return props;
