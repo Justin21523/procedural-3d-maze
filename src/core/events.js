@@ -33,4 +33,23 @@ export const EVENTS = Object.freeze({
   PLAYER_HEALED: 'player:healed',
   GAME_WON: 'game:won',
   GAME_LOST: 'game:lost',
+
+  // World / navigation
+  ROOM_ENTERED: 'room:entered',
+  TIMER_TICK: 'timer:tick',
+
+  // Interactions
+  INTERACTABLE_HOVER: 'interact:hover',
+  INTERACT: 'interact:performed',
+  ITEM_PICKED: 'item:picked',
+
+  // Missions / objectives
+  MISSION_STARTED: 'mission:started',
+  MISSION_UPDATED: 'mission:updated',
+  MISSION_COMPLETED: 'mission:completed',
+  MISSION_FAILED: 'mission:failed',
+
+  // Exit gating
+  EXIT_UNLOCKED: 'exit:unlocked',
+  EXIT_LOCKED: 'exit:locked',
 });

@@ -20,6 +20,7 @@ export class UIManager {
     this.positionElement = document.getElementById('position');
     this.currentRoomElement = document.getElementById('current-room');
     this.missionElement = document.getElementById('mission-status');
+    this.missionObjectiveElement = document.getElementById('mission-objective');
     this.gameTimeElement = document.getElementById('game-time');
     this.healthDisplayElement = document.getElementById('health-display');
     this.healthFillElement = document.getElementById('health-fill');
@@ -28,7 +29,7 @@ export class UIManager {
     this.weaponModeElement = document.getElementById('hud-mode');
     this.weaponReloadElement = document.getElementById('hud-reload');
     this.skillQElement = document.getElementById('hud-skill-q');
-    this.skillEElement = document.getElementById('hud-skill-e');
+    this.skillXElement = document.getElementById('hud-skill-x');
     this.pointerElement = document.getElementById('pointer-status');
     this.keysElement = document.getElementById('keys-pressed');
 
@@ -46,6 +47,14 @@ export class UIManager {
     this.finalHealthElement = document.getElementById('final-health');
     this.finalRoomsElement = document.getElementById('final-rooms');
     this.finalStepsElement = document.getElementById('final-steps');
+
+    // Interaction prompt (center screen)
+    this.interactPromptElement = document.getElementById('interact-prompt');
+    this.interactHoverText = '';
+    this.interactFlashText = '';
+    this.interactFlashTimer = 0;
+    this.lastInteractPromptText = null;
+    this.lastInteractPromptHidden = null;
 
     this.unsubscribers = [];
     this.bindEvents();
@@ -97,6 +106,29 @@ export class UIManager {
         this.showGameOver(false, payload?.reason);
       })
     );
+
+    this.unsubscribers.push(
+      this.eventBus.on(EVENTS.INTERACTABLE_HOVER, (payload) => {
+        const text = String(payload?.text || '');
+        this.setInteractHoverText(text);
+      })
+    );
+
+    this.unsubscribers.push(
+      this.eventBus.on(EVENTS.EXIT_LOCKED, (payload) => {
+        const msg = String(payload?.message || 'Exit locked');
+        this.flashInteractPrompt(msg, 1.2);
+      })
+    );
+
+    this.unsubscribers.push(
+      this.eventBus.on(EVENTS.MISSION_UPDATED, (payload) => {
+        const objective = payload?.objectiveText ?? payload?.summary ?? '';
+        if (this.missionObjectiveElement) {
+          this.missionObjectiveElement.textContent = objective ? String(objective) : '—';
+        }
+      })
+    );
   }
 
   setRefs({ player, worldState, gameState, gun } = {}) {
@@ -118,7 +150,44 @@ export class UIManager {
     const now = Number.isFinite(nowMs) ? nowMs : performance.now();
     this.updateFPS(now);
     this.updateCrosshairPulse(dt);
+    this.updateInteractPrompt(dt);
     this.updateHud();
+  }
+
+  setInteractHoverText(text) {
+    this.interactHoverText = String(text || '');
+    this.renderInteractPrompt();
+  }
+
+  flashInteractPrompt(text, seconds = 1.1) {
+    this.interactFlashText = String(text || '');
+    this.interactFlashTimer = Math.max(0.2, Number(seconds) || 1.1);
+    this.renderInteractPrompt();
+  }
+
+  updateInteractPrompt(dt) {
+    this.interactFlashTimer = Math.max(0, (this.interactFlashTimer || 0) - dt);
+    if (this.interactFlashTimer <= 0) {
+      this.interactFlashText = '';
+    }
+    this.renderInteractPrompt();
+  }
+
+  renderInteractPrompt() {
+    const el = this.interactPromptElement;
+    if (!el) return;
+
+    const text = this.interactHoverText || this.interactFlashText || '';
+    const hidden = !text;
+    if (this.lastInteractPromptHidden !== hidden) {
+      if (hidden) el.classList.add('hidden');
+      else el.classList.remove('hidden');
+      this.lastInteractPromptHidden = hidden;
+    }
+    if (this.lastInteractPromptText !== text) {
+      el.textContent = text;
+      this.lastInteractPromptText = text;
+    }
   }
 
   updateFPS(nowMs) {
@@ -231,8 +300,8 @@ export class UIManager {
       if (this.skillQElement) {
         this.skillQElement.textContent = fmtSkill(hud.skills?.grenade ?? 0);
       }
-      if (this.skillEElement) {
-        this.skillEElement.textContent = fmtSkill(hud.skills?.emp ?? 0);
+      if (this.skillXElement) {
+        this.skillXElement.textContent = fmtSkill(hud.skills?.emp ?? 0);
       }
     }
 

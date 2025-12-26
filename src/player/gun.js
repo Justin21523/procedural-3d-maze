@@ -160,7 +160,7 @@ export class Gun {
     if (this.input.consumeKeyPress('KeyQ')) {
       this.tryUseGrenadeSkill();
     }
-    if (this.input.consumeKeyPress('KeyE')) {
+    if (this.input.consumeKeyPress('KeyX')) {
       this.tryUseEmpSkill();
     }
   }
