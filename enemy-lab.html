@@ -1,0 +1,1677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enemy Lab</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: rgba(20, 24, 32, 0.92);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: rgba(255, 255, 255, 0.92);
+      --muted: rgba(255, 255, 255, 0.65);
+      --accent: #7aa2ff;
+      --good: #2ecc71;
+      --bad: #ff5a5a;
+      --warn: #ffd166;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      overflow: hidden;
+    }
+
+    #app {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      grid-template-columns: minmax(440px, 520px) 1fr;
+    }
+
+    #panel {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      overflow: auto;
+      padding: 12px 12px 14px;
+    }
+
+    #panel h1 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      font-weight: 650;
+      letter-spacing: 0.2px;
+    }
+
+    #panel p {
+      margin: 6px 0 12px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin: 10px 0 14px;
+    }
+
+    .tab-btn {
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .tab-btn.active {
+      border-color: rgba(122, 162, 255, 0.55);
+      background: rgba(122, 162, 255, 0.16);
+    }
+
+    .tab-page { display: none; }
+    .tab-page.active { display: block; }
+
+    .row {
+      margin: 10px 0;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    input[type="text"], input[type="number"], select, textarea {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 10px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    input[type="range"] { width: 100%; }
+    input[type="checkbox"] { transform: translateY(1px); }
+
+    textarea {
+      min-height: 220px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    button {
+      background: rgba(122, 162, 255, 0.15);
+      border: 1px solid rgba(122, 162, 255, 0.35);
+      color: var(--text);
+      padding: 9px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    button:hover { background: rgba(122, 162, 255, 0.22); }
+
+    button.secondary {
+      background: rgba(0, 0, 0, 0.18);
+      border: 1px solid var(--border);
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .status-ok { color: var(--good); }
+    .status-bad { color: var(--bad); }
+    .status-warn { color: var(--warn); }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    .section {
+      margin: 12px 0;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(0,0,0,0.12);
+    }
+
+    .section h3 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.86);
+      font-weight: 650;
+    }
+
+    #viewport {
+      position: relative;
+      overflow: hidden;
+    }
+
+    #canvas-container {
+      position: absolute;
+      inset: 0;
+    }
+
+    #hud {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.35);
+      font-size: 12px;
+      color: var(--muted);
+      pointer-events: none;
+      max-width: 70%;
+      line-height: 1.35;
+      white-space: pre-line;
+    }
+
+    #lock-overlay {
+      position: absolute;
+      inset: auto 10px 10px auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.35);
+      font-size: 12px;
+      color: var(--muted);
+      pointer-events: auto;
+    }
+
+    #lock-overlay button {
+      padding: 7px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="panel">
+      <h1>Enemy Lab</h1>
+      <p>
+        First-person sandbox for testing enemy models and behaviors. Tune per-model metadata
+        (<span class="pill">scale</span>, <span class="pill">upright rotation</span>, <span class="pill">ground offset</span>)
+        and save it to the model’s <span class="pill">meta.json</span>.
+      </p>
+
+      <div class="section">
+        <h3>Workspace</h3>
+        <div class="grid-2">
+          <div>
+            <label for="modeSelect">Mode</label>
+            <select id="modeSelect">
+              <option value="play">Play (First-person)</option>
+              <option value="edit">Edit Model (Orbit + Gizmo)</option>
+            </select>
+          </div>
+          <div>
+            <label>Editor Shortcuts</label>
+            <div style="font-size: 12px; color: var(--muted); line-height: 1.35;">
+              <span class="pill">W</span> Translate (offset)
+              <span class="pill">E</span> Rotate (upright)
+              <span class="pill">Q</span> Local/World
+              <span class="pill">F</span> Frame
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="model" type="button">Model</button>
+        <button class="tab-btn" data-tab="combat" type="button">Combat</button>
+        <button class="tab-btn" data-tab="save" type="button">Save</button>
+      </div>
+
+      <div class="tab-page active" data-page="model">
+        <div class="section">
+          <h3>Selection</h3>
+          <div class="row">
+            <div>
+              <label for="modelFilter">Filter</label>
+              <input id="modelFilter" type="text" placeholder="Type to filter models…">
+            </div>
+            <div style="text-align:right;">
+              <label>&nbsp;</label>
+              <span class="pill" id="modelCount">0 models</span>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="modelSelect">Model</label>
+              <select id="modelSelect"></select>
+            </div>
+            <div style="text-align:right;">
+              <label>&nbsp;</label>
+              <span class="pill" id="metaHint">(no model)</span>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label for="typeSelect">Monster Type</label>
+              <select id="typeSelect"></select>
+            </div>
+            <div>
+              <label for="roleSelect">Squad Role</label>
+              <select id="roleSelect">
+                <option value="leader">leader</option>
+                <option value="flanker">flanker</option>
+                <option value="cover">cover</option>
+                <option value="rusher">rusher</option>
+                <option value="support">support</option>
+                <option value="scout">scout</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid-2" style="margin-top:10px;">
+            <div>
+              <label for="spawnMode">Spawn Mode</label>
+              <select id="spawnMode">
+                <option value="single">Single</option>
+                <option value="squad">Squad (leader/flanker/cover)</option>
+              </select>
+            </div>
+            <div>
+              <label for="spawnDistance">Spawn Distance (tiles) <span class="pill" id="spawnDistanceVal">8</span></label>
+              <input id="spawnDistance" type="range" min="3" max="18" step="1" value="8">
+            </div>
+          </div>
+
+          <div class="row">
+            <button id="spawnBtn" type="button">Spawn / Rebuild</button>
+            <button id="resetPlayerBtn" type="button" class="secondary">Reset Player</button>
+          </div>
+          <div class="row">
+            <button id="toggleAiBtn" type="button" class="secondary">AI: ON</button>
+            <button id="clearProjectilesBtn" type="button" class="secondary">Clear Projectiles</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Meta (transform)</h3>
+          <div class="grid-2">
+            <div>
+              <label for="scaleMultiplier">scaleMultiplier <span class="pill" id="scaleMultiplierVal">1.00</span></label>
+              <input id="scaleMultiplier" type="range" min="0.20" max="6.00" step="0.05" value="1.00">
+            </div>
+            <div>
+              <label for="groundOffset">groundOffset <span class="pill" id="groundOffsetVal">0.02</span></label>
+              <input id="groundOffset" type="range" min="-1.00" max="1.00" step="0.01" value="0.02">
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="rotationOverride">
+                <input id="rotationOverride" type="checkbox">
+                Override correctionRotationDeg (after auto-upright)
+              </label>
+              <div class="grid-3">
+                <div>
+                  <label for="rotX">X (deg)</label>
+                  <input id="rotX" type="number" min="-180" max="180" step="1" value="0">
+                </div>
+                <div>
+                  <label for="rotY">Y (deg)</label>
+                  <input id="rotY" type="number" min="-180" max="180" step="1" value="0">
+                </div>
+                <div>
+                  <label for="rotZ">Z (deg)</label>
+                  <input id="rotZ" type="number" min="-180" max="180" step="1" value="0">
+                </div>
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div class="pill">Base auto-upright</div>
+              <div class="pill" id="baseRotPill" style="margin-top:8px;">x=– y=– z=–</div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label>correctionOffset (x / y / z)</label>
+              <div class="grid-3">
+                <div>
+                  <label for="offX">X</label>
+                  <input id="offX" type="number" min="-50" max="50" step="0.01" value="0">
+                </div>
+                <div>
+                  <label for="offY">Y</label>
+                  <input id="offY" type="number" min="-50" max="50" step="0.01" value="0">
+                </div>
+                <div>
+                  <label for="offZ">Z</label>
+                  <input id="offZ" type="number" min="-50" max="50" step="0.01" value="0">
+                </div>
+              </div>
+              <div class="row" style="margin: 10px 0 0;">
+                <button id="resetOffsetBtn" type="button" class="secondary">Reset Offset</button>
+                <span class="pill">Used to recenter models that spin/orbit</span>
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div class="pill">Base inner pos</div>
+              <div class="pill" id="basePosPill" style="margin-top:8px;">x=– y=– z=–</div>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label for="hitRadius">stats.hitRadius</label>
+              <input id="hitRadius" type="number" min="0.05" max="20" step="0.05" value="1.00">
+            </div>
+            <div>
+              <label for="previewYaw">Preview Yaw (deg)</label>
+              <input id="previewYaw" type="range" min="0" max="360" step="5" value="0">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-page" data-page="combat">
+        <div class="section">
+          <h3>Ranged Combat (meta.combat.ranged)</h3>
+          <div class="row">
+            <label for="rangedEnabled" style="margin:0;">
+              <input id="rangedEnabled" type="checkbox" checked>
+              Enabled
+            </label>
+            <span class="pill">AI uses LOS + aim align + burst/mag</span>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label for="rangedDamage">damage</label>
+              <input id="rangedDamage" type="number" min="0" max="999" step="1" value="8">
+            </div>
+            <div>
+              <label for="rangedRange">range</label>
+              <input id="rangedRange" type="number" min="1" max="60" step="1" value="14">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label for="rangedMinRange">minRange</label>
+              <input id="rangedMinRange" type="number" min="0" max="60" step="0.5" value="4">
+            </div>
+            <div>
+              <label for="rangedFireChance">fireChance (0..1)</label>
+              <input id="rangedFireChance" type="number" min="0" max="1" step="0.05" value="0.75">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label for="rangedSpread">spread</label>
+              <input id="rangedSpread" type="number" min="0" max="0.3" step="0.005" value="0.04">
+            </div>
+            <div>
+              <label for="rangedShotInterval">shotInterval (s)</label>
+              <input id="rangedShotInterval" type="number" min="0.05" max="6" step="0.05" value="1.05">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label for="rangedMagSize">magSize</label>
+              <input id="rangedMagSize" type="number" min="1" max="40" step="1" value="6">
+            </div>
+            <div>
+              <label for="rangedReload">reloadSeconds</label>
+              <input id="rangedReload" type="number" min="0.2" max="8" step="0.05" value="1.65">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label for="rangedBurstMin">burstMin</label>
+              <input id="rangedBurstMin" type="number" min="1" max="10" step="1" value="1">
+            </div>
+            <div>
+              <label for="rangedBurstMax">burstMax</label>
+              <input id="rangedBurstMax" type="number" min="1" max="10" step="1" value="2">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label for="rangedBurstRest">burstRestSeconds</label>
+              <input id="rangedBurstRest" type="number" min="0" max="6" step="0.05" value="0.7">
+            </div>
+            <div>
+              <label for="rangedAlignDeg">fireAlignDeg</label>
+              <input id="rangedAlignDeg" type="number" min="1" max="60" step="1" value="16">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label for="rangedTurnSpeed">turnSpeed (rad/s)</label>
+              <input id="rangedTurnSpeed" type="number" min="0.5" max="20" step="0.5" value="6.5">
+            </div>
+            <div>
+              <label for="rangedKind">kind</label>
+              <select id="rangedKind">
+                <option value="bolt">bolt</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
+            <button id="applyCombatBtn" type="button">Apply To Live Monster</button>
+            <span class="pill">No rebuild needed for combat tweaks</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-page" data-page="save">
+        <div class="section">
+          <h3>meta.json</h3>
+          <div class="row">
+            <div class="pill" id="saveHint">(select a model)</div>
+            <div style="text-align:right;">
+              <span class="pill" id="statusPill">(idle)</span>
+            </div>
+          </div>
+          <div class="row">
+            <textarea id="jsonOut" readonly spellcheck="false"></textarea>
+          </div>
+          <div class="row">
+            <button id="copyBtn" type="button">Copy JSON</button>
+            <button id="saveBtn" type="button">Save to meta.json (dev server)</button>
+          </div>
+          <p style="margin-top:8px;">
+            Tip: saving requires running via Vite dev server. If save fails, use Copy JSON and paste into the file shown above.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div id="viewport">
+      <div id="canvas-container"></div>
+      <div id="hud"></div>
+      <div id="lock-overlay">
+        <div id="lockState">Mouse: unlocked</div>
+        <button id="lockBtn" type="button">Lock Mouse</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/ui/toolNav.js"></script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+    import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+
+    import { CONFIG } from '/src/core/config.js';
+    import { EventBus } from '/src/core/eventBus.js';
+    import { GameState } from '/src/core/gameState.js';
+    import { CombatSystem } from '/src/core/combatSystem.js';
+
+    import { SceneManager } from '/src/rendering/scene.js';
+    import { FirstPersonCamera } from '/src/rendering/camera.js';
+
+    import { InputHandler } from '/src/player/input.js';
+    import { PlayerController } from '/src/player/playerController.js';
+    import { WeaponView } from '/src/player/weaponView.js';
+    import { Gun } from '/src/player/gun.js';
+
+    import { WorldState } from '/src/world/worldState.js';
+    import { TILE_TYPES, ROOM_TYPES } from '/src/world/tileTypes.js';
+
+    import { MonsterManager } from '/src/entities/monsterManager.js';
+    import { ProjectileManager } from '/src/entities/projectileManager.js';
+    import { AudioManager } from '/src/audio/audioManager.js';
+
+    import { MonsterTypes } from '/src/ai/monsterTypes.js';
+    import { getCandidateMetaUrls } from '/src/ai/enemyCatalog.js';
+
+    const ui = {
+      tabButtons: Array.from(document.querySelectorAll('.tab-btn')),
+      tabPages: Array.from(document.querySelectorAll('.tab-page')),
+
+      modeSelect: document.getElementById('modeSelect'),
+
+      modelFilter: document.getElementById('modelFilter'),
+      modelSelect: document.getElementById('modelSelect'),
+      modelCount: document.getElementById('modelCount'),
+      metaHint: document.getElementById('metaHint'),
+      typeSelect: document.getElementById('typeSelect'),
+      roleSelect: document.getElementById('roleSelect'),
+      spawnMode: document.getElementById('spawnMode'),
+      spawnDistance: document.getElementById('spawnDistance'),
+      spawnDistanceVal: document.getElementById('spawnDistanceVal'),
+      spawnBtn: document.getElementById('spawnBtn'),
+      resetPlayerBtn: document.getElementById('resetPlayerBtn'),
+      toggleAiBtn: document.getElementById('toggleAiBtn'),
+      clearProjectilesBtn: document.getElementById('clearProjectilesBtn'),
+
+      scaleMultiplier: document.getElementById('scaleMultiplier'),
+      scaleMultiplierVal: document.getElementById('scaleMultiplierVal'),
+      groundOffset: document.getElementById('groundOffset'),
+      groundOffsetVal: document.getElementById('groundOffsetVal'),
+
+      rotationOverride: document.getElementById('rotationOverride'),
+      rotX: document.getElementById('rotX'),
+      rotY: document.getElementById('rotY'),
+      rotZ: document.getElementById('rotZ'),
+      baseRotPill: document.getElementById('baseRotPill'),
+
+      offX: document.getElementById('offX'),
+      offY: document.getElementById('offY'),
+      offZ: document.getElementById('offZ'),
+      resetOffsetBtn: document.getElementById('resetOffsetBtn'),
+      basePosPill: document.getElementById('basePosPill'),
+
+      hitRadius: document.getElementById('hitRadius'),
+      previewYaw: document.getElementById('previewYaw'),
+
+      rangedEnabled: document.getElementById('rangedEnabled'),
+      rangedKind: document.getElementById('rangedKind'),
+      rangedDamage: document.getElementById('rangedDamage'),
+      rangedRange: document.getElementById('rangedRange'),
+      rangedMinRange: document.getElementById('rangedMinRange'),
+      rangedFireChance: document.getElementById('rangedFireChance'),
+      rangedSpread: document.getElementById('rangedSpread'),
+      rangedShotInterval: document.getElementById('rangedShotInterval'),
+      rangedMagSize: document.getElementById('rangedMagSize'),
+      rangedReload: document.getElementById('rangedReload'),
+      rangedBurstMin: document.getElementById('rangedBurstMin'),
+      rangedBurstMax: document.getElementById('rangedBurstMax'),
+      rangedBurstRest: document.getElementById('rangedBurstRest'),
+      rangedAlignDeg: document.getElementById('rangedAlignDeg'),
+      rangedTurnSpeed: document.getElementById('rangedTurnSpeed'),
+      applyCombatBtn: document.getElementById('applyCombatBtn'),
+
+      saveHint: document.getElementById('saveHint'),
+      statusPill: document.getElementById('statusPill'),
+      jsonOut: document.getElementById('jsonOut'),
+      copyBtn: document.getElementById('copyBtn'),
+      saveBtn: document.getElementById('saveBtn'),
+
+      hud: document.getElementById('hud'),
+      lockState: document.getElementById('lockState'),
+      lockBtn: document.getElementById('lockBtn'),
+    };
+
+    function clamp(n, min, max) {
+      if (!Number.isFinite(n)) return n;
+      return Math.max(min, Math.min(max, n));
+    }
+
+    function toNum(v, fallback = 0) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function format(n, digits = 2) {
+      return Number.isFinite(n) ? n.toFixed(digits) : String(n);
+    }
+
+    function deepClone(obj) {
+      return obj ? JSON.parse(JSON.stringify(obj)) : obj;
+    }
+
+    const DEG2RAD = Math.PI / 180;
+    const RAD2DEG = 180 / Math.PI;
+
+    function setStatus(text, kind = 'ok') {
+      ui.statusPill.textContent = text;
+      ui.statusPill.classList.toggle('status-ok', kind === 'ok');
+      ui.statusPill.classList.toggle('status-bad', kind === 'bad');
+      ui.statusPill.classList.toggle('status-warn', kind === 'warn');
+    }
+
+    function setActiveTab(key) {
+      ui.tabButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === key));
+      ui.tabPages.forEach((page) => page.classList.toggle('active', page.dataset.page === key));
+    }
+
+    ui.tabButtons.forEach((btn) => {
+      btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+    });
+
+    function createArenaWorldState(size = 17) {
+      const ws = new WorldState();
+      const grid = [];
+      const roomMap = [];
+      for (let y = 0; y < size; y++) {
+        const row = new Array(size).fill(TILE_TYPES.FLOOR);
+        const rooms = new Array(size).fill(ROOM_TYPES.GYM);
+        grid.push(row);
+        roomMap.push(rooms);
+      }
+      for (let i = 0; i < size; i++) {
+        grid[0][i] = TILE_TYPES.WALL;
+        grid[size - 1][i] = TILE_TYPES.WALL;
+        grid[i][0] = TILE_TYPES.WALL;
+        grid[i][size - 1] = TILE_TYPES.WALL;
+      }
+
+      ws.grid = grid;
+      ws.roomMap = roomMap;
+      ws.rooms = [];
+      ws.height = grid.length;
+      ws.width = grid[0].length;
+      ws.initializeObstacleMap();
+      ws.clearObstacles();
+      ws.propPlan = null;
+      ws.monsterSpawns = [];
+      ws.missionPoints = [];
+
+      const center = Math.floor(size / 2);
+      ws.spawnPoint = { x: center, y: center + 4 };
+      return ws;
+    }
+
+    function findWalkableNear(worldState, start, maxRadius = 6) {
+      if (!start) return null;
+      if (worldState?.isWalkable?.(start.x, start.y)) return { x: start.x, y: start.y };
+      for (let r = 1; r <= maxRadius; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            const x = start.x + dx;
+            const y = start.y + dy;
+            if (worldState?.isWalkable?.(x, y)) return { x, y };
+          }
+        }
+      }
+      return null;
+    }
+
+    function getForwardXZ(cameraObj) {
+      const dir = new THREE.Vector3();
+      cameraObj.getWorldDirection(dir);
+      dir.y = 0;
+      if (dir.lengthSq() <= 1e-8) return new THREE.Vector3(0, 0, -1);
+      dir.normalize();
+      return dir;
+    }
+
+    function setPlayerLookAt(playerController, cameraController, targetWorld) {
+      const camObj = cameraController?.getCamera ? cameraController.getCamera() : null;
+      const origin = camObj?.position || playerController?.position || null;
+      if (!origin || !targetWorld) return;
+      const dx = targetWorld.x - origin.x;
+      const dy = targetWorld.y - origin.y;
+      const dz = targetWorld.z - origin.z;
+      const yaw = Math.atan2(-dx, -dz);
+      const pitch = Math.atan2(dy, Math.hypot(dx, dz));
+      cameraController?.setYawPitch?.(yaw, pitch);
+    }
+
+    async function fetchManifest() {
+      const res = await fetch('/models/manifest.json', { cache: 'no-store' });
+      const json = await res.json();
+      const models = Array.isArray(json) ? json : json?.models;
+      return Array.isArray(models) ? models.filter(p => typeof p === 'string') : [];
+    }
+
+    async function fetchExistingMeta(modelPath) {
+      const urls = getCandidateMetaUrls(modelPath);
+      for (const url of urls) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const json = await res.json();
+          return { url, json };
+        } catch (err) {
+          void err;
+        }
+      }
+      return { url: urls[0] || null, json: null };
+    }
+
+    function populateMonsterTypes() {
+      const keys = Object.keys(MonsterTypes);
+      for (const key of keys) {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = `${key} (${MonsterTypes[key]?.name || 'Unnamed'})`;
+        ui.typeSelect.appendChild(opt);
+      }
+      ui.typeSelect.value = 'HUNTER';
+    }
+
+    function buildModelList(allModels, filterText) {
+      const text = String(filterText || '').trim().toLowerCase();
+      const list = allModels.filter((p) => {
+        if (!text) return true;
+        return p.toLowerCase().includes(text);
+      });
+      list.sort((a, b) => a.localeCompare(b));
+      return list;
+    }
+
+    function setMetaHint(modelPath, metaUrl) {
+      if (!modelPath) {
+        ui.metaHint.textContent = '(no model)';
+        ui.saveHint.textContent = '(select a model)';
+        return;
+      }
+      const hint = metaUrl || getCandidateMetaUrls(modelPath)[0] || '(meta.json)';
+      ui.metaHint.textContent = hint;
+      ui.saveHint.textContent = `Target: ${hint}`;
+    }
+
+    function readRotationDegFromMeta(metaJson) {
+      const deg = metaJson?.correctionRotationDeg || null;
+      if (deg && typeof deg === 'object') {
+        return {
+          x: toNum(deg.x, 0),
+          y: toNum(deg.y, 0),
+          z: toNum(deg.z, 0)
+        };
+      }
+      const rad = metaJson?.correctionRotationRad || null;
+      if (rad && typeof rad === 'object') {
+        return {
+          x: Math.round(toNum(rad.x, 0) * RAD2DEG),
+          y: Math.round(toNum(rad.y, 0) * RAD2DEG),
+          z: Math.round(toNum(rad.z, 0) * RAD2DEG)
+        };
+      }
+      return null;
+    }
+
+    function applyMetaToUI(metaJson) {
+      const scaleMultiplier = clamp(toNum(metaJson?.scaleMultiplier, 1), 0.01, 100);
+      const groundOffset = clamp(toNum(metaJson?.groundOffset, 0.02), -10, 10);
+      const hitRadius =
+        toNum(metaJson?.hitRadius, null) ??
+        toNum(metaJson?.stats?.hitRadius, 1.0);
+
+      ui.scaleMultiplier.value = String(scaleMultiplier);
+      ui.groundOffset.value = String(groundOffset);
+      ui.hitRadius.value = String(clamp(hitRadius, 0.05, 20));
+
+      const rot = readRotationDegFromMeta(metaJson);
+      ui.rotationOverride.checked = !!rot;
+      ui.rotX.value = String(rot?.x ?? 0);
+      ui.rotY.value = String(rot?.y ?? 0);
+      ui.rotZ.value = String(rot?.z ?? 0);
+
+      const off = (metaJson && typeof metaJson === 'object') ? metaJson.correctionOffset : null;
+      ui.offX.value = String(clamp(toNum(off?.x, 0), -50, 50));
+      ui.offY.value = String(clamp(toNum(off?.y, 0), -50, 50));
+      ui.offZ.value = String(clamp(toNum(off?.z, 0), -50, 50));
+
+      const ranged = metaJson?.combat?.ranged || null;
+      if (ranged && typeof ranged === 'object') {
+        ui.rangedEnabled.checked = ranged.enabled !== false;
+        ui.rangedKind.value = String(ranged.kind || 'bolt');
+        ui.rangedDamage.value = String(toNum(ranged.damage, 8));
+        ui.rangedRange.value = String(toNum(ranged.range, 14));
+        ui.rangedMinRange.value = String(toNum(ranged.minRange, 4));
+        ui.rangedFireChance.value = String(clamp(toNum(ranged.fireChance, 0.75), 0, 1));
+        ui.rangedSpread.value = String(clamp(toNum(ranged.spread, 0.04), 0, 1));
+        ui.rangedShotInterval.value = String(toNum(ranged.shotInterval ?? ranged.cooldown, 1.05));
+        ui.rangedMagSize.value = String(Math.max(1, Math.round(toNum(ranged.magSize, 6))));
+        ui.rangedReload.value = String(toNum(ranged.reloadSeconds, 1.65));
+        ui.rangedBurstMin.value = String(Math.max(1, Math.round(toNum(ranged.burstMin, 1))));
+        ui.rangedBurstMax.value = String(Math.max(1, Math.round(toNum(ranged.burstMax, 2))));
+        ui.rangedBurstRest.value = String(toNum(ranged.burstRestSeconds ?? ranged.burstRest, 0.7));
+        ui.rangedAlignDeg.value = String(Math.max(1, Math.round(toNum(ranged.fireAlignDeg, 16))));
+        ui.rangedTurnSpeed.value = String(toNum(ranged.turnSpeed, 6.5));
+      }
+
+      updateDisplays();
+    }
+
+    function updateDisplays() {
+      ui.scaleMultiplierVal.textContent = format(toNum(ui.scaleMultiplier.value, 1), 2);
+      ui.groundOffsetVal.textContent = format(toNum(ui.groundOffset.value, 0.02), 2);
+      ui.spawnDistanceVal.textContent = String(Math.round(toNum(ui.spawnDistance.value, 8)));
+    }
+
+    function buildMetaFromUI(baseMeta) {
+      const next = deepClone(baseMeta || {});
+
+      next.scaleMultiplier = clamp(toNum(ui.scaleMultiplier.value, 1), 0.01, 100);
+      next.groundOffset = clamp(toNum(ui.groundOffset.value, 0.02), -10, 10);
+
+      const hitRadius = clamp(toNum(ui.hitRadius.value, 1.0), 0.05, 20);
+      next.stats = typeof next.stats === 'object' && next.stats ? next.stats : {};
+      next.stats.hitRadius = hitRadius;
+
+      if (ui.rotationOverride.checked) {
+        next.correctionRotationDeg = {
+          x: clamp(Math.round(toNum(ui.rotX.value, 0)), -180, 180),
+          y: clamp(Math.round(toNum(ui.rotY.value, 0)), -180, 180),
+          z: clamp(Math.round(toNum(ui.rotZ.value, 0)), -180, 180)
+        };
+        delete next.correctionRotationRad;
+      } else {
+        delete next.correctionRotationDeg;
+        delete next.correctionRotationRad;
+      }
+
+      const ox = clamp(toNum(ui.offX.value, 0), -50, 50);
+      const oy = clamp(toNum(ui.offY.value, 0), -50, 50);
+      const oz = clamp(toNum(ui.offZ.value, 0), -50, 50);
+      if (Math.abs(ox) > 1e-6 || Math.abs(oy) > 1e-6 || Math.abs(oz) > 1e-6) {
+        next.correctionOffset = { x: ox, y: oy, z: oz };
+      } else {
+        delete next.correctionOffset;
+      }
+
+      const combat = typeof next.combat === 'object' && next.combat ? next.combat : {};
+      const ranged = {
+        enabled: !!ui.rangedEnabled.checked,
+        kind: String(ui.rangedKind.value || 'bolt'),
+        damage: Math.max(0, Math.round(toNum(ui.rangedDamage.value, 8))),
+        range: Math.max(0, toNum(ui.rangedRange.value, 14)),
+        minRange: Math.max(0, toNum(ui.rangedMinRange.value, 4)),
+        fireChance: clamp(toNum(ui.rangedFireChance.value, 0.75), 0, 1),
+        spread: clamp(toNum(ui.rangedSpread.value, 0.04), 0, 1),
+        shotInterval: Math.max(0.05, toNum(ui.rangedShotInterval.value, 1.05)),
+        magSize: Math.max(1, Math.round(toNum(ui.rangedMagSize.value, 6))),
+        reloadSeconds: Math.max(0.1, toNum(ui.rangedReload.value, 1.65)),
+        burstMin: Math.max(1, Math.round(toNum(ui.rangedBurstMin.value, 1))),
+        burstMax: Math.max(1, Math.round(toNum(ui.rangedBurstMax.value, 2))),
+        burstRestSeconds: Math.max(0, toNum(ui.rangedBurstRest.value, 0.7)),
+        fireAlignDeg: Math.max(1, Math.round(toNum(ui.rangedAlignDeg.value, 16))),
+        turnSpeed: Math.max(0.1, toNum(ui.rangedTurnSpeed.value, 6.5))
+      };
+
+      combat.ranged = ranged;
+      next.combat = combat;
+
+      return next;
+    }
+
+    function buildRuntimeMeta(metaSave) {
+      const meta = deepClone(metaSave || {});
+      if (meta?.correctionRotationDeg && typeof meta.correctionRotationDeg === 'object') {
+        const deg = meta.correctionRotationDeg;
+        meta.correctionRotationRad = {
+          x: toNum(deg.x, 0) * DEG2RAD,
+          y: toNum(deg.y, 0) * DEG2RAD,
+          z: toNum(deg.z, 0) * DEG2RAD
+        };
+      }
+      return meta;
+    }
+
+    function updateMetaOutput(modelPath, baseMeta) {
+      const meta = buildMetaFromUI(baseMeta);
+      ui.jsonOut.value = JSON.stringify(meta, null, 2);
+      setMetaHint(modelPath, getCandidateMetaUrls(modelPath)[0] || null);
+    }
+
+    // --- Three.js / game systems ---
+    const eventBus = new EventBus();
+
+    CONFIG.AUTO_REVIVE = true;
+    CONFIG.SPAWN_DIRECTOR_ENABLED = false;
+
+    const worldState = createArenaWorldState(17);
+
+    const canvasContainer = document.getElementById('canvas-container');
+    const sceneManager = new SceneManager(canvasContainer);
+    const cameraController = new FirstPersonCamera(canvasContainer.clientWidth / Math.max(1, canvasContainer.clientHeight));
+    sceneManager.setCamera(cameraController);
+
+    sceneManager.buildWorldFromGrid(worldState);
+
+    const input = new InputHandler();
+    const audioManager = new AudioManager(cameraController.getCamera());
+
+    const gameState = new GameState(eventBus);
+    gameState.maxHealth = 999;
+    gameState.currentHealth = 999;
+
+    const player = new PlayerController(worldState, cameraController, input, gameState, audioManager);
+
+    const monsterManager = new MonsterManager(sceneManager.getScene(), worldState, player, eventBus);
+    monsterManager.setAutoRespawnEnabled(false);
+
+    const projectileManager = new ProjectileManager(
+      sceneManager.getScene(),
+      worldState,
+      monsterManager,
+      player,
+      eventBus
+    );
+    monsterManager.setProjectileManager(projectileManager);
+
+    const weaponView = new WeaponView(sceneManager.getScene(), cameraController, player);
+    const gun = new Gun(sceneManager.getScene(), cameraController, input, projectileManager, audioManager, weaponView, eventBus);
+
+    const combatSystem = new CombatSystem({
+      eventBus,
+      monsterManager,
+      projectileManager,
+      playerRef: player,
+      gameState
+    });
+    void combatSystem;
+
+    const rendererEl = sceneManager.renderer?.domElement || null;
+    const orbitControls = rendererEl
+      ? new OrbitControls(cameraController.getCamera(), rendererEl)
+      : null;
+    if (orbitControls) {
+      orbitControls.enabled = false;
+      orbitControls.enableDamping = true;
+      orbitControls.dampingFactor = 0.12;
+      orbitControls.rotateSpeed = 0.7;
+      orbitControls.zoomSpeed = 0.8;
+      orbitControls.panSpeed = 0.8;
+      orbitControls.screenSpacePanning = true;
+    }
+
+    const transformControls = rendererEl
+      ? new TransformControls(cameraController.getCamera(), rendererEl)
+      : null;
+    if (transformControls) {
+      transformControls.enabled = false;
+      transformControls.visible = false;
+      sceneManager.getScene().add(transformControls);
+      transformControls.addEventListener('dragging-changed', (e) => {
+        if (orbitControls) orbitControls.enabled = !e?.value;
+      });
+      transformControls.addEventListener('objectChange', () => {
+        if (labMode !== 'edit') return;
+        if (isPullingFromGizmo) return;
+        pullMetaFromLiveMonster();
+      });
+    }
+
+    let aiEnabled = true;
+    let baseMeta = {};
+    let currentModelPath = null;
+    let baseCorrectionRotation = null; // {x,y,z} degrees from auto-upright
+    let baseInnerPosition = null; // {x,y,z} from wrapped __monsterInner
+    let labMode = 'play'; // play | edit
+    let editorOp = 'rotate'; // rotate | translate
+    let editorSpace = 'local'; // local | world
+    let isPullingFromGizmo = false;
+    let cachedPlayYaw = 0;
+    let cachedPlayPitch = 0;
+    const lockOverlay = document.getElementById('lock-overlay');
+
+    function resetPlayer() {
+      const sp = worldState.getSpawnPoint();
+      const tileSize = CONFIG.TILE_SIZE || 1;
+      const x = (sp.x + 0.5) * tileSize;
+      const z = (sp.y + 0.5) * tileSize;
+      player.setPosition(x, CONFIG.PLAYER_HEIGHT ?? 1.7, z);
+      cameraController.setYawPitch(0, 0);
+    }
+
+    resetPlayer();
+
+    function getCurrentMonster() {
+      const list = monsterManager.getMonsters?.() || [];
+      return list.length > 0 ? list[0] : null;
+    }
+
+    function computeBaseCorrectionRotationDegreesFromModel(model) {
+      if (!model?.getObjectByName) return null;
+      const correction = model.getObjectByName('__monsterCorrection');
+      if (!correction) return null;
+      return {
+        x: correction.rotation.x * RAD2DEG,
+        y: correction.rotation.y * RAD2DEG,
+        z: correction.rotation.z * RAD2DEG
+      };
+    }
+
+    function computeBaseInnerPositionFromModel(model) {
+      if (!model?.getObjectByName) return null;
+      const inner = model.getObjectByName('__monsterInner');
+      if (!inner) return null;
+      return {
+        x: inner.position.x,
+        y: inner.position.y,
+        z: inner.position.z
+      };
+    }
+
+    function updateBaseRotUI(rot) {
+      if (!rot) {
+        ui.baseRotPill.textContent = 'x=– y=– z=–';
+        return;
+      }
+      ui.baseRotPill.textContent =
+        `x=${format(rot.x, 1)}° y=${format(rot.y, 1)}° z=${format(rot.z, 1)}°`;
+    }
+
+    function updateBasePosUI(pos) {
+      if (!pos) {
+        ui.basePosPill.textContent = 'x=– y=– z=–';
+        return;
+      }
+      ui.basePosPill.textContent =
+        `x=${format(pos.x, 2)} y=${format(pos.y, 2)} z=${format(pos.z, 2)}`;
+    }
+
+    function isTypingTarget(target) {
+      if (!target) return false;
+      const tag = String(target.tagName || '').toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || !!target.isContentEditable;
+    }
+
+    function getLiveNodes() {
+      const monster = getCurrentMonster();
+      if (!monster) return null;
+      const model = monster.getModel?.() || monster.model || null;
+      const correction = model?.getObjectByName?.('__monsterCorrection') || null;
+      const inner = model?.getObjectByName?.('__monsterInner') || null;
+      return { monster, model, correction, inner };
+    }
+
+    function refreshEditorAttachment() {
+      if (!transformControls) return;
+      if (labMode !== 'edit') {
+        transformControls.detach();
+        transformControls.enabled = false;
+        transformControls.visible = false;
+        if (orbitControls) orbitControls.enabled = false;
+        return;
+      }
+
+      transformControls.enabled = true;
+      transformControls.visible = true;
+      transformControls.setSpace(editorSpace);
+
+      const nodes = getLiveNodes();
+      const correction = nodes?.correction || null;
+      const inner = nodes?.inner || null;
+
+      if (editorOp === 'translate') {
+        transformControls.setMode('translate');
+        if (inner) transformControls.attach(inner);
+        else transformControls.detach();
+      } else {
+        transformControls.setMode('rotate');
+        if (correction) transformControls.attach(correction);
+        else transformControls.detach();
+      }
+
+      if (orbitControls) orbitControls.enabled = true;
+    }
+
+    function frameCurrentMonster() {
+      if (!orbitControls) return;
+      const nodes = getLiveNodes();
+      const object = nodes?.model || null;
+      if (!object) return;
+
+      const box = new THREE.Box3().setFromObject(object);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      if (!Number.isFinite(center.x) || !Number.isFinite(center.y) || !Number.isFinite(center.z)) return;
+
+      const radius = Math.max(0.6, Math.max(size.x, size.y, size.z) * 0.6);
+      orbitControls.target.copy(center);
+
+      const cam = cameraController.getCamera();
+      const dir = new THREE.Vector3(1, 0.6, 1).normalize();
+      cam.position.copy(center).add(dir.multiplyScalar(radius * 3.2));
+      cam.lookAt(center);
+      orbitControls.update();
+    }
+
+    function pullMetaFromLiveMonster() {
+      const nodes = getLiveNodes();
+      if (!nodes) return;
+
+      const correction = nodes.correction;
+      const inner = nodes.inner;
+
+      isPullingFromGizmo = true;
+      try {
+        if (correction) {
+          ui.rotationOverride.checked = true;
+          ui.rotX.value = String(clamp(Math.round(correction.rotation.x * RAD2DEG), -180, 180));
+          ui.rotY.value = String(clamp(Math.round(correction.rotation.y * RAD2DEG), -180, 180));
+          ui.rotZ.value = String(clamp(Math.round(correction.rotation.z * RAD2DEG), -180, 180));
+        }
+
+        if (inner && baseInnerPosition) {
+          const ox = clamp(inner.position.x - baseInnerPosition.x, -50, 50);
+          const oy = clamp(inner.position.y - baseInnerPosition.y, -50, 50);
+          const oz = clamp(inner.position.z - baseInnerPosition.z, -50, 50);
+          ui.offX.value = format(ox, 2);
+          ui.offY.value = format(oy, 2);
+          ui.offZ.value = format(oz, 2);
+        }
+
+        updateMetaOutput(currentModelPath, baseMeta);
+
+        const groundOffset = clamp(toNum(ui.groundOffset.value, 0.02), -10, 10);
+        nodes.monster.alignToGround?.(groundOffset);
+      } finally {
+        isPullingFromGizmo = false;
+      }
+    }
+
+    function setLabMode(nextMode) {
+      const next = nextMode === 'edit' ? 'edit' : 'play';
+      if (next === labMode) return;
+
+      if (next === 'edit') {
+        cachedPlayYaw = cameraController.getYaw();
+        cachedPlayPitch = cameraController.getPitch();
+      }
+
+      labMode = next;
+
+      if (labMode === 'edit') {
+        input.exitPointerLock();
+        if (lockOverlay) lockOverlay.style.display = 'none';
+        if (orbitControls) orbitControls.enabled = true;
+        refreshEditorAttachment();
+        frameCurrentMonster();
+      } else {
+        if (orbitControls) orbitControls.enabled = false;
+        if (transformControls) {
+          transformControls.detach();
+          transformControls.enabled = false;
+          transformControls.visible = false;
+        }
+        if (lockOverlay) lockOverlay.style.display = 'flex';
+
+        const pos = player.getPosition();
+        cameraController.updatePosition(pos.x, pos.y, pos.z);
+        cameraController.setYawPitch(cachedPlayYaw || 0, cachedPlayPitch || 0);
+      }
+    }
+
+    function setEditorOp(nextOp) {
+      const op = nextOp === 'translate' ? 'translate' : 'rotate';
+      editorOp = op;
+      refreshEditorAttachment();
+    }
+
+    function toggleEditorSpace() {
+      editorSpace = editorSpace === 'world' ? 'local' : 'world';
+      refreshEditorAttachment();
+    }
+
+    function nudgeOffset(dx, dy, dz) {
+      const x = clamp(toNum(ui.offX.value, 0) + dx, -50, 50);
+      const y = clamp(toNum(ui.offY.value, 0) + dy, -50, 50);
+      const z = clamp(toNum(ui.offZ.value, 0) + dz, -50, 50);
+      ui.offX.value = format(x, 2);
+      ui.offY.value = format(y, 2);
+      ui.offZ.value = format(z, 2);
+      updateMetaOutput(currentModelPath, baseMeta);
+      applyTransformToLiveMonster();
+      refreshEditorAttachment();
+    }
+
+    async function spawnMonsters() {
+      const modelPath = ui.modelSelect.value || null;
+      if (!modelPath) return;
+
+      setStatus('Spawning…', 'warn');
+      currentModelPath = modelPath;
+      updateMetaOutput(modelPath, baseMeta);
+
+      const metaSave = buildMetaFromUI(baseMeta);
+      const metaRuntime = buildRuntimeMeta(metaSave);
+
+      const tileSize = CONFIG.TILE_SIZE || 1;
+      const playerPos = player.getPosition();
+      const camObj = cameraController.getCamera();
+      const dir = getForwardXZ(camObj);
+      const distTiles = Math.round(toNum(ui.spawnDistance.value, 8));
+
+      const spawnWorld = playerPos.clone().add(dir.multiplyScalar(distTiles * tileSize));
+      const spawnGrid = {
+        x: Math.floor(spawnWorld.x / tileSize),
+        y: Math.floor(spawnWorld.z / tileSize)
+      };
+      const spawn = findWalkableNear(worldState, spawnGrid, 8) || worldState.getSpawnPoint();
+
+      // Clear old
+      monsterManager.clear();
+
+      // Capture auto-upright base rotation for UI. (We read it from the freshly loaded model.)
+      try {
+        const { model, animations } = await monsterManager.modelLoader.loadModelWithAnimations(modelPath);
+        baseCorrectionRotation = computeBaseCorrectionRotationDegreesFromModel(model);
+        baseInnerPosition = computeBaseInnerPositionFromModel(model);
+        updateBaseRotUI(baseCorrectionRotation);
+        updateBasePosUI(baseInnerPosition);
+
+        const typeKey = ui.typeSelect.value || 'HUNTER';
+        const baseType = deepClone(MonsterTypes[typeKey] || MonsterTypes.HUNTER || {});
+
+        const spawnMode = ui.spawnMode.value || 'single';
+        const squadId = `lab-${Date.now()}`;
+
+        const spawnSingle = async (role, gridPos) => {
+          const typeConfig = deepClone(baseType) || baseType;
+          typeConfig.squad = { squadId, role };
+          const { model: m, animations: a } = await monsterManager.modelLoader.loadModelWithAnimations(modelPath);
+          await monsterManager.spawnMonster(m, a, gridPos, typeConfig, null, null, { modelPath, meta: metaRuntime });
+        };
+
+        if (spawnMode === 'squad') {
+          const ring = [
+            spawn,
+            findWalkableNear(worldState, { x: spawn.x + 2, y: spawn.y }, 6) || spawn,
+            findWalkableNear(worldState, { x: spawn.x - 2, y: spawn.y }, 6) || spawn
+          ];
+          await spawnSingle('leader', ring[0]);
+          await spawnSingle('flanker', ring[1]);
+          await spawnSingle('cover', ring[2]);
+        } else {
+          const role = ui.roleSelect.value || 'leader';
+          await spawnSingle(role, spawn);
+        }
+
+        // Face the spawned monster(s)
+        const first = getCurrentMonster();
+        const firstPos = first?.getWorldPosition?.() || null;
+        if (firstPos && labMode === 'play') {
+          setPlayerLookAt(player, cameraController, firstPos);
+        }
+        if (labMode === 'edit') {
+          frameCurrentMonster();
+        }
+        refreshEditorAttachment();
+
+        setStatus('Ready', 'ok');
+      } catch (err) {
+        console.error(err);
+        setStatus(`Spawn failed: ${err?.message || err}`, 'bad');
+      }
+    }
+
+    function applyPreviewYaw() {
+      const monster = getCurrentMonster();
+      if (!monster || typeof monster.setYaw !== 'function') return;
+      const deg = toNum(ui.previewYaw.value, 0);
+      monster.setYaw((deg * DEG2RAD));
+    }
+
+    function applyTransformToLiveMonster() {
+      const monster = getCurrentMonster();
+      if (!monster) return;
+      const model = monster.getModel?.() || monster.model || null;
+      const correction = model?.getObjectByName?.('__monsterCorrection') || null;
+      const inner = model?.getObjectByName?.('__monsterInner') || null;
+
+      if (ui.rotationOverride.checked && correction) {
+        correction.rotation.set(
+          clamp(toNum(ui.rotX.value, 0) * DEG2RAD, -Math.PI, Math.PI),
+          clamp(toNum(ui.rotY.value, 0) * DEG2RAD, -Math.PI, Math.PI),
+          clamp(toNum(ui.rotZ.value, 0) * DEG2RAD, -Math.PI, Math.PI)
+        );
+      } else if (!ui.rotationOverride.checked && correction && baseCorrectionRotation) {
+        correction.rotation.set(
+          baseCorrectionRotation.x * DEG2RAD,
+          baseCorrectionRotation.y * DEG2RAD,
+          baseCorrectionRotation.z * DEG2RAD
+        );
+      }
+
+      if (inner && baseInnerPosition) {
+        const ox = clamp(toNum(ui.offX.value, 0), -50, 50);
+        const oy = clamp(toNum(ui.offY.value, 0), -50, 50);
+        const oz = clamp(toNum(ui.offZ.value, 0), -50, 50);
+        inner.position.set(
+          baseInnerPosition.x + ox,
+          baseInnerPosition.y + oy,
+          baseInnerPosition.z + oz
+        );
+      }
+
+      const groundOffset = clamp(toNum(ui.groundOffset.value, 0.02), -10, 10);
+      monster.groundOffset = groundOffset;
+      monster.alignToGround?.(groundOffset);
+    }
+
+    function applyCombatToLiveMonster() {
+      const monsters = monsterManager.getMonsters?.() || [];
+      if (monsters.length === 0) return;
+      const ranged = {
+        enabled: !!ui.rangedEnabled.checked,
+        kind: String(ui.rangedKind.value || 'bolt'),
+        damage: Math.max(0, Math.round(toNum(ui.rangedDamage.value, 8))),
+        range: Math.max(0, toNum(ui.rangedRange.value, 14)),
+        minRange: Math.max(0, toNum(ui.rangedMinRange.value, 4)),
+        fireChance: clamp(toNum(ui.rangedFireChance.value, 0.75), 0, 1),
+        spread: clamp(toNum(ui.rangedSpread.value, 0.04), 0, 1),
+        shotInterval: Math.max(0.05, toNum(ui.rangedShotInterval.value, 1.05)),
+        magSize: Math.max(1, Math.round(toNum(ui.rangedMagSize.value, 6))),
+        reloadSeconds: Math.max(0.1, toNum(ui.rangedReload.value, 1.65)),
+        burstMin: Math.max(1, Math.round(toNum(ui.rangedBurstMin.value, 1))),
+        burstMax: Math.max(1, Math.round(toNum(ui.rangedBurstMax.value, 2))),
+        burstRestSeconds: Math.max(0, toNum(ui.rangedBurstRest.value, 0.7)),
+        fireAlignDeg: Math.max(1, Math.round(toNum(ui.rangedAlignDeg.value, 16))),
+        turnSpeed: Math.max(0.1, toNum(ui.rangedTurnSpeed.value, 6.5))
+      };
+      for (const monster of monsters) {
+        monster.typeConfig = monster.typeConfig || {};
+        monster.typeConfig.combat = monster.typeConfig.combat || {};
+        monster.typeConfig.combat.ranged = { ...(monster.typeConfig.combat.ranged || {}), ...ranged };
+      }
+    }
+
+    // UI hooks
+    ui.modeSelect.value = labMode;
+    ui.modeSelect.addEventListener('change', () => {
+      setLabMode(ui.modeSelect.value);
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (labMode !== 'edit') return;
+      if (isTypingTarget(e.target)) return;
+
+      if (e.code === 'KeyW') {
+        e.preventDefault();
+        setEditorOp('translate');
+        return;
+      }
+      if (e.code === 'KeyE') {
+        e.preventDefault();
+        setEditorOp('rotate');
+        return;
+      }
+      if (e.code === 'KeyQ') {
+        e.preventDefault();
+        toggleEditorSpace();
+        return;
+      }
+      if (e.code === 'KeyF') {
+        e.preventDefault();
+        frameCurrentMonster();
+        return;
+      }
+
+      const step = e.shiftKey ? 0.1 : 0.02;
+      if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        nudgeOffset(-step, 0, 0);
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        nudgeOffset(step, 0, 0);
+      } else if (e.code === 'ArrowUp') {
+        e.preventDefault();
+        nudgeOffset(0, 0, -step);
+      } else if (e.code === 'ArrowDown') {
+        e.preventDefault();
+        nudgeOffset(0, 0, step);
+      } else if (e.code === 'PageUp') {
+        e.preventDefault();
+        nudgeOffset(0, step, 0);
+      } else if (e.code === 'PageDown') {
+        e.preventDefault();
+        nudgeOffset(0, -step, 0);
+      }
+    });
+
+    ui.spawnBtn.addEventListener('click', () => void spawnMonsters());
+    ui.resetPlayerBtn.addEventListener('click', () => resetPlayer());
+    ui.toggleAiBtn.addEventListener('click', () => {
+      aiEnabled = !aiEnabled;
+      ui.toggleAiBtn.textContent = aiEnabled ? 'AI: ON' : 'AI: OFF';
+    });
+    ui.clearProjectilesBtn.addEventListener('click', () => {
+      projectileManager.reset?.();
+    });
+
+    ui.spawnDistance.addEventListener('input', () => updateDisplays());
+    ui.scaleMultiplier.addEventListener('input', () => {
+      updateDisplays();
+      updateMetaOutput(currentModelPath, baseMeta);
+    });
+    ui.groundOffset.addEventListener('input', () => {
+      updateDisplays();
+      updateMetaOutput(currentModelPath, baseMeta);
+      applyTransformToLiveMonster();
+    });
+
+    for (const el of [ui.rotX, ui.rotY, ui.rotZ]) {
+      el.addEventListener('input', () => {
+        updateMetaOutput(currentModelPath, baseMeta);
+        applyTransformToLiveMonster();
+      });
+    }
+
+    for (const el of [ui.offX, ui.offY, ui.offZ]) {
+      el.addEventListener('input', () => {
+        updateMetaOutput(currentModelPath, baseMeta);
+        applyTransformToLiveMonster();
+      });
+      el.addEventListener('change', () => {
+        updateMetaOutput(currentModelPath, baseMeta);
+        applyTransformToLiveMonster();
+      });
+    }
+
+    ui.resetOffsetBtn.addEventListener('click', () => {
+      ui.offX.value = '0';
+      ui.offY.value = '0';
+      ui.offZ.value = '0';
+      updateMetaOutput(currentModelPath, baseMeta);
+      applyTransformToLiveMonster();
+    });
+
+    ui.rotationOverride.addEventListener('change', () => {
+      if (ui.rotationOverride.checked && baseCorrectionRotation) {
+        ui.rotX.value = String(Math.round(baseCorrectionRotation.x));
+        ui.rotY.value = String(Math.round(baseCorrectionRotation.y));
+        ui.rotZ.value = String(Math.round(baseCorrectionRotation.z));
+      }
+      updateMetaOutput(currentModelPath, baseMeta);
+      applyTransformToLiveMonster();
+    });
+
+    ui.hitRadius.addEventListener('input', () => updateMetaOutput(currentModelPath, baseMeta));
+    ui.previewYaw.addEventListener('input', () => applyPreviewYaw());
+
+    ui.applyCombatBtn.addEventListener('click', () => {
+      applyCombatToLiveMonster();
+      updateMetaOutput(currentModelPath, baseMeta);
+      setStatus('Combat applied', 'ok');
+    });
+
+    for (const el of [
+      ui.rangedEnabled, ui.rangedKind, ui.rangedDamage, ui.rangedRange, ui.rangedMinRange,
+      ui.rangedFireChance, ui.rangedSpread, ui.rangedShotInterval, ui.rangedMagSize, ui.rangedReload,
+      ui.rangedBurstMin, ui.rangedBurstMax, ui.rangedBurstRest, ui.rangedAlignDeg, ui.rangedTurnSpeed
+    ]) {
+      el.addEventListener('input', () => updateMetaOutput(currentModelPath, baseMeta));
+      el.addEventListener('change', () => updateMetaOutput(currentModelPath, baseMeta));
+    }
+
+    ui.lockBtn.addEventListener('click', () => {
+      input.requestPointerLock();
+    });
+
+    ui.copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(ui.jsonOut.value);
+        setStatus('Copied', 'ok');
+      } catch (err) {
+        void err;
+        setStatus('Copy failed (clipboard blocked)', 'bad');
+      }
+    });
+
+	    ui.saveBtn.addEventListener('click', async () => {
+	      if (!currentModelPath) return;
+	      const meta = buildMetaFromUI(baseMeta);
+	      setStatus('Saving…', 'warn');
+	      try {
+        const res = await fetch('/api/enemy-meta', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelPath: currentModelPath, meta })
+        });
+        const json = await res.json().catch(() => ({}));
+	        if (!res.ok || !json?.ok) {
+	          setStatus(`Save failed (${res.status})`, 'bad');
+	          return;
+	        }
+	        const file = typeof json?.file === 'string' ? json.file : null;
+	        setStatus(file ? `Saved → ${file}` : 'Saved', 'ok');
+	      } catch (err) {
+	        setStatus(`Save failed: ${err?.message || err}`, 'bad');
+	      }
+	    });
+
+    ui.modelSelect.addEventListener('change', async () => {
+      const modelPath = ui.modelSelect.value || null;
+      currentModelPath = modelPath;
+      baseMeta = {};
+      baseCorrectionRotation = null;
+      baseInnerPosition = null;
+      updateBaseRotUI(null);
+      updateBasePosUI(null);
+
+      if (!modelPath) return;
+      setStatus('Loading meta…', 'warn');
+      const { url, json } = await fetchExistingMeta(modelPath);
+      baseMeta = json || {};
+      setMetaHint(modelPath, url && json ? url : null);
+      applyMetaToUI(baseMeta);
+      updateMetaOutput(modelPath, baseMeta);
+      setStatus('Ready', 'ok');
+      void spawnMonsters();
+    });
+
+    ui.modelFilter.addEventListener('input', async () => {
+      const filter = ui.modelFilter.value || '';
+      const list = buildModelList(allModels, filter);
+      repopulateModels(list, ui.modelSelect.value || null);
+    });
+
+    ui.typeSelect.addEventListener('change', () => updateMetaOutput(currentModelPath, baseMeta));
+    ui.roleSelect.addEventListener('change', () => updateMetaOutput(currentModelPath, baseMeta));
+    ui.spawnMode.addEventListener('change', () => updateMetaOutput(currentModelPath, baseMeta));
+
+    // Populate models/types on load
+    populateMonsterTypes();
+
+    let allModels = [];
+    function repopulateModels(models, keepSelected = null) {
+      ui.modelSelect.innerHTML = '';
+      for (const p of models) {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p;
+        ui.modelSelect.appendChild(opt);
+      }
+      ui.modelCount.textContent = `${models.length} models`;
+
+      if (keepSelected && models.includes(keepSelected)) {
+        ui.modelSelect.value = keepSelected;
+      } else {
+        ui.modelSelect.value = models[0] || '';
+      }
+    }
+
+    try {
+      allModels = await fetchManifest();
+      repopulateModels(buildModelList(allModels, ''), null);
+      ui.modelSelect.dispatchEvent(new Event('change'));
+    } catch (err) {
+      console.error(err);
+      setStatus('Manifest load failed', 'bad');
+    }
+
+    // Main loop
+    let lastMs = performance.now();
+    function frame(nowMs) {
+      const dt = Math.min(0.05, Math.max(0, (nowMs - lastMs) / 1000));
+      lastMs = nowMs;
+
+      ui.lockState.textContent = input.isPointerLocked() ? 'Mouse: locked' : 'Mouse: unlocked';
+
+      if (labMode === 'play') {
+        // Player only updates while pointer-locked (by design)
+        player.update(dt, false, null);
+        gun.update(dt, null, false);
+      } else {
+        orbitControls?.update?.();
+      }
+      projectileManager.update(dt);
+
+      if (aiEnabled) {
+        const playerPos = player.getPosition();
+        monsterManager.update(dt, playerPos);
+      }
+
+      sceneManager.update(dt);
+      sceneManager.render();
+
+      // HUD
+      const monsters = monsterManager.getMonsters?.() || [];
+      const alive = monsters.filter(m => m && !m.isDead && !m.isDying).length;
+      const total = monsters.length;
+      const proj = projectileManager?.projectiles?.length || 0;
+      const impacts = projectileManager?.impacts?.length || 0;
+      const explosions = projectileManager?.explosions?.length || 0;
+      const hp = gameState?.currentHealth ?? 0;
+
+      ui.hud.textContent =
+        `Pointer lock: ${input.isPointerLocked() ? 'ON' : 'OFF'}\n` +
+        `Mode: ${labMode === 'edit' ? 'Edit (Orbit + Gizmo)' : 'Play (First-person)'}\n` +
+        `Health: ${hp}\n` +
+        `Monsters: ${alive}/${total}\n` +
+        `Projectiles: ${proj} | Impacts: ${impacts} | Explosions: ${explosions}\n` +
+        `AI: ${aiEnabled ? 'ON' : 'OFF'}\n` +
+        (
+          labMode === 'edit'
+            ? `Editor: ${editorOp} (${editorSpace}) | W/E/Q/F + Arrow keys + PgUp/PgDn`
+            : `Controls: click "Lock Mouse" → WASD move, Mouse look, LMB fire, ESC unlock`
+        );
+
+      requestAnimationFrame(frame);
+    }
+
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

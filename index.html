@@ -47,6 +47,71 @@
       margin: 5px 0;
     }
 
+    /* Crosshair */
+    #crosshair {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: 14px;
+      height: 14px;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 150;
+      opacity: 0.9;
+      mix-blend-mode: screen;
+    }
+
+    #crosshair::before,
+    #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255, 255, 255, 0.85);
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+    }
+
+    #crosshair::before {
+      left: 50%;
+      top: 0;
+      width: 2px;
+      height: 14px;
+      transform: translateX(-50%);
+    }
+
+    #crosshair::after {
+      left: 0;
+      top: 50%;
+      width: 14px;
+      height: 2px;
+      transform: translateY(-50%);
+    }
+
+    #crosshair.pulse {
+      transform: translate(-50%, -50%) scale(1.25);
+      opacity: 1;
+    }
+
+    #crosshair.hit {
+      transform: translate(-50%, -50%) scale(1.35);
+      opacity: 1;
+    }
+
+    #crosshair.hit::before,
+    #crosshair.hit::after {
+      background: rgba(120, 255, 175, 0.95);
+      box-shadow: 0 0 10px rgba(120, 255, 175, 0.55);
+    }
+
+    #crosshair.kill {
+      transform: translate(-50%, -50%) scale(1.45);
+      opacity: 1;
+    }
+
+    #crosshair.kill::before,
+    #crosshair.kill::after {
+      background: rgba(255, 120, 120, 0.95);
+      box-shadow: 0 0 10px rgba(255, 120, 120, 0.6);
+    }
+
     #instructions {
       position: absolute;
       top: 50%;
@@ -105,7 +170,7 @@
       border: 2px solid #ffd700;
       z-index: 999;
       pointer-events: auto; /* Enable clicks */
-      max-width: 260px;
+      max-width: calc(100vw - 40px);
     }
 
     #minimap-container h4 {
@@ -241,17 +306,22 @@
 <body>
   <!-- Canvas container for Three.js -->
   <div id="canvas-container"></div>
+  <div id="crosshair"></div>
 
   <!-- UI Overlay -->
   <div id="ui-overlay">
     <h3>Procedural 3D Maze</h3>
-    <p>时间: <span id="game-time" style="color: #ffd700; font-weight: bold;">00:00</span></p>
-    <p>生命值: <span id="health-display" style="color: #ff4444; font-weight: bold;">100</span>/100</p>
+    <p>Time: <span id="game-time" style="color: #ffd700; font-weight: bold;">00:00</span></p>
+    <p>Health: <span id="health-display" style="color: #ff4444; font-weight: bold;">100</span>/100</p>
     <div id="health-bar" style="width: 200px; height: 20px; background: #333; border: 2px solid #666; margin: 5px 0;">
       <div id="health-fill" style="width: 100%; height: 100%; background: linear-gradient(90deg, #ff4444, #ff8844); transition: width 0.3s;"></div>
     </div>
+    <p>Weapon: <span id="hud-weapon" style="color: #ffd700; font-weight: bold;">Rifle</span></p>
+    <p>Ammo: <span id="hud-ammo" style="color: #ffd700; font-weight: bold;">0/0</span> <span id="hud-reload" style="color: #66ff99;"></span></p>
+    <p>Mode: <span id="hud-mode" style="color: #88ffcc;">—</span></p>
+    <p style="font-size: 12px; color: #66aaff;">Q Grenade: <span id="hud-skill-q">Ready</span> | E EMP: <span id="hud-skill-e">Ready</span></p>
     <p>Position: <span id="position">0, 0, 0</span></p>
-    <p>Room: <span id="current-room" style="color: #ffd700; font-weight: bold;">走廊</span></p>
+    <p>Room: <span id="current-room" style="color: #ffd700; font-weight: bold;">Corridor</span></p>
     <p>FPS: <span id="fps">60</span></p>
     <p style="font-size: 12px; color: #32cd32;">Pointer: <span id="pointer-status">Not Locked</span></p>
     <p style="font-size: 12px; color: #ffd700;">Missions: <span id="mission-status">0/0</span></p>
@@ -276,9 +346,10 @@
       </div>
       <div style="margin-top: 6px; text-align: left;">
         <label style="display: block; margin-bottom: 3px;">Zoom</label>
-        <input id="minimap-zoom" type="range" min="1" max="3" step="0.1" value="1.4">
-        <div id="minimap-zoom-value" style="text-align: right; color: #ffd700;">1.4x</div>
+        <input id="minimap-zoom" type="range" min="1" max="3" step="0.1" value="1.1">
+        <div id="minimap-zoom-value" style="text-align: right; color: #ffd700;">1.1x</div>
       </div>
+      <button id="minimap-reset" style="margin-top: 8px; width: 100%; padding: 4px 6px; background: none; border: 1px solid #ffd700; color: #ffd700; border-radius: 4px; cursor: pointer; font-size: 10px;">Reset Minimap</button>
     </div>
   </div>
 
@@ -303,33 +374,40 @@
   <!-- Instructions overlay -->
   <div id="instructions">
     <h1>Procedural 3D Maze</h1>
-    <p>找到绿色的出口逃离迷宫！</p>
+    <p>Find the green exit and escape the maze!</p>
     <ul>
-      <li><strong>WASD</strong> - 移动</li>
-      <li><strong>Mouse</strong> - 视角</li>
-      <li><strong>ESC</strong> - 释放鼠标</li>
-      <li><strong>Tab</strong> - 设置</li>
+      <li><strong>WASD</strong> - Move</li>
+      <li><strong>Mouse</strong> - Look</li>
+      <li><strong>Mouse1</strong> - Fire</li>
+      <li><strong>1/2/3</strong> - Switch Weapon</li>
+      <li><strong>R</strong> - Reload</li>
+      <li><strong>B</strong> - Ammo Mode</li>
+      <li><strong>Q</strong> - Grenade Skill</li>
+      <li><strong>E</strong> - EMP Skill</li>
+      <li><strong>ESC</strong> - Release Mouse</li>
+      <li><strong>Tab</strong> - Settings</li>
     </ul>
-    <button id="start-button">开始游戏</button>
+    <button id="start-button">Start Game</button>
   </div>
 
   <!-- Game Over overlay -->
   <div id="game-over" class="hidden" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: rgba(0, 0, 0, 0.95); padding: 40px; border-radius: 10px; text-align: center; z-index: 300; min-width: 400px; border: 3px solid #ffd700;">
-    <h1 id="game-over-title" style="color: #ffd700; margin-bottom: 20px; font-size: 48px;">🎉 胜利！</h1>
+    <h1 id="game-over-title" style="color: #ffd700; margin-bottom: 20px; font-size: 48px;">🎉 Victory!</h1>
     <div id="game-over-message" style="color: #fff; font-size: 18px; margin-bottom: 30px;">
-      你成功找到了出口！
+      You escaped the maze!
     </div>
+    <div id="game-over-auto" style="color: #ffd700; font-size: 14px; margin: -18px 0 22px 0;"></div>
     <div id="game-stats" style="background: rgba(255, 255, 255, 0.1); padding: 20px; border-radius: 5px; margin-bottom: 20px;">
-      <h3 style="color: #ffd700; margin-bottom: 15px;">📊 游戏统计</h3>
-      <p style="margin: 10px 0;"><strong>用时：</strong> <span id="final-time">00:00</span></p>
-      <p style="margin: 10px 0;"><strong>剩余生命值：</strong> <span id="final-health">100</span>/100</p>
-      <p style="margin: 10px 0;"><strong>探索房间数：</strong> <span id="final-rooms">0</span></p>
-      <p style="margin: 10px 0;"><strong>移动步数：</strong> <span id="final-steps">0</span></p>
+      <h3 style="color: #ffd700; margin-bottom: 15px;">📊 Run Stats</h3>
+      <p style="margin: 10px 0;"><strong>Time:</strong> <span id="final-time">00:00</span></p>
+      <p style="margin: 10px 0;"><strong>Health:</strong> <span id="final-health">100</span>/100</p>
+      <p style="margin: 10px 0;"><strong>Rooms Visited:</strong> <span id="final-rooms">0</span></p>
+      <p style="margin: 10px 0;"><strong>Steps:</strong> <span id="final-steps">0</span></p>
     </div>
     <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
-      <button id="next-level-button" style="background-color: #00d084; color: #0c1b0c; border: none; padding: 15px 32px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer; display: none;">下一关</button>
-      <button id="restart-button" style="background-color: #ffd700; color: #1a1a1a; border: none; padding: 15px 32px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer;">重玩本关</button>
-      <button id="menu-button" style="background-color: #666; color: #fff; border: none; padding: 15px 32px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer;">返回主菜单</button>
+      <button id="next-level-button" style="background-color: #00d084; color: #0c1b0c; border: none; padding: 15px 32px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer; display: none;">Next Level</button>
+      <button id="restart-button" style="background-color: #ffd700; color: #1a1a1a; border: none; padding: 15px 32px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer;">Restart</button>
+      <button id="menu-button" style="background-color: #666; color: #fff; border: none; padding: 15px 32px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer;">Main Menu</button>
     </div>
   </div>
 
@@ -379,17 +457,17 @@
     <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,0,0,0.1); border-radius: 5px;">
       <h5 style="color: #ff6666; margin: 0 0 10px 0; font-size: 13px;">👹 Monster Model</h5>
       <div style="margin-bottom: 8px;">
-        <label style="color: #ccc; font-size: 11px; display: block; margin-bottom: 5px;">選擇怪物模型（統一）:</label>
+        <label style="color: #ccc; font-size: 11px; display: block; margin-bottom: 5px;">Select Monster Model (global):</label>
         <select id="debug-monster-model" style="width: 100%; padding: 8px; font-size: 12px; background: rgba(40,40,40,0.9); color: white; border: 1px solid #666; border-radius: 3px; cursor: pointer;">
-          <option value="models/VascodaGama.dae">VascodaGama (狐狸骷髏)</option>
-          <option value="models/fuzzlefox__cute_stylized_cartoon_fox_character.glb">Fuzzle Fox (Q版狐狸)</option>
-          <option value="models/cute_chick.glb">Cute Chick (小雞)</option>
-          <option value="models/pbr_low-poly_fox_character.glb">Low-poly Fox (低模狐狸)</option>
+          <option value="models/VascodaGama.dae">VascodaGama (Fox Skull)</option>
+          <option value="models/fuzzlefox__cute_stylized_cartoon_fox_character.glb">Fuzzle Fox (Cartoon Fox)</option>
+          <option value="models/cute_chick.glb">Cute Chick</option>
+          <option value="models/pbr_low-poly_fox_character.glb">Low-poly Fox</option>
         </select>
       </div>
       <button id="debug-apply-model" style="width: 100%; padding: 8px; font-size: 12px; background: #9C27B0; border: none; border-radius: 3px; color: white; cursor: pointer; font-weight: bold;">🔄 Apply Model</button>
       <div style="margin-top: 8px; padding: 6px; background: rgba(100,100,100,0.3); border-radius: 3px;">
-        <p style="color: #aaa; font-size: 10px; margin: 0; line-height: 1.4;">提示：切換模型會即時更新所有怪物</p>
+        <p style="color: #aaa; font-size: 10px; margin: 0; line-height: 1.4;">Tip: Changing the model updates all monsters instantly.</p>
       </div>
     </div>
 
@@ -485,6 +563,29 @@
       <input type="checkbox" id="low-perf-toggle">
     </div>
 
+    <div style="margin-top: 10px; color: #ffd700; font-weight: bold;">Obstacles</div>
+
+    <div class="setting-item">
+      <label>Show Obstacle Map:</label>
+      <input type="checkbox" id="obstacle-map-toggle">
+    </div>
+
+    <div class="setting-item">
+      <label>Prop Obstacle Chance:</label>
+      <input type="range" id="prop-obstacle-chance-slider" min="0" max="0.35" step="0.01" value="0.12">
+      <span class="value" id="prop-obstacle-chance-value">0.12</span>
+    </div>
+
+    <div class="setting-item">
+      <label>Prop Obstacle Margin:</label>
+      <input type="range" id="prop-obstacle-margin-slider" min="0" max="2" step="1" value="1">
+      <span class="value" id="prop-obstacle-margin-value">1</span>
+    </div>
+
+    <div class="setting-item">
+      <button id="rebuild-obstacles">🧱 Rebuild Obstacles</button>
+    </div>
+
     <div class="setting-item">
       <label>Autopilot:</label>
       <input type="checkbox" id="autopilot-toggle">
@@ -497,11 +598,87 @@
     </div>
 
     <div class="setting-item">
+      <label>AI Combat:</label>
+      <input type="checkbox" id="autopilot-combat-toggle" checked>
+    </div>
+
+    <div class="setting-item">
+      <label>AI Fire Range:</label>
+      <input type="range" id="autopilot-fire-range" min="4" max="20" step="1" value="12">
+      <span class="value" id="autopilot-fire-range-value">12</span>
+    </div>
+
+    <div class="setting-item">
+      <label>AI Fire FOV:</label>
+      <input type="range" id="autopilot-fire-fov" min="30" max="180" step="10" value="110">
+      <span class="value" id="autopilot-fire-fov-value">110</span>
+    </div>
+
+    <div class="setting-item">
+      <label>AI Turn Speed:</label>
+      <input type="range" id="autopilot-turn-speed" min="1" max="8" step="0.5" value="3">
+      <span class="value" id="autopilot-turn-speed-value">3.0</span>
+    </div>
+
+    <div style="margin-top: 10px; color: #ffd700; font-weight: bold;">AI</div>
+
+    <div class="setting-item">
+      <label>AI Difficulty:</label>
+      <input type="range" id="ai-difficulty-slider" min="0.5" max="2.0" step="0.1" value="1.0">
+      <span class="value" id="ai-difficulty-value">1.0</span>
+    </div>
+
+    <div class="setting-item">
+      <label>Monster Ranged:</label>
+      <input type="checkbox" id="monster-ranged-toggle" checked>
+    </div>
+
+    <div class="setting-item">
+      <label>Monster Models:</label>
+      <input type="checkbox" id="monster-models-toggle" checked>
+    </div>
+
+    <div class="setting-item">
+      <button id="respawn-enemies">🔁 Respawn Enemies</button>
+    </div>
+
+    <div style="margin-top: 10px; color: #ffd700; font-weight: bold;">Weapon</div>
+
+    <div class="setting-item">
+      <label>Show Weapon:</label>
+      <input type="checkbox" id="weapon-view-toggle" checked>
+    </div>
+
+    <div class="setting-item">
+      <label>Crosshair:</label>
+      <input type="checkbox" id="crosshair-toggle" checked>
+    </div>
+
+    <div class="setting-item">
+      <label>Recoil:</label>
+      <input type="range" id="weapon-recoil-slider" min="0" max="2" step="0.1" value="1.0">
+      <span class="value" id="weapon-recoil-value">1.0</span>
+    </div>
+
+    <div style="margin-top: 10px; color: #ffd700; font-weight: bold;">Pool</div>
+
+    <div class="setting-item">
+      <label>Pool FX:</label>
+      <input type="checkbox" id="pool-fx-toggle" checked>
+    </div>
+
+    <div class="setting-item">
+      <label>HDRI Env:</label>
+      <input type="checkbox" id="hdr-toggle" checked>
+    </div>
+
+    <div class="setting-item">
       <button id="regenerate-map">🔄 New Map</button>
     </div>
   </div>
 
   <!-- Main game script -->
+  <script type="module" src="/src/ui/toolNav.js"></script>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
