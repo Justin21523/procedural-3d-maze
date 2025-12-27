@@ -159,6 +159,112 @@ export function setKeypadState(object3d, isUnlocked) {
   data.light.material.emissive.setHex(color);
 }
 
+export function createFuseObject() {
+  const group = new THREE.Group();
+
+  const bodyMat = makeEmissiveMaterial(0xffcc66, 0xffb74d, 0.35);
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.18, 12), bodyMat);
+  body.castShadow = false;
+  body.receiveShadow = true;
+  body.position.y = 0.06;
+  body.rotation.z = Math.PI / 2;
+  group.add(body);
+
+  const capMat = makeEmissiveMaterial(0x263238, 0x000000, 0.0);
+  const capA = new THREE.Mesh(new THREE.CylinderGeometry(0.056, 0.056, 0.018, 12), capMat);
+  capA.castShadow = false;
+  capA.receiveShadow = true;
+  capA.position.set(-0.09, 0.06, 0);
+  capA.rotation.z = Math.PI / 2;
+  group.add(capA);
+
+  const capB = capA.clone();
+  capB.position.set(0.09, 0.06, 0);
+  group.add(capB);
+
+  group.rotation.y = Math.random() * Math.PI * 2;
+  return group;
+}
+
+export function createFusePanelObject({ installed = false, powered = false } = {}) {
+  const group = new THREE.Group();
+
+  const baseMat = makeEmissiveMaterial(0x37474f, 0x000000, 0.0);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.32, 0.12), baseMat);
+  base.castShadow = false;
+  base.receiveShadow = true;
+  base.position.y = 0.16;
+  group.add(base);
+
+  const frameMat = makeEmissiveMaterial(0x263238, 0x000000, 0.0);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.20, 0.012), frameMat);
+  frame.castShadow = false;
+  frame.receiveShadow = true;
+  frame.position.set(0, 0.22, 0.066);
+  group.add(frame);
+
+  const lightMat = makeEmissiveMaterial(0xff4444, 0xff4444, 0.95);
+  const light = new THREE.Mesh(new THREE.SphereGeometry(0.028, 12, 12), lightMat);
+  light.castShadow = false;
+  light.receiveShadow = false;
+  light.position.set(0.12, 0.08, 0.065);
+  group.add(light);
+
+  group.userData.__panel = { light };
+  setFusePanelState(group, { installed, powered });
+
+  group.rotation.y = Math.random() * Math.PI * 2;
+  return group;
+}
+
+export function setFusePanelState(object3d, { installed = false, powered = false } = {}) {
+  const data = object3d?.userData?.__panel || null;
+  if (!data?.light?.material) return;
+
+  const color = powered ? 0x66ff99 : (installed ? 0xffcc66 : 0xff4444);
+  data.light.material.color.setHex(color);
+  data.light.material.emissive.setHex(color);
+}
+
+export function createTerminalObject({ uploaded = false } = {}) {
+  const group = new THREE.Group();
+
+  const standMat = makeEmissiveMaterial(0x263238, 0x000000, 0.0);
+  const stand = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.26, 0.18), standMat);
+  stand.castShadow = false;
+  stand.receiveShadow = true;
+  stand.position.y = 0.13;
+  group.add(stand);
+
+  const frameMat = makeEmissiveMaterial(0x37474f, 0x000000, 0.0);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.18, 0.06), frameMat);
+  frame.castShadow = false;
+  frame.receiveShadow = true;
+  frame.position.set(0, 0.30, 0.04);
+  group.add(frame);
+
+  const screenMat = makeEmissiveMaterial(0x66ff99, 0x66ff99, 0.55, true, 0.95);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.20, 0.12), screenMat);
+  screen.castShadow = false;
+  screen.receiveShadow = false;
+  screen.position.set(0, 0.30, 0.072);
+  group.add(screen);
+
+  group.userData.__terminal = { screen };
+  setTerminalState(group, { uploaded });
+
+  group.rotation.y = Math.random() * Math.PI * 2;
+  return group;
+}
+
+export function setTerminalState(object3d, { uploaded = false } = {}) {
+  const data = object3d?.userData?.__terminal || null;
+  if (!data?.screen?.material) return;
+  const color = uploaded ? 0x66ff99 : 0x66aaff;
+  data.screen.material.color.setHex(color);
+  data.screen.material.emissive.setHex(color);
+}
+
 export function getDefaultMissionRoomTypes() {
   // Default to "human rooms" for objectives.
   // New archetypes can be injected via level config.
