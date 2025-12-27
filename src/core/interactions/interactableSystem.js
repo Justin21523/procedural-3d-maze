@@ -6,6 +6,92 @@ function isVec3(v) {
   return !!v && typeof v.x === 'number' && typeof v.y === 'number' && typeof v.z === 'number';
 }
 
+function normalizeItemId(itemId) {
+  const id = String(itemId || '').trim();
+  return id ? id : null;
+}
+
+function toCount(value, fallback = 1) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, n);
+}
+
+function normalizeItemSpec(spec) {
+  if (!spec) return [];
+  if (typeof spec === 'string') {
+    const itemId = normalizeItemId(spec);
+    return itemId ? [{ itemId, count: 1, message: '' }] : [];
+  }
+  if (Array.isArray(spec)) {
+    const out = [];
+    for (const entry of spec) {
+      out.push(...normalizeItemSpec(entry));
+    }
+    return out;
+  }
+  if (typeof spec === 'object') {
+    const itemId = normalizeItemId(spec.itemId ?? spec.id);
+    if (itemId) {
+      const count = toCount(spec.count, 1);
+      if (count <= 0) return [];
+      const message = typeof spec.message === 'string' ? spec.message : '';
+      const label = typeof spec.label === 'string' ? spec.label : '';
+      return [{ itemId, count, message, label }];
+    }
+
+    // Treat plain objects like `{ fuse: 3, evidence: 2 }`.
+    const out = [];
+    for (const [k, v] of Object.entries(spec)) {
+      const id = normalizeItemId(k);
+      if (!id) continue;
+      const count = toCount(v, 0);
+      if (count <= 0) continue;
+      out.push({ itemId: id, count, message: '', label: '' });
+    }
+    return out;
+  }
+
+  return [];
+}
+
+function mergeItemSpecs(list) {
+  const merged = new Map(); // itemId -> { itemId, count, message, label }
+  for (const entry of list) {
+    const itemId = normalizeItemId(entry?.itemId);
+    if (!itemId) continue;
+    const count = toCount(entry?.count, 1);
+    if (count <= 0) continue;
+
+    const message = typeof entry?.message === 'string' ? entry.message : '';
+    const label = typeof entry?.label === 'string' ? entry.label : '';
+
+    const prev = merged.get(itemId);
+    if (!prev) {
+      merged.set(itemId, { itemId, count, message, label });
+      continue;
+    }
+
+    prev.count = Math.max(prev.count || 0, count);
+    if (!prev.message && message) prev.message = message;
+    if (!prev.label && label) prev.label = label;
+  }
+  return Array.from(merged.values());
+}
+
+function defaultItemLabel(itemId) {
+  return String(itemId || '').replaceAll('_', ' ').trim() || String(itemId || '');
+}
+
+function buildMissingItemMessage(req, have) {
+  const message = typeof req?.message === 'string' ? req.message : '';
+  if (message) return message;
+  const itemLabel = req?.label || defaultItemLabel(req?.itemId);
+  const need = toCount(req?.count, 1);
+  const got = toCount(have, 0);
+  return `Need ${need}× ${itemLabel} (${got}/${need})`;
+}
+
 function findInteractableId(object3d) {
   let cur = object3d;
   while (cur) {
@@ -85,6 +171,10 @@ export class InteractableSystem {
     object3d.userData = object3d.userData || {};
     object3d.userData.interactableId = id;
 
+    const requiresItem = normalizeItemSpec(interactable.requiresItem);
+    const consumeItemRaw = interactable.consumeItem === true ? interactable.requiresItem : interactable.consumeItem;
+    const consumeItem = normalizeItemSpec(consumeItemRaw);
+
     const entry = {
       id,
       kind: String(interactable.kind || 'unknown'),
@@ -95,6 +185,8 @@ export class InteractableSystem {
       enabled: interactable.enabled !== false,
       maxDistance: Number.isFinite(interactable.maxDistance) ? interactable.maxDistance : null,
       prompt: interactable.prompt || null, // string or ({actorKind}) => string
+      requiresItem,
+      consumeItem,
       canInteract: typeof interactable.canInteract === 'function' ? interactable.canInteract : null,
       interact: typeof interactable.interact === 'function' ? interactable.interact : null,
       meta: interactable.meta || null
@@ -263,6 +355,89 @@ export class InteractableSystem {
       if (dist > maxDist + 0.01) return false;
     }
 
+    const bus = this.eventBus;
+    const requirements = mergeItemSpecs([...(entry.requiresItem || []), ...(entry.consumeItem || [])]);
+    if (bus?.emit && requirements.length > 0) {
+      for (const req of requirements) {
+        const q = { itemId: req.itemId, result: null };
+        bus.emit(EVENTS.INVENTORY_QUERY_ITEM, q);
+        const have = Number(q.result?.count) || 0;
+        const need = Number(req.count) || 1;
+        if (have >= need) continue;
+
+        const message = buildMissingItemMessage(req, have);
+        if (actorKind === 'player') {
+          bus.emit(EVENTS.INTERACTABLE_HOVER, { id: entry.id, text: message });
+        }
+
+        bus.emit(EVENTS.INTERACT, {
+          actorKind,
+          id: entry.id,
+          kind: entry.kind,
+          gridPos: entry.gridPos || null,
+          ok: false,
+          message,
+          result: {
+            ok: false,
+            blocked: true,
+            reason: 'requires_item',
+            itemId: req.itemId,
+            required: need,
+            have
+          },
+          nowMs
+        });
+
+        return false;
+      }
+    }
+
+    const consumedItems = [];
+    if (bus?.emit && Array.isArray(entry.consumeItem) && entry.consumeItem.length > 0) {
+      for (const spec of entry.consumeItem) {
+        const itemId = normalizeItemId(spec?.itemId);
+        if (!itemId) continue;
+        const count = toCount(spec?.count, 1);
+        if (count <= 0) continue;
+
+        const consumePayload = { actorKind, itemId, count, result: null };
+        bus.emit(EVENTS.INVENTORY_CONSUME_ITEM, consumePayload);
+        const ok = !!consumePayload.result?.ok;
+        const consumed = Number(consumePayload.result?.consumed) || 0;
+        if (!ok || consumed <= 0) {
+          // Refund any prior consumption and abort without calling entry.interact().
+          for (const refund of consumedItems) {
+            bus.emit(EVENTS.INVENTORY_GIVE_ITEM, { actorKind, itemId: refund.itemId, count: refund.count });
+          }
+          const have = Number(consumePayload.result?.remaining) || 0;
+          const required = Number(consumePayload.result?.required) || count;
+          const message = buildMissingItemMessage({ itemId, count: required, message: spec?.message, label: spec?.label }, have);
+          if (actorKind === 'player') {
+            bus.emit(EVENTS.INTERACTABLE_HOVER, { id: entry.id, text: message });
+          }
+          bus.emit(EVENTS.INTERACT, {
+            actorKind,
+            id: entry.id,
+            kind: entry.kind,
+            gridPos: entry.gridPos || null,
+            ok: false,
+            message,
+            result: {
+              ok: false,
+              blocked: true,
+              reason: 'consume_failed',
+              itemId,
+              required,
+              have
+            },
+            nowMs
+          });
+          return false;
+        }
+        consumedItems.push({ itemId, count: consumed });
+      }
+    }
+
     let result = null;
     if (entry.interact) {
       try {
@@ -282,6 +457,13 @@ export class InteractableSystem {
 
     if (picked) {
       entry.collected = true;
+    }
+
+    if (!ok && bus?.emit && consumedItems.length > 0) {
+      // Roll back inventory consumption if the interaction itself failed.
+      for (const refund of consumedItems) {
+        bus.emit(EVENTS.INVENTORY_GIVE_ITEM, { actorKind, itemId: refund.itemId, count: refund.count });
+      }
     }
 
     if (remove && entry.object3d) {
