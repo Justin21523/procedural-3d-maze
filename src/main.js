@@ -64,8 +64,10 @@ async function initGame() {
   const restartFirstBtn = document.getElementById('restart-first');
   const levelDebugSourceEl = document.getElementById('level-debug-source');
   const levelDebugObjectiveEl = document.getElementById('level-debug-objective');
+  const levelDebugNextEl = document.getElementById('level-debug-next');
   const levelDebugExitEl = document.getElementById('level-debug-exit');
   const levelDebugStealthEl = document.getElementById('level-debug-stealth');
+  const levelDebugInventoryEl = document.getElementById('level-debug-inventory');
   const reloadLevelsBtn = document.getElementById('reload-levels');
 
   // Debug: Check if elements exist
@@ -186,10 +188,14 @@ async function initGame() {
 
     const state = missionDirector?.getAutopilotState ? missionDirector.getAutopilotState() : null;
     const objectiveText = state?.objective?.objectiveText || '';
+    const nextInteractId = state?.objective?.nextInteractId || '';
     const exitUnlocked = state ? (state.exitUnlocked !== false) : (gameState?.exitUnlocked !== false);
 
     if (levelDebugObjectiveEl) {
       levelDebugObjectiveEl.textContent = objectiveText || '—';
+    }
+    if (levelDebugNextEl) {
+      levelDebugNextEl.textContent = nextInteractId ? String(nextInteractId) : '—';
     }
     if (levelDebugExitEl) {
       levelDebugExitEl.textContent = exitUnlocked ? 'Yes' : 'No';
@@ -202,6 +208,32 @@ async function initGame() {
     }
     if (levelDebugStealthEl) {
       levelDebugStealthEl.textContent = stealthText;
+    }
+
+    if (levelDebugInventoryEl && gameState?.getInventorySnapshot) {
+      const snap = gameState.getInventorySnapshot() || {};
+      const keys = Object.keys(snap);
+      if (keys.length === 0) {
+        levelDebugInventoryEl.textContent = '—';
+      } else {
+        const preferred = ['fuse', 'evidence', 'power_on'];
+        keys.sort((a, b) => {
+          const ia = preferred.indexOf(a);
+          const ib = preferred.indexOf(b);
+          if (ia !== -1 || ib !== -1) {
+            return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+          }
+          return a.localeCompare(b);
+        });
+        const parts = [];
+        for (const k of keys) {
+          const v = snap[k];
+          const n = Math.round(Number(v));
+          if (!Number.isFinite(n) || n <= 0) continue;
+          parts.push(`${k}:${n}`);
+        }
+        levelDebugInventoryEl.textContent = parts.length > 0 ? parts.join(', ') : '—';
+      }
     }
   }
 
@@ -402,6 +434,7 @@ async function initGame() {
   });
   missionDirector.startLevel(levelConfig);
   eventBus.on(EVENTS.MISSION_UPDATED, () => updateLevelDebugUI());
+  eventBus.on(EVENTS.INVENTORY_UPDATED, () => updateLevelDebugUI());
   updateLevelDebugUI();
 
   // Autopilot placeholder（會在 loadLevel 時重新建立）
