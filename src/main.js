@@ -28,6 +28,7 @@ import { SpawnDirector } from './core/spawnDirector.js';
 import { EventBus } from './core/eventBus.js';
 import { CombatSystem } from './core/combatSystem.js';
 import { FeedbackSystem } from './core/feedbackSystem.js';
+import { InventorySystem } from './core/inventorySystem.js';
 import { UIManager } from './ui/uiManager.js';
 import { InteractableSystem } from './core/interactions/interactableSystem.js';
 import { MissionDirector } from './core/missions/missionDirector.js';
@@ -363,6 +364,9 @@ async function initGame() {
   // Create game state manager
   const gameState = new GameState(eventBus);
   console.log('🎮 Game state created');
+
+  const inventorySystem = new InventorySystem({ eventBus, gameState });
+  void inventorySystem;
 
   // Create player controller (with gameState and audioManager)
   const player = new PlayerController(worldState, camera, input, gameState, audioManager);
