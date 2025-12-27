@@ -188,12 +188,15 @@ export class AutoPilot {
     const objective = state.objective || null;
     const objectiveId = String(objective?.id || '').trim();
     const objectiveTemplate = String(objective?.template || '').trim();
+    const objectiveNextId = String(objective?.nextInteractId || '').trim();
 
     // Interactable objectives: go to the closest target and interact.
     const wantsInteractTargets =
       objectiveTemplate === 'findKeycard' ||
       objectiveTemplate === 'collectEvidence' ||
       objectiveTemplate === 'restorePower' ||
+      objectiveTemplate === 'restorePowerFuses' ||
+      objectiveTemplate === 'uploadEvidence' ||
       objectiveTemplate === 'codeLock';
 
     if (wantsInteractTargets) {
@@ -203,6 +206,25 @@ export class AutoPilot {
 
       const pool = objectiveTargets.length > 0 ? objectiveTargets : pending;
       if (pool.length > 0) {
+        if (objectiveNextId) {
+          const nextTarget = pool.find((t) => String(t?.id || '').trim() === objectiveNextId);
+          const nextGridPos = objective?.nextInteractGridPos || null;
+          if (nextTarget?.gridPos && nextTarget.id) {
+            this.taskTargetType = 'mission';
+            this.taskRunner.setTasks([
+              new InteractTask(nextTarget.id || '', nextTarget.gridPos, { threshold: 1 })
+            ]);
+            return;
+          }
+          if (nextGridPos && Number.isFinite(nextGridPos.x) && Number.isFinite(nextGridPos.y)) {
+            this.taskTargetType = 'mission';
+            this.taskRunner.setTasks([
+              new InteractTask(objectiveNextId, nextGridPos, { threshold: 1 })
+            ]);
+            return;
+          }
+        }
+
         pool.sort((a, b) => {
           const da = Math.abs(a.gridPos.x - playerGrid.x) + Math.abs(a.gridPos.y - playerGrid.y);
           const db = Math.abs(b.gridPos.x - playerGrid.x) + Math.abs(b.gridPos.y - playerGrid.y);
