@@ -47,6 +47,12 @@ export const EVENTS = Object.freeze({
   KEYPAD_CODE_SUBMITTED: 'puzzle:keypadCodeSubmitted',
   KEYPAD_CODE_RESULT: 'puzzle:keypadCodeResult',
 
+  // Inventory / key items
+  INVENTORY_GIVE_ITEM: 'inventory:giveItem',
+  INVENTORY_CONSUME_ITEM: 'inventory:consumeItem',
+  INVENTORY_QUERY_ITEM: 'inventory:queryItem',
+  INVENTORY_UPDATED: 'inventory:updated',
+
   // Interactions
   INTERACTABLE_HOVER: 'interact:hover',
   INTERACT: 'interact:performed',
