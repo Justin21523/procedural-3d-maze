@@ -96,6 +96,9 @@ export class MissionDirector {
     this.hintTier = 0;
     this.hintObjectiveKey = '';
 
+    this.completedMissionIds = new Set();
+    this.failedMissionIds = new Set();
+
     this.unsubs = [];
   }
 
@@ -144,6 +147,8 @@ export class MissionDirector {
     this.lastStatusKey = '';
     this.hintTier = 0;
     this.hintObjectiveKey = '';
+    this.completedMissionIds.clear();
+    this.failedMissionIds.clear();
   }
 
   startLevel(levelConfig) {
@@ -1492,6 +1497,36 @@ export class MissionDirector {
       });
       if (typeof this.exitPoint?.setUnlocked === 'function') {
         this.exitPoint.setUnlocked(unlocked);
+      }
+    }
+
+    // Emit mission completion events once per mission.
+    for (const mission of this.missions.values()) {
+      if (!mission?.id) continue;
+      const id = String(mission.id || '').trim();
+      if (!id) continue;
+
+      if (this.isMissionComplete(mission)) {
+        if (!this.completedMissionIds.has(id)) {
+          this.completedMissionIds.add(id);
+          this.eventBus?.emit?.(EVENTS.MISSION_COMPLETED, {
+            missionId: id,
+            template: mission.template,
+            required: mission.required !== false,
+            nowSec: this.elapsedSec
+          });
+        }
+      } else if (mission.template === 'stealthNoise' && mission.state?.failed) {
+        if (!this.failedMissionIds.has(id)) {
+          this.failedMissionIds.add(id);
+          this.eventBus?.emit?.(EVENTS.MISSION_FAILED, {
+            missionId: id,
+            template: mission.template,
+            required: mission.required !== false,
+            reason: 'stealthNoise',
+            nowSec: this.elapsedSec
+          });
+        }
       }
     }
   }
