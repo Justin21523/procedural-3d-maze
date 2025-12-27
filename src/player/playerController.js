@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { CONFIG } from '../core/config.js';
 import { EVENTS } from '../core/events.js';
 import { worldToGrid, gridToWorld } from '../utils/math.js';
+import { canOccupyCircle } from '../world/collision.js';
 
 export class PlayerController {
   /**
@@ -448,38 +449,9 @@ export class PlayerController {
    * @returns {boolean}
    */
   canMoveTo(worldX, worldZ) {
-    if (!this.worldState?.isWalkable) return true;
-    if (!Number.isFinite(worldX) || !Number.isFinite(worldZ)) return false;
-
     const tileSize = CONFIG.TILE_SIZE || 1;
     const radius = CONFIG.PLAYER_RADIUS || 0.35;
-    const gridPos = worldToGrid(worldX, worldZ, tileSize);
-
-    // Quick reject: center tile must be walkable.
-    if (!this.worldState.isWalkable(gridPos.x, gridPos.y)) return false;
-
-    // Circle-vs-tile overlap check against nearby blocked tiles (walls + obstacleMap).
-    for (let gy = gridPos.y - 1; gy <= gridPos.y + 1; gy++) {
-      for (let gx = gridPos.x - 1; gx <= gridPos.x + 1; gx++) {
-        if (this.worldState.isWalkable(gx, gy)) continue;
-
-        const tileMinX = gx * tileSize;
-        const tileMaxX = tileMinX + tileSize;
-        const tileMinZ = gy * tileSize;
-        const tileMaxZ = tileMinZ + tileSize;
-
-        const nearestX = Math.max(tileMinX, Math.min(worldX, tileMaxX));
-        const nearestZ = Math.max(tileMinZ, Math.min(worldZ, tileMaxZ));
-
-        const dx = worldX - nearestX;
-        const dz = worldZ - nearestZ;
-        if (dx * dx + dz * dz < radius * radius) {
-          return false;
-        }
-      }
-    }
-
-    return true;
+    return canOccupyCircle(this.worldState, worldX, worldZ, radius, tileSize);
   }
 
   /**
