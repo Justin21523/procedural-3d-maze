@@ -108,6 +108,8 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     'findKeycard',
     'collectEvidence',
     'restorePower',
+    'restorePowerFuses',
+    'uploadEvidence',
     'surviveTimer',
     'enterRoomType',
     'killCount',
@@ -153,6 +155,28 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
       pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'switches'], 'switches should be a positive number');
     }
     validateRoomTypesParam('roomTypes');
+  } else if (template === 'restorePowerFuses') {
+    const fuses = Number(params.fuses);
+    if (params.fuses !== undefined && (!Number.isFinite(fuses) || fuses <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'fuses'], 'fuses should be a positive number');
+    }
+    validateRoomTypesParam('roomTypes');
+    validateRoomTypesParam('roomTypesFuses');
+    validateRoomTypesParam('roomTypesPanel');
+    validateRoomTypesParam('panelRoomTypes');
+  } else if (template === 'uploadEvidence') {
+    const count = Number(params.count);
+    const required = Number(params.required);
+    if (!Number.isFinite(count) || count <= 0) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'count'], 'count should be a positive number');
+    }
+    if (params.required !== undefined && (!Number.isFinite(required) || required <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'required'], 'required should be a positive number');
+    }
+    validateRoomTypesParam('roomTypes');
+    validateRoomTypesParam('roomTypesEvidence');
+    validateRoomTypesParam('roomTypesTerminal');
+    validateRoomTypesParam('terminalRoomTypes');
   } else if (template === 'surviveTimer') {
     const seconds = Number(params.seconds);
     if (!Number.isFinite(seconds) || seconds <= 0) {
