@@ -510,6 +510,7 @@ export class MissionDirector {
     mission.state.panelGridPos = { x: panelPos.x, y: panelPos.y };
 
     const itemId = String(mission.params.itemId || 'fuse').trim() || 'fuse';
+    const fuseCount = Math.max(0, Math.round(Number(mission.state.fusesRequired || 0)));
 
     const label = 'Power Panel';
     this.registeredIds.push(
@@ -520,13 +521,14 @@ export class MissionDirector {
         gridPos: { x: panelPos.x, y: panelPos.y },
         object3d: panelObject,
         maxDistance: 2.6,
+        consumeItem: fuseCount > 0 ? { itemId, count: fuseCount } : null,
         prompt: () => {
           if (mission.state.powered) return 'E: Power Panel (Online)';
           if (mission.state.installed) return 'E: Power Panel (Turn On)';
           const need = Math.max(0, (mission.state.fusesRequired || 0) - (mission.state.fusesCollected || 0));
           return need > 0 ? `E: Power Panel (Need ${need} fuse${need === 1 ? '' : 's'})` : 'E: Power Panel (Install Fuses)';
         },
-        interact: ({ actorKind, entry }) => {
+        interact: ({ entry }) => {
           if (mission.state.powered) {
             return { ok: true, message: 'Power already restored', state: { powered: true } };
           }
@@ -534,16 +536,11 @@ export class MissionDirector {
           const meta = entry?.meta || {};
 
           if (!mission.state.installed) {
-            const need = mission.state.fusesRequired || 0;
-            const consume = { actorKind: actorKind || 'player', itemId, count: need, result: null };
-            this.eventBus?.emit?.(EVENTS.INVENTORY_CONSUME_ITEM, consume);
-            if (!consume.result?.ok) {
-              const remaining = Number.isFinite(consume.result?.remaining) ? consume.result.remaining : null;
-              const hint = Number.isFinite(remaining) ? ` (${remaining}/${need})` : '';
-              return { ok: false, message: `Missing fuses${hint}` };
-            }
-
             meta.installed = true;
+            if (entry) {
+              entry.requiresItem = [];
+              entry.consumeItem = [];
+            }
             setFusePanelState(panelObject, { installed: true, powered: false });
             return { ok: true, message: 'Fuses installed', state: { installed: true } };
           }
@@ -629,6 +626,8 @@ export class MissionDirector {
     mission.state.terminalGridPos = { x: terminalPos.x, y: terminalPos.y };
 
     const itemId = String(mission.params.itemId || 'evidence').trim() || 'evidence';
+    const requiresPower = mission.params.requiresPower === true;
+    const powerItemId = String(mission.params.powerItemId || 'power_on').trim() || 'power_on';
 
     const label = 'Upload Terminal';
     this.registeredIds.push(
@@ -639,30 +638,29 @@ export class MissionDirector {
         gridPos: { x: terminalPos.x, y: terminalPos.y },
         object3d: terminalObject,
         maxDistance: 2.6,
+        requiresItem: requiresPower ? { itemId: powerItemId, count: 1, message: 'Power is off.' } : null,
+        consumeItem: { itemId, count: mission.state.required || 0 },
         prompt: () => {
           if (mission.state.uploaded) return 'E: Terminal (Uploaded)';
           const missing = Math.max(0, (mission.state.required || 0) - (mission.state.collected || 0));
           if (missing > 0) return `E: Terminal (Need ${missing} evidence)`;
           return 'E: Upload Evidence';
         },
-        interact: ({ actorKind, entry }) => {
+        interact: ({ entry }) => {
           if (mission.state.uploaded) {
+            if (entry) {
+              entry.requiresItem = [];
+              entry.consumeItem = [];
+            }
             return { ok: true, message: 'Already uploaded', state: { uploaded: true } };
-          }
-
-          const missing = Math.max(0, (mission.state.required || 0) - (mission.state.collected || 0));
-          if (missing > 0) {
-            return { ok: false, message: `Missing evidence (${mission.state.collected || 0}/${mission.state.required || 0})` };
-          }
-
-          const consume = { actorKind: actorKind || 'player', itemId, count: mission.state.required || 0, result: null };
-          this.eventBus?.emit?.(EVENTS.INVENTORY_CONSUME_ITEM, consume);
-          if (!consume.result?.ok) {
-            return { ok: false, message: 'Evidence missing (inventory)' };
           }
 
           const meta = entry?.meta || {};
           meta.uploaded = true;
+          if (entry) {
+            entry.requiresItem = [];
+            entry.consumeItem = [];
+          }
           setTerminalState(terminalObject, { uploaded: true });
           return { ok: true, message: 'Evidence uploaded', state: { uploaded: true } };
         },
