@@ -32,6 +32,7 @@ export class UIManager {
     this.skillXElement = document.getElementById('hud-skill-x');
     this.pointerElement = document.getElementById('pointer-status');
     this.keysElement = document.getElementById('keys-pressed');
+    this.inventoryElement = document.getElementById('hud-inventory');
 
     // FPS
     this.fpsElement = document.getElementById('fps');
@@ -496,6 +497,32 @@ export class UIManager {
 
     if (this.pointerElement && this.player?.input?.isPointerLocked) {
       this.pointerElement.textContent = this.player.input.isPointerLocked() ? 'Locked ✓' : 'Not Locked';
+    }
+
+    if (this.inventoryElement && this.gameState?.getInventorySnapshot) {
+      const snap = this.gameState.getInventorySnapshot() || {};
+      const keys = Object.keys(snap);
+      if (keys.length === 0) {
+        this.inventoryElement.textContent = '—';
+      } else {
+        const preferred = ['fuse', 'evidence', 'power_on'];
+        keys.sort((a, b) => {
+          const ia = preferred.indexOf(a);
+          const ib = preferred.indexOf(b);
+          if (ia !== -1 || ib !== -1) {
+            return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+          }
+          return a.localeCompare(b);
+        });
+        const parts = [];
+        for (const k of keys) {
+          const v = snap[k];
+          const n = Math.round(Number(v));
+          if (!Number.isFinite(n) || n <= 0) continue;
+          parts.push(`${k}:${n}`);
+        }
+        this.inventoryElement.textContent = parts.length > 0 ? parts.join(', ') : '—';
+      }
     }
   }
 
