@@ -3,7 +3,20 @@ import { EVENTS } from '../events.js';
 import { CONFIG } from '../config.js';
 import { normalizeMissionsConfig } from './missionTemplates.js';
 import { pickDistinctTiles, gridToWorldCenter, manhattan } from './missionUtils.js';
-import { createKeycardObject, createEvidenceObject, createPowerSwitchObject, setPowerSwitchState, createClueNoteObject, createKeypadObject, setKeypadState } from './missionObjects.js';
+import {
+  createKeycardObject,
+  createEvidenceObject,
+  createPowerSwitchObject,
+  setPowerSwitchState,
+  createClueNoteObject,
+  createKeypadObject,
+  setKeypadState,
+  createFuseObject,
+  createFusePanelObject,
+  setFusePanelState,
+  createTerminalObject,
+  setTerminalState
+} from './missionObjects.js';
 import { ROOM_CONFIGS } from '../../world/tileTypes.js';
 
 function clamp(v, min, max) {
@@ -212,6 +225,31 @@ export class MissionDirector {
         const switches = clamp(Math.round(mission.params.switches ?? 3), 1, 12);
         mission.state = { activated: new Set(), total: switches };
         this.spawnPowerSwitches(mission, { avoid: [spawn, exit] });
+      } else if (template === 'restorePowerFuses') {
+        const fuses = clamp(Math.round(mission.params.fuses ?? mission.params.required ?? 3), 1, 12);
+        mission.state = {
+          fusesRequired: fuses,
+          fusesCollected: 0,
+          installed: false,
+          powered: false,
+          fuses: [],
+          panelId: null,
+          panelGridPos: null
+        };
+        this.spawnRestorePowerFuses(mission, { avoid: [spawn, exit] });
+      } else if (template === 'uploadEvidence') {
+        const total = clamp(Math.round(mission.params.count ?? 3), 1, 999);
+        const required = clamp(Math.round(mission.params.required ?? total), 1, total);
+        mission.state = {
+          collected: 0,
+          required,
+          total,
+          uploaded: false,
+          items: [],
+          terminalId: null,
+          terminalGridPos: null
+        };
+        this.spawnUploadEvidence(mission, { avoid: [spawn, exit] });
       } else if (template === 'surviveTimer') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 60), 5, 3600);
         mission.state = { seconds, completed: false };
@@ -393,6 +431,240 @@ export class MissionDirector {
       this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
       mission.state.switches.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, on: false });
     }
+  }
+
+  spawnRestorePowerFuses(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    const fuseRoomTypes = Array.isArray(mission.params.roomTypesFuses)
+      ? mission.params.roomTypesFuses
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+    const panelRoomTypes = Array.isArray(mission.params.roomTypesPanel)
+      ? mission.params.roomTypesPanel
+      : (Array.isArray(mission.params.panelRoomTypes) ? mission.params.panelRoomTypes : null);
+
+    const fusesRequired = clamp(Math.round(mission.state.fusesRequired ?? mission.params.fuses ?? 3), 1, 12);
+    mission.state.fusesRequired = fusesRequired;
+
+    const fuseTiles = pickDistinctTiles(ws, fusesRequired, {
+      allowedRoomTypes: fuseRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (fuseTiles.length === 0) return;
+    mission.state.fusesRequired = fuseTiles.length;
+
+    mission.state.fuses = [];
+
+    for (let i = 0; i < fuseTiles.length; i++) {
+      const pos = fuseTiles[i];
+      const object3d = createFuseObject();
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+
+      const interactableId = `fuse:${mission.id}:${i + 1}`;
+      const label = 'Pick up Fuse';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'fuse',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: 'Fuse acquired' }),
+          meta: { missionId: mission.id, template: mission.template, index: i }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.fuses.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, collected: false });
+    }
+
+    const avoidForPanel = avoid.concat(fuseTiles);
+    const panelTiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: panelRoomTypes,
+      minDistFrom: avoidForPanel,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (panelTiles.length === 0) return;
+
+    const panelPos = panelTiles[0];
+    const panelObject = createFusePanelObject({ installed: false, powered: false });
+    const panelWorld = gridToWorldCenter(panelPos);
+    panelObject.position.set(panelWorld.x, 0, panelWorld.z);
+    this.scene.add(panelObject);
+    this.spawnedObjects.push(panelObject);
+
+    const panelId = `panel:${mission.id}`;
+    mission.state.panelId = panelId;
+    mission.state.panelGridPos = { x: panelPos.x, y: panelPos.y };
+
+    const itemId = String(mission.params.itemId || 'fuse').trim() || 'fuse';
+
+    const label = 'Power Panel';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: panelId,
+        kind: 'fusePanel',
+        label,
+        gridPos: { x: panelPos.x, y: panelPos.y },
+        object3d: panelObject,
+        maxDistance: 2.6,
+        prompt: () => {
+          if (mission.state.powered) return 'E: Power Panel (Online)';
+          if (mission.state.installed) return 'E: Power Panel (Turn On)';
+          const need = Math.max(0, (mission.state.fusesRequired || 0) - (mission.state.fusesCollected || 0));
+          return need > 0 ? `E: Power Panel (Need ${need} fuse${need === 1 ? '' : 's'})` : 'E: Power Panel (Install Fuses)';
+        },
+        interact: ({ actorKind, entry }) => {
+          if (mission.state.powered) {
+            return { ok: true, message: 'Power already restored', state: { powered: true } };
+          }
+
+          const meta = entry?.meta || {};
+
+          if (!mission.state.installed) {
+            const need = mission.state.fusesRequired || 0;
+            const consume = { actorKind: actorKind || 'player', itemId, count: need, result: null };
+            this.eventBus?.emit?.(EVENTS.INVENTORY_CONSUME_ITEM, consume);
+            if (!consume.result?.ok) {
+              const remaining = Number.isFinite(consume.result?.remaining) ? consume.result.remaining : null;
+              const hint = Number.isFinite(remaining) ? ` (${remaining}/${need})` : '';
+              return { ok: false, message: `Missing fuses${hint}` };
+            }
+
+            meta.installed = true;
+            setFusePanelState(panelObject, { installed: true, powered: false });
+            return { ok: true, message: 'Fuses installed', state: { installed: true } };
+          }
+
+          meta.powered = true;
+          setFusePanelState(panelObject, { installed: true, powered: true });
+          return { ok: true, message: 'Power restored', state: { powered: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, installed: false, powered: false }
+      })
+    );
+    this.interactableMeta.set(panelId, { missionId: mission.id, template: mission.template });
+  }
+
+  spawnUploadEvidence(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    const evidenceRoomTypes = Array.isArray(mission.params.roomTypesEvidence)
+      ? mission.params.roomTypesEvidence
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+    const terminalRoomTypes = Array.isArray(mission.params.roomTypesTerminal)
+      ? mission.params.roomTypesTerminal
+      : (Array.isArray(mission.params.terminalRoomTypes) ? mission.params.terminalRoomTypes : null);
+
+    const tiles = pickDistinctTiles(ws, mission.state.total, {
+      allowedRoomTypes: evidenceRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 6,
+      margin: 1
+    });
+    if (tiles.length === 0) return;
+    mission.state.total = tiles.length;
+    mission.state.required = clamp(Math.round(mission.state.required ?? mission.state.total), 1, mission.state.total);
+
+    mission.state.items = [];
+
+    for (let i = 0; i < tiles.length; i++) {
+      const pos = tiles[i];
+      const object3d = createEvidenceObject();
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+
+      const interactableId = `evidence:${mission.id}:${i + 1}`;
+      const label = 'Collect Evidence';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'evidence',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: 'Evidence collected' }),
+          meta: { missionId: mission.id, template: mission.template, index: i }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.items.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, collected: false });
+    }
+
+    const avoidForTerminal = avoid.concat(tiles);
+    const terminalTiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: terminalRoomTypes,
+      minDistFrom: avoidForTerminal,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (terminalTiles.length === 0) return;
+
+    const terminalPos = terminalTiles[0];
+    const terminalObject = createTerminalObject({ uploaded: false });
+    const terminalWorld = gridToWorldCenter(terminalPos);
+    terminalObject.position.set(terminalWorld.x, 0, terminalWorld.z);
+    this.scene.add(terminalObject);
+    this.spawnedObjects.push(terminalObject);
+
+    const terminalId = `terminal:${mission.id}`;
+    mission.state.terminalId = terminalId;
+    mission.state.terminalGridPos = { x: terminalPos.x, y: terminalPos.y };
+
+    const itemId = String(mission.params.itemId || 'evidence').trim() || 'evidence';
+
+    const label = 'Upload Terminal';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: terminalId,
+        kind: 'terminal',
+        label,
+        gridPos: { x: terminalPos.x, y: terminalPos.y },
+        object3d: terminalObject,
+        maxDistance: 2.6,
+        prompt: () => {
+          if (mission.state.uploaded) return 'E: Terminal (Uploaded)';
+          const missing = Math.max(0, (mission.state.required || 0) - (mission.state.collected || 0));
+          if (missing > 0) return `E: Terminal (Need ${missing} evidence)`;
+          return 'E: Upload Evidence';
+        },
+        interact: ({ actorKind, entry }) => {
+          if (mission.state.uploaded) {
+            return { ok: true, message: 'Already uploaded', state: { uploaded: true } };
+          }
+
+          const missing = Math.max(0, (mission.state.required || 0) - (mission.state.collected || 0));
+          if (missing > 0) {
+            return { ok: false, message: `Missing evidence (${mission.state.collected || 0}/${mission.state.required || 0})` };
+          }
+
+          const consume = { actorKind: actorKind || 'player', itemId, count: mission.state.required || 0, result: null };
+          this.eventBus?.emit?.(EVENTS.INVENTORY_CONSUME_ITEM, consume);
+          if (!consume.result?.ok) {
+            return { ok: false, message: 'Evidence missing (inventory)' };
+          }
+
+          const meta = entry?.meta || {};
+          meta.uploaded = true;
+          setTerminalState(terminalObject, { uploaded: true });
+          return { ok: true, message: 'Evidence uploaded', state: { uploaded: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, uploaded: false }
+      })
+    );
+    this.interactableMeta.set(terminalId, { missionId: mission.id, template: mission.template });
   }
 
   spawnCodeLock(mission, options = {}) {
@@ -581,6 +853,36 @@ export class MissionDirector {
         const item = mission.state.items[meta.index];
         if (item) item.collected = true;
       }
+    } else if (mission.template === 'restorePowerFuses') {
+      const fuses = Array.isArray(mission.state.fuses) ? mission.state.fuses : [];
+      const fuse = fuses.find((f) => f && f.id === id);
+      if (fuse && !fuse.collected) {
+        fuse.collected = true;
+
+        const itemId = String(mission.params.itemId || 'fuse').trim() || 'fuse';
+        this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: payload?.actorKind || 'player', itemId, count: 1, sourceId: id });
+      }
+
+      const collected = fuses.filter((f) => f?.collected).length;
+      mission.state.fusesCollected = Math.min(mission.state.fusesRequired || collected, collected);
+
+      if (!mission.state.installed && collected >= (mission.state.fusesRequired || 0)) {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All fuses collected. Find the power panel.', seconds: 2.0 });
+      }
+    } else if (mission.template === 'uploadEvidence') {
+      mission.state.collected = Math.min(mission.state.total || 0, (mission.state.collected || 0) + 1);
+      if (Array.isArray(mission.state.items) && Number.isFinite(meta.index)) {
+        const item = mission.state.items[meta.index];
+        if (item && !item.collected) {
+          item.collected = true;
+          const itemId = String(mission.params.itemId || 'evidence').trim() || 'evidence';
+          this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: payload?.actorKind || 'player', itemId, count: 1, sourceId: id });
+        }
+      }
+
+      if (!mission.state.uploaded && (mission.state.collected || 0) >= (mission.state.required || 0)) {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Evidence collected. Find the upload terminal.', seconds: 2.0 });
+      }
     } else if (mission.template === 'codeLock') {
       const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
       const clue = clues.find((c) => c && c.id === id);
@@ -654,6 +956,28 @@ export class MissionDirector {
         if (Array.isArray(mission.state.switches)) {
           const sw = mission.state.switches.find((s) => s.id === id);
           if (sw) sw.on = true;
+        }
+      }
+    } else if (mission.template === 'restorePowerFuses') {
+      if (payload?.kind === 'fusePanel') {
+        const installed = !!payload?.result?.state?.installed;
+        const powered = !!payload?.result?.state?.powered;
+
+        if (installed && !mission.state.installed) {
+          mission.state.installed = true;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Fuses installed. Turn on the power panel.', seconds: 2.0 });
+        }
+        if (powered && !mission.state.powered) {
+          mission.state.powered = true;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Power restored.', seconds: 1.8 });
+        }
+      }
+    } else if (mission.template === 'uploadEvidence') {
+      if (payload?.kind === 'terminal') {
+        const uploaded = !!payload?.result?.state?.uploaded;
+        if (uploaded && !mission.state.uploaded) {
+          mission.state.uploaded = true;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Evidence uploaded.', seconds: 1.8 });
         }
       }
     } else if (mission.template === 'codeLock') {
@@ -783,6 +1107,18 @@ export class MissionDirector {
           : tier === 2
             ? 'Switches spawn in labs/storage—interact to turn them on.'
             : 'If you are stuck, explore new rooms; switches never spawn in walls/corridors.';
+      } else if (m.template === 'restorePowerFuses') {
+        hintText = tier === 1
+          ? 'Find and collect the fuses.'
+          : tier === 2
+            ? 'After collecting all fuses, find the power panel and install them.'
+            : 'Press E again on the panel to restore power.';
+      } else if (m.template === 'uploadEvidence') {
+        hintText = tier === 1
+          ? 'Collect the evidence pickups.'
+          : tier === 2
+            ? 'After collecting enough evidence, find the upload terminal.'
+            : 'Upload consumes your evidence items—if the terminal rejects you, you missed a pickup.';
       } else if (m.template === 'codeLock') {
         hintText = tier === 1
           ? 'Find and read the code note clues (A/B/C).'
@@ -882,6 +1218,12 @@ export class MissionDirector {
     if (mission.template === 'restorePower') {
       return (mission.state.activated?.size || 0) >= (mission.state.total || 0);
     }
+    if (mission.template === 'restorePowerFuses') {
+      return !!mission.state.powered;
+    }
+    if (mission.template === 'uploadEvidence') {
+      return !!mission.state.uploaded;
+    }
     if (mission.template === 'surviveTimer') {
       return !!mission.state.completed;
     }
@@ -940,6 +1282,31 @@ export class MissionDirector {
       }
       if (mission.template === 'restorePower') {
         return `Restore power (${mission.state.activated?.size || 0}/${mission.state.total || 0})`;
+      }
+      if (mission.template === 'restorePowerFuses') {
+        const required = Number(mission.state.fusesRequired) || 0;
+        const collected = Number(mission.state.fusesCollected) || 0;
+        if (!mission.state.installed) {
+          if (required > 0 && collected < required) {
+            return `Collect fuses (${collected}/${required})`;
+          }
+          return 'Install fuses at the power panel (E)';
+        }
+        if (!mission.state.powered) {
+          return 'Restore power at the panel (press E)';
+        }
+        return 'Power restored. Reach the exit.';
+      }
+      if (mission.template === 'uploadEvidence') {
+        const required = Number(mission.state.required) || 0;
+        const collected = Number(mission.state.collected) || 0;
+        if (!mission.state.uploaded) {
+          if (required > 0 && collected < required) {
+            return `Collect evidence (${collected}/${required})`;
+          }
+          return 'Upload evidence at the terminal (E)';
+        }
+        return 'Evidence uploaded. Reach the exit.';
       }
       if (mission.template === 'surviveTimer') {
         const remaining = Math.max(0, (mission.state.seconds || 0) - this.elapsedSec);
@@ -1012,6 +1379,26 @@ export class MissionDirector {
       return {
         activated: mission.state.activated?.size || 0,
         total: mission.state.total || 0
+      };
+    }
+    if (mission.template === 'restorePowerFuses') {
+      return {
+        fusesCollected: mission.state.fusesCollected || 0,
+        fusesRequired: mission.state.fusesRequired || 0,
+        installed: !!mission.state.installed,
+        powered: !!mission.state.powered,
+        panelId: mission.state.panelId || null,
+        panelGridPos: mission.state.panelGridPos || null
+      };
+    }
+    if (mission.template === 'uploadEvidence') {
+      return {
+        collected: mission.state.collected || 0,
+        required: mission.state.required || 0,
+        total: mission.state.total || 0,
+        uploaded: !!mission.state.uploaded,
+        terminalId: mission.state.terminalId || null,
+        terminalGridPos: mission.state.terminalGridPos || null
       };
     }
     if (mission.template === 'surviveTimer') {
@@ -1119,8 +1506,14 @@ export class MissionDirector {
    */
   getAutopilotTargets() {
     const targets = [];
+    const requires = this.missionsConfig?.exit?.requires || [];
+    const requiredIds = Array.isArray(requires) ? requires : [];
+    const requiredSet = new Set(requiredIds.map((s) => String(s || '').trim()).filter(Boolean));
+
     for (const mission of this.missions.values()) {
       if (!mission) continue;
+      if (requiredSet.size > 0 && !requiredSet.has(mission.id)) continue;
+
       if (mission.template === 'findKeycard') {
         if (mission.state.found) continue;
         const gp = mission.state.gridPos;
@@ -1140,6 +1533,39 @@ export class MissionDirector {
           if (sw?.on) continue;
           if (!sw?.gridPos) continue;
           targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'restorePowerFuses') {
+        if (mission.state.powered) continue;
+        const required = Number(mission.state.fusesRequired) || 0;
+        const collected = Number(mission.state.fusesCollected) || 0;
+        const fuses = Array.isArray(mission.state.fuses) ? mission.state.fuses : [];
+
+        if (!mission.state.installed) {
+          for (const fuse of fuses) {
+            if (!fuse || fuse.collected) continue;
+            if (!fuse.gridPos) continue;
+            targets.push({ collected: false, id: fuse.id || null, gridPos: fuse.gridPos, missionId: mission.id, template: mission.template });
+          }
+          if (collected >= required && mission.state.panelGridPos && mission.state.panelId) {
+            targets.push({ collected: false, id: mission.state.panelId, gridPos: mission.state.panelGridPos, missionId: mission.id, template: mission.template });
+          }
+        } else if (!mission.state.powered && mission.state.panelGridPos && mission.state.panelId) {
+          targets.push({ collected: false, id: mission.state.panelId, gridPos: mission.state.panelGridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'uploadEvidence') {
+        if (mission.state.uploaded) continue;
+        const required = Number(mission.state.required) || 0;
+        const collected = Number(mission.state.collected) || 0;
+
+        if (collected < required) {
+          const items = Array.isArray(mission.state.items) ? mission.state.items : [];
+          for (const item of items) {
+            if (item?.collected) continue;
+            if (!item?.gridPos) continue;
+            targets.push({ collected: false, id: item.id || null, gridPos: item.gridPos, missionId: mission.id, template: mission.template });
+          }
+        } else if (mission.state.terminalGridPos && mission.state.terminalId) {
+          targets.push({ collected: false, id: mission.state.terminalId, gridPos: mission.state.terminalGridPos, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'codeLock') {
         if (mission.state.unlocked) continue;
