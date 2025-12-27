@@ -574,7 +574,67 @@ export class PlayerController {
    * @param {number} z
    */
   setPosition(x, y, z) {
-    this.position.set(x, y, z);
-    this.camera.updatePosition(x, y, z);
+    const nextX = Number.isFinite(x) ? x : this.position.x;
+    const nextY = Number.isFinite(y) ? y : this.position.y;
+    const nextZ = Number.isFinite(z) ? z : this.position.z;
+
+    let finalX = nextX;
+    let finalZ = nextZ;
+
+    if (typeof this.canMoveTo === 'function' && !this.canMoveTo(finalX, finalZ)) {
+      const radius = CONFIG.PLAYER_RADIUS || 0.35;
+      const step = Math.max(0.05, Math.min((CONFIG.TILE_SIZE || 1) * 0.25, radius * 0.5));
+      const offsets = [
+        [0, 0],
+        [step, 0],
+        [-step, 0],
+        [0, step],
+        [0, -step],
+        [step, step],
+        [step, -step],
+        [-step, step],
+        [-step, -step],
+      ];
+
+      let found = false;
+      for (const [ox, oz] of offsets) {
+        const tx = nextX + ox;
+        const tz = nextZ + oz;
+        if (this.canMoveTo(tx, tz)) {
+          finalX = tx;
+          finalZ = tz;
+          found = true;
+          break;
+        }
+      }
+
+      if (!found && this.worldState?.isWalkable) {
+        const tileSize = CONFIG.TILE_SIZE || 1;
+        const grid = worldToGrid(nextX, nextZ, tileSize);
+        const maxRing = 4;
+
+        outer: for (let r = 0; r <= maxRing; r++) {
+          for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+              const gx = grid.x + dx;
+              const gy = grid.y + dy;
+              if (!this.worldState.isWalkable(gx, gy)) continue;
+              const center = gridToWorld(gx, gy, tileSize);
+              const cx = center.x + tileSize / 2;
+              const cz = center.z + tileSize / 2;
+              if (this.canMoveTo(cx, cz)) {
+                finalX = cx;
+                finalZ = cz;
+                break outer;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    this.position.set(finalX, nextY, finalZ);
+    this.separateFromWalls();
+    this.camera.updatePosition(this.position.x, this.position.y, this.position.z);
   }
 }
