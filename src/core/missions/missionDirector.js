@@ -642,6 +642,12 @@ export class MissionDirector {
         consumeItem: { itemId, count: mission.state.required || 0 },
         prompt: () => {
           if (mission.state.uploaded) return 'E: Terminal (Uploaded)';
+          if (requiresPower) {
+            const q = { itemId: powerItemId, result: null };
+            this.eventBus?.emit?.(EVENTS.INVENTORY_QUERY_ITEM, q);
+            const havePower = Number(q.result?.count) || 0;
+            if (havePower <= 0) return 'E: Terminal (No Power)';
+          }
           const missing = Math.max(0, (mission.state.required || 0) - (mission.state.collected || 0));
           if (missing > 0) return `E: Terminal (Need ${missing} evidence)`;
           return 'E: Upload Evidence';
@@ -763,6 +769,12 @@ export class MissionDirector {
           const ready = !!mission.state.codeReady;
           const unlocked = !!mission.state.unlocked;
           if (unlocked) return 'E: Keypad (Unlocked)';
+          if (requiresPower) {
+            const q = { itemId: powerItemId, result: null };
+            this.eventBus?.emit?.(EVENTS.INVENTORY_QUERY_ITEM, q);
+            const havePower = Number(q.result?.count) || 0;
+            if (havePower <= 0) return 'E: Keypad (No Power)';
+          }
           return ready ? 'E: Keypad (Enter Code)' : 'E: Keypad (Locked)';
         },
         interact: ({ entry, actorKind }) => {
