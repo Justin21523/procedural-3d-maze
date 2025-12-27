@@ -558,9 +558,26 @@ export class MonsterManager {
         monster.isMoving = false;
         return;
       }
-      const desiredDelta = new THREE.Vector3(dx, 0, dz);
-      const targetPos = current.clone().add(desiredDelta);
-      moved = this.tryMoveMonster(monster, current, targetPos, desiredDelta);
+
+      // Sweep via step subdivision to reduce corner tunneling when dt spikes.
+      const tileSize = CONFIG.TILE_SIZE || 1;
+      const radius = (CONFIG.PLAYER_RADIUS || 0.35) * 0.9;
+      const maxStep = Math.max(0.05, Math.min(tileSize * 0.25, radius * 0.5));
+      const dist = Math.hypot(dx, dz);
+      const steps = Math.max(1, Math.ceil(dist / maxStep));
+      const stepX = dx / steps;
+      const stepZ = dz / steps;
+
+      let pos = current.clone();
+      for (let i = 0; i < steps; i++) {
+        const delta = new THREE.Vector3(stepX, 0, stepZ);
+        const targetPos = pos.clone().add(delta);
+        const movedStep = this.tryMoveMonster(monster, pos, targetPos, delta);
+        if (!movedStep) break;
+        moved = true;
+        const after = monster.getWorldPosition?.() || null;
+        pos = after ? after.clone() : targetPos;
+      }
     }
 
     const intentMag = Math.hypot(dx, dz);
