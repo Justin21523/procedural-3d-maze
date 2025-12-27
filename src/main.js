@@ -32,6 +32,7 @@ import { InventorySystem } from './core/inventorySystem.js';
 import { UIManager } from './ui/uiManager.js';
 import { InteractableSystem } from './core/interactions/interactableSystem.js';
 import { MissionDirector } from './core/missions/missionDirector.js';
+import { WorldStateEffectsSystem } from './core/worldStateEffectsSystem.js';
 
 /**
  * Initialize and start the game
@@ -400,6 +401,13 @@ async function initGame() {
   const inventorySystem = new InventorySystem({ eventBus, gameState });
   void inventorySystem;
 
+  const worldStateEffectsSystem = new WorldStateEffectsSystem({
+    eventBus,
+    gameState,
+    lights,
+    audioManager
+  });
+
   // Create player controller (with gameState and audioManager)
   const player = new PlayerController(worldState, camera, input, gameState, audioManager);
   console.log('Player spawned at:', player.getGridPosition());
@@ -433,6 +441,7 @@ async function initGame() {
     interactableSystem
   });
   missionDirector.startLevel(levelConfig);
+  worldStateEffectsSystem.startLevel(levelConfig);
   eventBus.on(EVENTS.MISSION_UPDATED, () => updateLevelDebugUI());
   eventBus.on(EVENTS.INVENTORY_UPDATED, () => updateLevelDebugUI());
   updateLevelDebugUI();
@@ -678,6 +687,7 @@ async function initGame() {
         });
         missionDirector.startLevel(levelConfig);
       }
+      worldStateEffectsSystem?.startLevel?.(levelConfig);
       gameLoop.missionDirector = missionDirector;
       gameLoop.interactableSystem = interactableSystem;
 
