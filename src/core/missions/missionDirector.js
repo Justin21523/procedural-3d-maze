@@ -1504,6 +1504,94 @@ export class MissionDirector {
    * For AutoPilot: return a list of uncompleted interactable objectives.
    * Compatible shape: [{ collected, gridPos:{x,y} }]
    */
+  getNextInteractableForMission(mission) {
+    if (!mission) return null;
+    if (this.isMissionComplete(mission)) return null;
+
+    if (mission.template === 'findKeycard') {
+      const gp = mission.state.gridPos;
+      return gp ? { id: `keycard:${mission.id}`, gridPos: gp } : null;
+    }
+
+    if (mission.template === 'collectEvidence') {
+      const need = (mission.state.required || 0) - (mission.state.collected || 0);
+      if (need <= 0) return null;
+      const items = Array.isArray(mission.state.items) ? mission.state.items : [];
+      const next = items.find((i) => i && !i.collected && i.gridPos);
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+    }
+
+    if (mission.template === 'restorePower') {
+      const switches = Array.isArray(mission.state.switches) ? mission.state.switches : [];
+      const next = switches.find((s) => s && !s.on && s.gridPos);
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+    }
+
+    if (mission.template === 'restorePowerFuses') {
+      if (mission.state.powered) return null;
+      if (!mission.state.installed) {
+        const required = Number(mission.state.fusesRequired) || 0;
+        const collected = Number(mission.state.fusesCollected) || 0;
+        if (collected < required) {
+          const fuses = Array.isArray(mission.state.fuses) ? mission.state.fuses : [];
+          const pending = fuses.filter((f) => f && !f.collected && f.gridPos);
+          pending.sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
+          const next = pending[0] || null;
+          return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+        }
+        if (mission.state.panelId && mission.state.panelGridPos) {
+          return { id: mission.state.panelId, gridPos: mission.state.panelGridPos };
+        }
+        return null;
+      }
+
+      if (mission.state.panelId && mission.state.panelGridPos) {
+        return { id: mission.state.panelId, gridPos: mission.state.panelGridPos };
+      }
+      return null;
+    }
+
+    if (mission.template === 'uploadEvidence') {
+      if (mission.state.uploaded) return null;
+      const required = Number(mission.state.required) || 0;
+      const collected = Number(mission.state.collected) || 0;
+
+      if (collected < required) {
+        const items = Array.isArray(mission.state.items) ? mission.state.items : [];
+        const pending = items.filter((i) => i && !i.collected && i.gridPos);
+        pending.sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
+        const next = pending[0] || null;
+        return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+      }
+
+      if (mission.state.terminalId && mission.state.terminalGridPos) {
+        return { id: mission.state.terminalId, gridPos: mission.state.terminalGridPos };
+      }
+      return null;
+    }
+
+    if (mission.template === 'codeLock') {
+      if (mission.state.unlocked) return null;
+      const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+      const pending = clues.filter((c) => c && !c.collected && c.gridPos);
+      pending.sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
+      const nextClue = pending[0] || null;
+      if (nextClue) return { id: nextClue.id || null, gridPos: nextClue.gridPos };
+
+      if (mission.state.codeReady && mission.state.keypadId && mission.state.keypadGridPos) {
+        return { id: mission.state.keypadId, gridPos: mission.state.keypadGridPos };
+      }
+      return null;
+    }
+
+    if (mission.template === 'unlockExit') {
+      const gp = this.exitPoint?.getGridPosition?.() || this.worldState?.getExitPoint?.() || null;
+      return { id: 'exit', gridPos: gp };
+    }
+
+    return null;
+  }
+
   getAutopilotTargets() {
     const targets = [];
     const requires = this.missionsConfig?.exit?.requires || [];
@@ -1589,6 +1677,7 @@ export class MissionDirector {
   getAutopilotState() {
     const objectiveText = this.getObjectiveText();
     const objectiveMission = this.getCurrentRequiredMission();
+    const next = this.getNextInteractableForMission(objectiveMission);
 
     const objective = objectiveMission
       ? {
@@ -1596,6 +1685,8 @@ export class MissionDirector {
         template: objectiveMission.template,
         params: deepClone(objectiveMission.params || {}),
         progress: this.getObjectiveProgress(objectiveMission),
+        nextInteractId: next?.id || null,
+        nextInteractGridPos: next?.gridPos || null,
         objectiveText
       }
       : {
@@ -1603,6 +1694,8 @@ export class MissionDirector {
         template: 'exit',
         params: {},
         progress: null,
+        nextInteractId: 'exit',
+        nextInteractGridPos: this.exitPoint?.getGridPosition?.() || this.worldState?.getExitPoint?.() || null,
         objectiveText
       };
 
