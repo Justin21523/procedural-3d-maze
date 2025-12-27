@@ -680,6 +680,9 @@ export class MissionDirector {
       ? mission.params.roomTypesKeypad
       : (Array.isArray(mission.params.keypadRoomTypes) ? mission.params.keypadRoomTypes : null);
 
+    const requiresPower = mission.params.requiresPower === true;
+    const powerItemId = String(mission.params.powerItemId || 'power_on').trim() || 'power_on';
+
     let clueCount = clamp(Math.round(mission.state.cluesTotal ?? 3), 2, 6);
 
     const clueTiles = pickDistinctTiles(ws, clueCount, {
@@ -755,6 +758,7 @@ export class MissionDirector {
         gridPos: { x: keypadPos.x, y: keypadPos.y },
         object3d: keypadObject,
         maxDistance: 2.6,
+        requiresItem: requiresPower ? { itemId: powerItemId, count: 1, message: 'Power is off.' } : null,
         prompt: () => {
           const ready = !!mission.state.codeReady;
           const unlocked = !!mission.state.unlocked;
