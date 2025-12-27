@@ -1,0 +1,94 @@
+{
+  "id": 7,
+  "name": "L7 - Maintenance",
+  "maze": { "width": 31, "height": 31, "roomDensity": 2.7, "extraConnectionChance": 0.12 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.6,
+      "CLASSROOMS_BLOCK": 1.6,
+      "OFFICE": 1.5,
+      "LAB": 1.4,
+      "STORAGE": 1.1,
+      "CAFETERIA": 0.75,
+      "BATHROOM": 0.65,
+      "LIBRARY": 0.7,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 4,
+    "maxCount": 6,
+    "speedMultiplier": 1.0,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.0,
+    "typeWeights": { "WANDERER": 0.5, "HUNTER": 0.25, "SENTINEL": 0.15, "GREETER": 0.1 },
+    "allowSprintTypes": ["HUNTER"]
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "power",
+        "template": "restorePowerFuses",
+        "required": true,
+        "params": {
+          "fuses": 3,
+          "itemId": "fuse",
+          "roomTypesFuses": ["STORAGE", "LAB", "OFFICE"],
+          "roomTypesPanel": ["LAB", "OFFICE"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Collect the fuses.",
+            "After collecting all fuses, find the power panel and press E to install them.",
+            "Press E again on the power panel to restore power."
+          ]
+        }
+      },
+      {
+        "id": "upload",
+        "template": "uploadEvidence",
+        "required": true,
+        "params": {
+          "count": 4,
+          "required": 4,
+          "itemId": "evidence",
+          "roomTypesEvidence": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
+          "roomTypesTerminal": ["OFFICE", "LAB"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Collect all evidence pickups.",
+            "After collecting enough evidence, find the upload terminal.",
+            "Press E at the terminal to upload (it consumes your evidence)."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level.",
+            "If it stays locked, you missed a required objective."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["power", "upload", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.5,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+
