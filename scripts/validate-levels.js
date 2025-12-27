@@ -173,6 +173,15 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     if (params.required !== undefined && (!Number.isFinite(required) || required <= 0)) {
       pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'required'], 'required should be a positive number');
     }
+    if (params.requiresPower !== undefined && typeof params.requiresPower !== 'boolean') {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'requiresPower'], 'requiresPower should be a boolean');
+    }
+    if (params.powerItemId !== undefined) {
+      const id = String(params.powerItemId || '').trim();
+      if (!id) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'powerItemId'], 'powerItemId should be a non-empty string');
+      }
+    }
     validateRoomTypesParam('roomTypes');
     validateRoomTypesParam('roomTypesEvidence');
     validateRoomTypesParam('roomTypesTerminal');
@@ -202,6 +211,15 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     const clues = Number(params.clues);
     if (params.clues !== undefined && (!Number.isFinite(clues) || clues <= 0)) {
       pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'clues'], 'clues should be a positive number');
+    }
+    if (params.requiresPower !== undefined && typeof params.requiresPower !== 'boolean') {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'requiresPower'], 'requiresPower should be a boolean');
+    }
+    if (params.powerItemId !== undefined) {
+      const id = String(params.powerItemId || '').trim();
+      if (!id) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'powerItemId'], 'powerItemId should be a non-empty string');
+      }
     }
     validateRoomTypesParam('roomTypes');
     validateRoomTypesParam('roomTypesClues');
