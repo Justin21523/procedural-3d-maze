@@ -239,6 +239,25 @@ export class AudioManager {
     };
   }
 
+  /**
+   * Procedural objective chime (short rising beep) without external assets.
+   */
+  playObjectiveChime() {
+    if (!this.enabled) return;
+
+    const buffer = this.getObjectiveChimeBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.45 * this.effectsVolume * this.masterVolume);
+    sound.play();
+
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
   getGunshotBuffer() {
     if (this.buffers.has('gunshot_proc')) {
       return this.buffers.get('gunshot_proc');
@@ -258,6 +277,33 @@ export class AudioManager {
     }
 
     this.buffers.set('gunshot_proc', buffer);
+    return buffer;
+  }
+
+  getObjectiveChimeBuffer() {
+    if (this.buffers.has('objective_chime_proc')) {
+      return this.buffers.get('objective_chime_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.22;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const f0 = 440;
+    const f1 = 880;
+
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const k = t / duration;
+      const freq = f0 + (f1 - f0) * k;
+      const env = Math.sin(Math.min(1, t / 0.02) * (Math.PI / 2)) * Math.exp(-t * 8);
+      data[i] = Math.sin(2 * Math.PI * freq * t) * env * 0.7;
+    }
+
+    this.buffers.set('objective_chime_proc', buffer);
     return buffer;
   }
 
