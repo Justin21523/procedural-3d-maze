@@ -84,6 +84,26 @@ export class ProjectileManager {
     this.onMonsterHitPlayer = null;
   }
 
+  canSpawnProjectile(owner) {
+    const maxTotal = CONFIG.MAX_ACTIVE_PROJECTILES;
+    if (Number.isFinite(maxTotal) && maxTotal >= 0 && this.projectiles.length >= maxTotal) {
+      return false;
+    }
+
+    const maxPlayer = CONFIG.MAX_ACTIVE_PLAYER_PROJECTILES;
+    const maxMonster = CONFIG.MAX_ACTIVE_MONSTER_PROJECTILES;
+    if (owner === 'player' && Number.isFinite(maxPlayer) && maxPlayer >= 0) {
+      const count = this.activeCounts?.player ?? 0;
+      if (count >= maxPlayer) return false;
+    }
+    if (owner === 'monster' && Number.isFinite(maxMonster) && maxMonster >= 0) {
+      const count = this.activeCounts?.monster ?? 0;
+      if (count >= maxMonster) return false;
+    }
+
+    return true;
+  }
+
   getProjectilePoolKey(owner, kind) {
     if (owner === 'monster') return 'bolt';
     const lowerKind = String(kind || '').toLowerCase();
@@ -565,20 +585,7 @@ export class ProjectileManager {
     const dir = direction.clone().normalize();
     const owner = options.owner || 'player';
 
-    const maxTotal = CONFIG.MAX_ACTIVE_PROJECTILES;
-    if (Number.isFinite(maxTotal) && maxTotal >= 0 && this.projectiles.length >= maxTotal) {
-      return false;
-    }
-    const maxPlayer = CONFIG.MAX_ACTIVE_PLAYER_PROJECTILES;
-    const maxMonster = CONFIG.MAX_ACTIVE_MONSTER_PROJECTILES;
-    if (owner === 'player' && Number.isFinite(maxPlayer) && maxPlayer >= 0) {
-      const count = this.activeCounts?.player ?? 0;
-      if (count >= maxPlayer) return false;
-    }
-    if (owner === 'monster' && Number.isFinite(maxMonster) && maxMonster >= 0) {
-      const count = this.activeCounts?.monster ?? 0;
-      if (count >= maxMonster) return false;
-    }
+    if (!this.canSpawnProjectile(owner)) return false;
 
     const kind = options.kind || 'bullet';
     const speed = Number.isFinite(options.speed) ? options.speed : 20;

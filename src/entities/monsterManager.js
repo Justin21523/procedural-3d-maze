@@ -914,6 +914,7 @@ export class MonsterManager {
     if (!monster || monster.isDead || monster.isDying) return;
     if (!fire) return;
     if (!this.projectileManager?.spawnMonsterProjectile) return;
+    if (this.projectileManager?.canSpawnProjectile && !this.projectileManager.canSpawnProjectile('monster')) return;
 
     const origin = monster.getWorldPosition?.();
     if (!origin) return;

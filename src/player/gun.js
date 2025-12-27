@@ -336,6 +336,10 @@ export class Gun {
     const cam = this.getCameraObject();
     if (!cam || !this.projectileManager) return false;
 
+    if (this.projectileManager?.canSpawnProjectile && !this.projectileManager.canSpawnProjectile('player')) {
+      return false;
+    }
+
     const { origin, dir } = this.computeShotRay(cam);
     if (!origin || !dir) return false;
 
