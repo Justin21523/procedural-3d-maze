@@ -20,6 +20,7 @@ import { SquadCoordinator } from '../ai/components/tactics/squadCoordinator.js';
 import { getSquadRoleBrainDefaults } from '../ai/squadRoleCatalog.js';
 import { CONFIG, resolveMonsterCount } from '../core/config.js';
 import { EVENTS } from '../core/events.js';
+import { canOccupyCircle } from '../world/collision.js';
 
 export class MonsterManager {
   /**
@@ -672,36 +673,10 @@ export class MonsterManager {
   }
 
   canMonsterMoveTo(worldX, worldZ) {
-    if (!this.worldState || !this.worldState.isWalkable) return true;
-
+    if (!this.worldState?.isWalkable) return true;
     const tileSize = CONFIG.TILE_SIZE || 1;
-    const gridX = Math.floor(worldX / tileSize);
-    const gridY = Math.floor(worldZ / tileSize);
-
-    if (!Number.isFinite(gridX) || !Number.isFinite(gridY)) return false;
-    if (!this.worldState.isWalkable(gridX, gridY)) return false;
-
     const radius = (CONFIG.PLAYER_RADIUS || 0.35) * 0.9;
-    const offsets = [
-      { x: radius, z: radius },
-      { x: radius, z: -radius },
-      { x: -radius, z: radius },
-      { x: -radius, z: -radius },
-      { x: radius, z: 0 },
-      { x: -radius, z: 0 },
-      { x: 0, z: radius },
-      { x: 0, z: -radius },
-    ];
-
-    for (const offset of offsets) {
-      const gx = Math.floor((worldX + offset.x) / tileSize);
-      const gy = Math.floor((worldZ + offset.z) / tileSize);
-      if (!this.worldState.isWalkable(gx, gy)) {
-        return false;
-      }
-    }
-
-    return true;
+    return canOccupyCircle(this.worldState, worldX, worldZ, radius, tileSize);
   }
 
   /**
