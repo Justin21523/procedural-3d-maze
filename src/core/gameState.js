@@ -39,6 +39,9 @@ export class GameState {
     this.missionsTotal = 0;
     this.missionsCollected = 0;
 
+    // Inventory / key items (per run)
+    this.keyItems = new Map(); // itemId -> count
+
     console.log('🎮 GameState initialized');
   }
 
@@ -256,6 +259,7 @@ export class GameState {
     this.startTime = 0;
     this.currentTime = 0;
     this.isRunning = false;
+    this.keyItems.clear();
 
     console.log('🔄 GameState reset');
   }
@@ -285,5 +289,65 @@ export class GameState {
       hasLost: this.hasLost,
       gameOver: this.gameOver
     };
+  }
+
+  normalizeItemId(itemId) {
+    const id = String(itemId || '').trim();
+    return id ? id : null;
+  }
+
+  getItemCount(itemId) {
+    const id = this.normalizeItemId(itemId);
+    if (!id) return 0;
+    return this.keyItems.get(id) || 0;
+  }
+
+  giveItem(itemId, count = 1) {
+    const id = this.normalizeItemId(itemId);
+    if (!id) return 0;
+    const n = Math.round(Number(count));
+    if (!Number.isFinite(n) || n <= 0) return this.getItemCount(id);
+
+    const next = Math.max(0, this.getItemCount(id) + n);
+    this.keyItems.set(id, next);
+    return next;
+  }
+
+  requiresItem(itemId, count = 1) {
+    const id = this.normalizeItemId(itemId);
+    if (!id) return false;
+    const need = Math.max(0, Math.round(Number(count)));
+    if (!Number.isFinite(need) || need <= 0) return true;
+    return this.getItemCount(id) >= need;
+  }
+
+  consumeItem(itemId, count = 1) {
+    const id = this.normalizeItemId(itemId);
+    if (!id) return { ok: false, itemId: null, consumed: 0, remaining: 0 };
+    const need = Math.max(0, Math.round(Number(count)));
+    if (!Number.isFinite(need) || need <= 0) {
+      return { ok: true, itemId: id, consumed: 0, remaining: this.getItemCount(id) };
+    }
+
+    const have = this.getItemCount(id);
+    if (have < need) {
+      return { ok: false, itemId: id, consumed: 0, remaining: have, required: need };
+    }
+
+    const remaining = Math.max(0, have - need);
+    if (remaining <= 0) this.keyItems.delete(id);
+    else this.keyItems.set(id, remaining);
+
+    return { ok: true, itemId: id, consumed: need, remaining };
+  }
+
+  getInventorySnapshot() {
+    const out = {};
+    for (const [id, count] of this.keyItems.entries()) {
+      const n = Number(count);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      out[id] = Math.round(n);
+    }
+    return out;
   }
 }
