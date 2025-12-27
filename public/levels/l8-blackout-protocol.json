@@ -71,6 +71,7 @@
         "required": true,
         "params": {
           "clues": 3,
+          "requiresPower": true,
           "roomTypesClues": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
           "roomTypesKeypad": ["OFFICE", "LAB"],
           "minDistFromSpawn": 7,
