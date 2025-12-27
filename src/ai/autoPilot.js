@@ -670,6 +670,7 @@ export class AutoPilot {
   computeCombatDirective(playerGrid, deltaTime, options = {}) {
     const enabled = CONFIG.AUTOPILOT_COMBAT_ENABLED ?? true;
     if (!enabled) return null;
+    if (!CONFIG.AI_RANGED_GLOBAL_ENABLED) return null;
     if (!playerGrid) return null;
 
     const dt = deltaTime ?? 0;
