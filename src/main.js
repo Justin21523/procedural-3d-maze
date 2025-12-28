@@ -534,7 +534,8 @@ async function initGame() {
     gameState,
     gun,
     monsterManager,
-    projectileManager
+    projectileManager,
+    missionDirector
   });
   missionDirector?.syncStatus?.(true);
 

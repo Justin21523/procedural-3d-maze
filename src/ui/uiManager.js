@@ -11,6 +11,7 @@ export class UIManager {
     this.gun = options.gun || null;
     this.monsterManager = options.monsterManager || null;
     this.projectileManager = options.projectileManager || null;
+    this.missionDirector = options.missionDirector || null;
 
     // Crosshair pulses
     this.crosshairEl = document.getElementById('crosshair');
@@ -251,13 +252,14 @@ export class UIManager {
     );
   }
 
-  setRefs({ player, worldState, gameState, gun, monsterManager, projectileManager } = {}) {
+  setRefs({ player, worldState, gameState, gun, monsterManager, projectileManager, missionDirector } = {}) {
     if (player) this.player = player;
     if (worldState) this.worldState = worldState;
     if (gameState) this.gameState = gameState;
     if (gun) this.gun = gun;
     if (monsterManager) this.monsterManager = monsterManager;
     if (projectileManager) this.projectileManager = projectileManager;
+    if (missionDirector) this.missionDirector = missionDirector;
   }
 
   setEventBus(eventBus) {
@@ -491,6 +493,18 @@ export class UIManager {
     const impacts = this.projectileManager?.impacts?.length ?? 0;
     const explosions = this.projectileManager?.explosions?.length ?? 0;
     const muzzle = this.gun?.muzzleFlashes?.length ?? 0;
+    const missionObjects = this.missionDirector?.spawnedObjects?.length ?? 0;
+
+    let blockedTiles = 0;
+    const obstacleMap = this.worldState?.obstacleMap || null;
+    if (Array.isArray(obstacleMap)) {
+      for (const row of obstacleMap) {
+        if (!Array.isArray(row)) continue;
+        for (const cell of row) {
+          if (cell) blockedTiles += 1;
+        }
+      }
+    }
 
     const fmt = (count, cap) => {
       const c = Math.max(0, Math.round(Number(count) || 0));
@@ -503,7 +517,9 @@ export class UIManager {
       `P ${fmt(proj, CONFIG.MAX_ACTIVE_PROJECTILES)} ` +
       `I ${fmt(impacts, CONFIG.MAX_ACTIVE_IMPACTS)} ` +
       `E ${fmt(explosions, CONFIG.MAX_ACTIVE_EXPLOSIONS)} ` +
-      `MF ${fmt(muzzle, CONFIG.MAX_ACTIVE_MUZZLE_FLASHES)}`;
+      `MF ${fmt(muzzle, CONFIG.MAX_ACTIVE_MUZZLE_FLASHES)} ` +
+      `MO ${missionObjects} ` +
+      `OB ${blockedTiles}`;
   }
 
   updateCrosshairPulse(dt) {
