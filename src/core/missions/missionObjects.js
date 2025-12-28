@@ -265,6 +265,113 @@ export function setTerminalState(object3d, { uploaded = false } = {}) {
   data.screen.material.emissive.setHex(color);
 }
 
+export function createLockedDoorObject({ unlocked = false } = {}) {
+  const group = new THREE.Group();
+
+  const frameMat = makeEmissiveMaterial(0x263238, 0x000000, 0.0);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.92, 1.6, 0.14), frameMat);
+  frame.castShadow = false;
+  frame.receiveShadow = true;
+  frame.position.y = 0.8;
+  group.add(frame);
+
+  const panelMat = makeEmissiveMaterial(0x37474f, 0xff4444, 0.35);
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(0.70, 1.34, 0.08), panelMat);
+  panel.castShadow = false;
+  panel.receiveShadow = true;
+  panel.position.set(0, 0.75, 0.06);
+  group.add(panel);
+
+  const lightMat = makeEmissiveMaterial(0xff4444, 0xff4444, 0.9);
+  const light = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 10), lightMat);
+  light.castShadow = false;
+  light.receiveShadow = false;
+  light.position.set(0.32, 0.25, 0.09);
+  group.add(light);
+
+  group.userData.__lockedDoor = { panel, light };
+  setLockedDoorState(group, { unlocked });
+
+  group.rotation.y = Math.random() * Math.PI * 2;
+  return group;
+}
+
+export function setLockedDoorState(object3d, { unlocked = false } = {}) {
+  const data = object3d?.userData?.__lockedDoor || null;
+  if (!data) return;
+  const isUnlocked = !!unlocked;
+  const color = isUnlocked ? 0x66ff99 : 0xff4444;
+
+  if (data.panel?.material) {
+    data.panel.material.emissive.setHex(color);
+  }
+  if (data.light?.material) {
+    data.light.material.color.setHex(color);
+    data.light.material.emissive.setHex(color);
+  }
+}
+
+export function createAltarObject({ filled = false } = {}) {
+  const group = new THREE.Group();
+
+  const baseMat = makeEmissiveMaterial(0x37474f, 0x000000, 0.0);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.22, 14), baseMat);
+  base.castShadow = false;
+  base.receiveShadow = true;
+  base.position.y = 0.11;
+  group.add(base);
+
+  const bowlMat = makeEmissiveMaterial(0x263238, 0x000000, 0.0);
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.16, 0.08, 14), bowlMat);
+  bowl.castShadow = false;
+  bowl.receiveShadow = true;
+  bowl.position.y = 0.24;
+  group.add(bowl);
+
+  const orbMat = makeEmissiveMaterial(0xff4444, 0xff4444, 0.65, true, 0.95);
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), orbMat);
+  orb.castShadow = false;
+  orb.receiveShadow = false;
+  orb.position.y = 0.30;
+  group.add(orb);
+
+  group.userData.__altar = { orb };
+  setAltarState(group, { filled });
+
+  group.rotation.y = Math.random() * Math.PI * 2;
+  return group;
+}
+
+export function setAltarState(object3d, { filled = false } = {}) {
+  const data = object3d?.userData?.__altar || null;
+  if (!data?.orb?.material) return;
+  const ok = !!filled;
+  const color = ok ? 0x66ff99 : 0xff4444;
+  data.orb.material.color.setHex(color);
+  data.orb.material.emissive.setHex(color);
+}
+
+export function createPhotoTargetObject() {
+  const group = new THREE.Group();
+
+  const mat = makeEmissiveMaterial(0xffffff, 0xaa66ff, 0.25, true, 0.92);
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.012, 0.30), mat);
+  plate.castShadow = false;
+  plate.receiveShadow = true;
+  plate.position.y = 0.03;
+  group.add(plate);
+
+  const dotMat = makeEmissiveMaterial(0xaa66ff, 0xaa66ff, 0.6);
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 10), dotMat);
+  dot.castShadow = false;
+  dot.receiveShadow = false;
+  dot.position.set(0, 0.08, 0);
+  group.add(dot);
+
+  group.rotation.y = Math.random() * Math.PI * 2;
+  return group;
+}
+
 export function getDefaultMissionRoomTypes() {
   // Default to "human rooms" for objectives.
   // New archetypes can be injected via level config.

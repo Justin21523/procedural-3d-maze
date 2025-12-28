@@ -123,6 +123,10 @@ function normalizeMissionEntry(raw, index = 0) {
     'clueRoomTypes',
     'keypadRoomTypes',
     // New templates may use these:
+    'roomTypesKey',
+    'roomTypesDoor',
+    'roomTypesItems',
+    'roomTypesAltars',
     'roomTypesTargets',
     'roomTypesShrines',
     'sequence'

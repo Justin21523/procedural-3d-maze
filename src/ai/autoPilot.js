@@ -198,7 +198,11 @@ export class AutoPilot {
       objectiveTemplate === 'activateShrines' ||
       objectiveTemplate === 'restorePowerFuses' ||
       objectiveTemplate === 'uploadEvidence' ||
-      objectiveTemplate === 'codeLock';
+      objectiveTemplate === 'codeLock' ||
+      objectiveTemplate === 'lockedDoor' ||
+      objectiveTemplate === 'placeItemsAtAltars' ||
+      objectiveTemplate === 'searchRoomTypeN' ||
+      objectiveTemplate === 'photographEvidence';
 
     if (wantsInteractTargets) {
       const objectiveTargets = (objectiveId && objectiveTemplate !== 'exit')
