@@ -195,6 +195,7 @@ export class AutoPilot {
       objectiveTemplate === 'findKeycard' ||
       objectiveTemplate === 'collectEvidence' ||
       objectiveTemplate === 'restorePower' ||
+      objectiveTemplate === 'activateShrines' ||
       objectiveTemplate === 'restorePowerFuses' ||
       objectiveTemplate === 'uploadEvidence' ||
       objectiveTemplate === 'codeLock';

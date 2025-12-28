@@ -17,7 +17,7 @@ import {
   createTerminalObject,
   setTerminalState
 } from './missionObjects.js';
-import { ROOM_CONFIGS } from '../../world/tileTypes.js';
+import { ROOM_CONFIGS, ROOM_TYPES } from '../../world/tileTypes.js';
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -185,6 +185,9 @@ export class MissionDirector {
       bus.on(EVENTS.MONSTER_KILLED, (payload) => this.onMonsterKilled(payload))
     );
     this.unsubs.push(
+      bus.on(EVENTS.PLAYER_DAMAGED, (payload) => this.onPlayerDamaged(payload))
+    );
+    this.unsubs.push(
       bus.on(EVENTS.NOISE_EMITTED, (payload) => this.onNoiseEmitted(payload))
     );
     this.unsubs.push(
@@ -230,6 +233,10 @@ export class MissionDirector {
         const switches = clamp(Math.round(mission.params.switches ?? 3), 1, 12);
         mission.state = { activated: new Set(), total: switches };
         this.spawnPowerSwitches(mission, { avoid: [spawn, exit] });
+      } else if (template === 'activateShrines') {
+        const shrines = clamp(Math.round(mission.params.shrines ?? mission.params.count ?? 3), 1, 12);
+        mission.state = { activated: new Set(), total: shrines };
+        this.spawnShrines(mission, { avoid: [spawn, exit] });
       } else if (template === 'restorePowerFuses') {
         const fuses = clamp(Math.round(mission.params.fuses ?? mission.params.required ?? 3), 1, 12);
         mission.state = {
@@ -258,10 +265,35 @@ export class MissionDirector {
       } else if (template === 'surviveTimer') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 60), 5, 3600);
         mission.state = { seconds, completed: false };
+      } else if (template === 'surviveNoDamage') {
+        const seconds = clamp(Math.round(mission.params.seconds ?? 20), 5, 3600);
+        mission.state = { seconds, lastDamagedAtSec: 0, completed: false, hits: 0 };
       } else if (template === 'enterRoomType') {
         const required = clamp(Math.round(mission.params.count ?? 1), 1, 999);
         const roomTypes = normalizeRoomTypes(mission.params.roomTypes) || null;
         mission.state = { entered: 0, required, roomTypes };
+      } else if (template === 'enterRoomSequence') {
+        const desiredLen = clamp(Math.round(mission.params.length ?? 3), 2, 6);
+        const raw = normalizeRoomTypes(mission.params.sequence) || [];
+        const resetOnWrong = mission.params.resetOnWrong !== false;
+        const ignoreCorridor = mission.params.ignoreCorridor !== false;
+
+        let sequence = raw.length >= 2
+          ? raw.slice(0, desiredLen)
+          : this.pickRoomSequence(desiredLen);
+
+        // Keep the sequence solvable even if some room types are missing in this map.
+        const available = this.getAvailableRoomTypes();
+        if (available.size > 0) {
+          const filtered = sequence.filter((t) => available.has(t));
+          if (filtered.length >= 2) {
+            sequence = filtered;
+          } else if (raw.length >= 2) {
+            sequence = this.pickRoomSequence(desiredLen);
+          }
+        }
+
+        mission.state = { sequence, index: 0, resetOnWrong, ignoreCorridor };
       } else if (template === 'killCount') {
         const required = clamp(Math.round(mission.params.count ?? 3), 1, 999);
         mission.state = { killed: 0, required };
@@ -303,6 +335,37 @@ export class MissionDirector {
 
       void idx;
     }
+  }
+
+  getAvailableRoomTypes() {
+    const rooms = this.worldState?.getRooms ? this.worldState.getRooms() : [];
+    const types = new Set();
+    for (const room of rooms) {
+      if (!room) continue;
+      if (!Number.isFinite(room.type)) continue;
+      if (room.type === ROOM_TYPES.CORRIDOR) continue;
+      types.add(room.type);
+    }
+    return types;
+  }
+
+  pickRoomSequence(desiredLen = 3) {
+    const len = clamp(Math.round(desiredLen || 3), 2, 6);
+    const types = Array.from(this.getAvailableRoomTypes());
+
+    if (types.length >= 2) {
+      shuffleInPlace(types);
+      return types.slice(0, Math.min(len, types.length));
+    }
+
+    // Fallback to common room types (even if not present).
+    return [
+      ROOM_TYPES.CLASSROOM,
+      ROOM_TYPES.OFFICE,
+      ROOM_TYPES.BATHROOM,
+      ROOM_TYPES.LAB,
+      ROOM_TYPES.STORAGE
+    ].slice(0, len);
   }
 
   spawnFindKeycard(mission, options = {}) {
@@ -435,6 +498,57 @@ export class MissionDirector {
       );
       this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
       mission.state.switches.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, on: false });
+    }
+  }
+
+  spawnShrines(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    const allowedRoomTypes = Array.isArray(mission.params.roomTypesShrines)
+      ? mission.params.roomTypesShrines
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const tiles = pickDistinctTiles(ws, mission.state.total, {
+      allowedRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 6,
+      margin: 1
+    });
+    if (tiles.length === 0) return;
+
+    mission.state.shrines = [];
+
+    for (let i = 0; i < tiles.length; i++) {
+      const pos = tiles[i];
+      const object3d = createPowerSwitchObject(false);
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+
+      const interactableId = `shrine:${mission.id}:${i + 1}`;
+      const label = String(mission.params.label || 'Activate Shrine').trim() || 'Activate Shrine';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'shrine',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: ({ entry }) => {
+            const meta = entry?.meta || {};
+            if (meta?.on) return { ok: true, message: 'Shrine already active', state: { on: true } };
+            meta.on = true;
+            setPowerSwitchState(object3d, true);
+            return { ok: true, message: 'Shrine activated', state: { on: true } };
+          },
+          meta: { missionId: mission.id, template: mission.template, index: i, on: false }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.shrines.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, on: false });
     }
   }
 
@@ -977,6 +1091,21 @@ export class MissionDirector {
           if (sw) sw.on = true;
         }
       }
+    } else if (mission.template === 'activateShrines') {
+      const on = !!payload?.result?.state?.on;
+      if (on) {
+        mission.state.activated.add(id);
+        if (Array.isArray(mission.state.shrines)) {
+          const shrine = mission.state.shrines.find((s) => s.id === id);
+          if (shrine) shrine.on = true;
+        }
+
+        const total = mission.state.total || 0;
+        const activated = mission.state.activated?.size || 0;
+        if (total > 0 && activated >= total) {
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All shrines activated.', seconds: 1.9 });
+        }
+      }
     } else if (mission.template === 'restorePowerFuses') {
       if (payload?.kind === 'fusePanel') {
         const installed = !!payload?.result?.state?.installed;
@@ -1027,6 +1156,42 @@ export class MissionDirector {
       mission.state.entered = Math.min(mission.state.required || 1, (mission.state.entered || 0) + 1);
     }
 
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'enterRoomSequence') continue;
+      if (this.isMissionComplete(mission)) continue;
+
+      const ignoreCorridor = mission.state.ignoreCorridor !== false;
+      if (ignoreCorridor && roomType === ROOM_TYPES.CORRIDOR) continue;
+
+      const sequence = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+      if (sequence.length < 2) continue;
+
+      const idx = clamp(Math.round(mission.state.index ?? 0), 0, sequence.length);
+      const expected = sequence[idx];
+
+      if (roomType === expected) {
+        mission.state.index = Math.min(sequence.length, idx + 1);
+        const nextIdx = mission.state.index;
+        if (nextIdx >= sequence.length) {
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Sequence complete.', seconds: 1.8 });
+        } else {
+          const name = ROOM_CONFIGS?.[expected]?.name || 'Room';
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Sequence: ${name} (${nextIdx}/${sequence.length})`, seconds: 1.4 });
+        }
+        continue;
+      }
+
+      const resetOnWrong = mission.state.resetOnWrong !== false;
+      if (!resetOnWrong) continue;
+
+      // Only reset when entering a "sequence room" out of order; corridors / other rooms are neutral.
+      if (sequence.includes(roomType) && idx > 0) {
+        mission.state.index = 0;
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Wrong room. Sequence reset.', seconds: 1.6 });
+      }
+    }
+
     this.syncStatus();
   }
 
@@ -1039,6 +1204,25 @@ export class MissionDirector {
       if (this.isMissionComplete(mission)) continue;
 
       mission.state.killed = Math.min(mission.state.required || 1, (mission.state.killed || 0) + 1);
+    }
+
+    this.syncStatus();
+  }
+
+  onPlayerDamaged(payload) {
+    void payload;
+
+    const nowSec = this.gameState?.getElapsedTime
+      ? this.gameState.getElapsedTime()
+      : this.elapsedSec;
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'surviveNoDamage') continue;
+      if (this.isMissionComplete(mission)) continue;
+
+      mission.state.lastDamagedAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
+      mission.state.hits = (mission.state.hits || 0) + 1;
     }
 
     this.syncStatus();
@@ -1223,6 +1407,21 @@ export class MissionDirector {
       }
     }
 
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'surviveNoDamage') continue;
+      if (mission.state.completed) continue;
+
+      const start = Number.isFinite(mission.state.lastDamagedAtSec) ? mission.state.lastDamagedAtSec : 0;
+      const seconds = mission.state.seconds || 0;
+      if (seconds <= 0) continue;
+
+      const safeFor = this.elapsedSec - start;
+      if (safeFor >= seconds) {
+        mission.state.completed = true;
+      }
+    }
+
     this.syncStatus();
   }
 
@@ -1237,6 +1436,9 @@ export class MissionDirector {
     if (mission.template === 'restorePower') {
       return (mission.state.activated?.size || 0) >= (mission.state.total || 0);
     }
+    if (mission.template === 'activateShrines') {
+      return (mission.state.activated?.size || 0) >= (mission.state.total || 0);
+    }
     if (mission.template === 'restorePowerFuses') {
       return !!mission.state.powered;
     }
@@ -1246,8 +1448,16 @@ export class MissionDirector {
     if (mission.template === 'surviveTimer') {
       return !!mission.state.completed;
     }
+    if (mission.template === 'surviveNoDamage') {
+      return !!mission.state.completed;
+    }
     if (mission.template === 'enterRoomType') {
       return (mission.state.entered || 0) >= (mission.state.required || 0);
+    }
+    if (mission.template === 'enterRoomSequence') {
+      const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+      const idx = Number(mission.state.index) || 0;
+      return seq.length >= 2 && idx >= seq.length;
     }
     if (mission.template === 'killCount') {
       return (mission.state.killed || 0) >= (mission.state.required || 0);
@@ -1302,6 +1512,9 @@ export class MissionDirector {
       if (mission.template === 'restorePower') {
         return `Restore power (${mission.state.activated?.size || 0}/${mission.state.total || 0})`;
       }
+      if (mission.template === 'activateShrines') {
+        return `Activate shrines (${mission.state.activated?.size || 0}/${mission.state.total || 0})`;
+      }
       if (mission.template === 'restorePowerFuses') {
         const required = Number(mission.state.fusesRequired) || 0;
         const collected = Number(mission.state.fusesCollected) || 0;
@@ -1331,9 +1544,23 @@ export class MissionDirector {
         const remaining = Math.max(0, (mission.state.seconds || 0) - this.elapsedSec);
         return remaining > 0 ? `Survive (${remaining}s)` : 'Survive (done)';
       }
+      if (mission.template === 'surviveNoDamage') {
+        const start = Number.isFinite(mission.state.lastDamagedAtSec) ? mission.state.lastDamagedAtSec : 0;
+        const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
+        return remaining > 0 ? `Avoid damage (${remaining}s)` : 'Avoid damage (done)';
+      }
       if (mission.template === 'enterRoomType') {
         const roomLabel = formatRoomTypeList(mission.state.roomTypes);
         return `Enter ${roomLabel} (${mission.state.entered || 0}/${mission.state.required || 0})`;
+      }
+      if (mission.template === 'enterRoomSequence') {
+        const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+        const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
+        if (seq.length < 2) return 'Follow the sequence';
+        if (idx >= seq.length) return 'Sequence complete. Reach the exit.';
+        const nextType = seq[idx];
+        const nextName = ROOM_CONFIGS?.[nextType]?.name || 'Room';
+        return `Sequence (${idx}/${seq.length}) → Next: ${nextName}`;
       }
       if (mission.template === 'killCount') {
         return `Defeat monsters (${mission.state.killed || 0}/${mission.state.required || 0})`;
@@ -1400,6 +1627,12 @@ export class MissionDirector {
         total: mission.state.total || 0
       };
     }
+    if (mission.template === 'activateShrines') {
+      return {
+        activated: mission.state.activated?.size || 0,
+        total: mission.state.total || 0
+      };
+    }
     if (mission.template === 'restorePowerFuses') {
       return {
         fusesCollected: mission.state.fusesCollected || 0,
@@ -1424,11 +1657,27 @@ export class MissionDirector {
       const remaining = Math.max(0, (mission.state.seconds || 0) - this.elapsedSec);
       return { seconds: mission.state.seconds || 0, remaining, completed: !!mission.state.completed };
     }
+    if (mission.template === 'surviveNoDamage') {
+      const start = Number.isFinite(mission.state.lastDamagedAtSec) ? mission.state.lastDamagedAtSec : 0;
+      const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
+      return { seconds: mission.state.seconds || 0, remaining, hits: mission.state.hits || 0, completed: !!mission.state.completed };
+    }
     if (mission.template === 'enterRoomType') {
       return {
         entered: mission.state.entered || 0,
         required: mission.state.required || 0,
         roomTypes: normalizeRoomTypes(mission.state.roomTypes) || []
+      };
+    }
+    if (mission.template === 'enterRoomSequence') {
+      const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+      const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
+      const nextRoomType = idx >= 0 && idx < seq.length ? seq[idx] : null;
+      return {
+        sequence: seq.slice(),
+        index: idx,
+        total: seq.length,
+        nextRoomType
       };
     }
     if (mission.template === 'killCount') {
@@ -1576,6 +1825,12 @@ export class MissionDirector {
       return next ? { id: next.id || null, gridPos: next.gridPos } : null;
     }
 
+    if (mission.template === 'activateShrines') {
+      const shrines = Array.isArray(mission.state.shrines) ? mission.state.shrines : [];
+      const next = shrines.find((s) => s && !s.on && s.gridPos);
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+    }
+
     if (mission.template === 'restorePowerFuses') {
       if (mission.state.powered) return null;
       if (!mission.state.installed) {
@@ -1670,6 +1925,13 @@ export class MissionDirector {
           if (sw?.on) continue;
           if (!sw?.gridPos) continue;
           targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'activateShrines') {
+        const shrines = Array.isArray(mission.state.shrines) ? mission.state.shrines : [];
+        for (const shrine of shrines) {
+          if (shrine?.on) continue;
+          if (!shrine?.gridPos) continue;
+          targets.push({ collected: false, id: shrine.id || null, gridPos: shrine.gridPos, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'restorePowerFuses') {
         if (mission.state.powered) continue;
