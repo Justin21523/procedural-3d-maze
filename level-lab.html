@@ -177,14 +177,31 @@
   <div class="wrap">
     <h1>Level Lab</h1>
     <p>
-      Load a <span class="mono">public/levels/*.json</span> file, generate a preview world, and inspect objective placements and room type distribution.
-      Edit JSON directly, then click <strong>Generate Preview</strong> to re-run placement.
+      Load a <span class="mono">public/levels/*.json</span> file (or generate from a <span class="mono">public/level-recipes/*.json</span> recipe),
+      generate a preview world, and inspect placements and room type distribution. Edit JSON directly, then click <strong>Generate Preview</strong>.
     </p>
 
     <div class="panel">
-      <label for="levelSelect">Level</label>
-      <select id="levelSelect"></select>
-      <button id="loadBtn">Load</button>
+      <label for="sourceMode">Source</label>
+      <select id="sourceMode">
+        <option value="level">Level</option>
+        <option value="recipe">Recipe</option>
+      </select>
+
+      <span id="levelControls">
+        <label for="levelSelect">Level</label>
+        <select id="levelSelect"></select>
+        <button id="loadBtn">Load</button>
+      </span>
+
+      <span id="recipeControls" style="display:none;">
+        <label for="recipeSelect">Recipe</label>
+        <select id="recipeSelect"></select>
+        <label for="recipeIndex">Index</label>
+        <input id="recipeIndex" type="number" min="0" step="1" value="11" style="width: 84px;" />
+        <button id="generateRecipeBtn">Generate</button>
+      </span>
+
       <button id="previewBtn" class="primary">Generate Preview</button>
       <button id="copyBtn">Copy JSON</button>
       <button id="downloadBtn">Download JSON</button>
@@ -202,10 +219,37 @@
         <h2>Preview</h2>
         <div class="subtle">
           Spawn: <span id="spawnLabel" class="mono">—</span> · Exit: <span id="exitLabel" class="mono">—</span> ·
-          Targets: <span id="targetCount" class="mono">—</span>
+          Interactables: <span id="interactableCount" class="mono">—</span> · Targets: <span id="targetCount" class="mono">—</span>
         </div>
 
-        <h2 style="margin-top: 12px;">Mission Targets</h2>
+        <h2 style="margin-top: 12px;">Interactables</h2>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 16%;">Kind</th>
+              <th style="width: 32%;">Id</th>
+              <th style="width: 14%;">Grid</th>
+              <th>Mission</th>
+            </tr>
+          </thead>
+          <tbody id="interactablesBody"></tbody>
+        </table>
+
+        <h2 style="margin-top: 14px;">Door Networks</h2>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 18%;">Mission</th>
+              <th style="width: 10%;">Slot</th>
+              <th style="width: 18%;">Door Grid</th>
+              <th style="width: 18%;">Approach Grid</th>
+              <th>Gate</th>
+            </tr>
+          </thead>
+          <tbody id="doorsBody"></tbody>
+        </table>
+
+        <h2 style="margin-top: 14px;">Mission Targets</h2>
         <table>
           <thead>
             <tr>
@@ -240,13 +284,20 @@
 
     import { CONFIG } from '/src/core/config.js';
     import { EventBus } from '/src/core/eventBus.js';
+    import { LevelDirector } from '/src/core/levelDirector.js';
     import { WorldState } from '/src/world/worldState.js';
     import { ROOM_CONFIGS } from '/src/world/tileTypes.js';
     import { InteractableSystem } from '/src/core/interactions/interactableSystem.js';
     import { MissionDirector } from '/src/core/missions/missionDirector.js';
 
     const ui = {
+      sourceMode: document.getElementById('sourceMode'),
+      levelControls: document.getElementById('levelControls'),
+      recipeControls: document.getElementById('recipeControls'),
       levelSelect: document.getElementById('levelSelect'),
+      recipeSelect: document.getElementById('recipeSelect'),
+      recipeIndex: document.getElementById('recipeIndex'),
+      generateRecipeBtn: document.getElementById('generateRecipeBtn'),
       loadBtn: document.getElementById('loadBtn'),
       previewBtn: document.getElementById('previewBtn'),
       copyBtn: document.getElementById('copyBtn'),
@@ -256,6 +307,9 @@
       levelJson: document.getElementById('levelJson'),
       spawnLabel: document.getElementById('spawnLabel'),
       exitLabel: document.getElementById('exitLabel'),
+      interactableCount: document.getElementById('interactableCount'),
+      interactablesBody: document.getElementById('interactablesBody'),
+      doorsBody: document.getElementById('doorsBody'),
       targetCount: document.getElementById('targetCount'),
       targetsBody: document.getElementById('targetsBody'),
       roomsBody: document.getElementById('roomsBody')
@@ -302,6 +356,102 @@
           <td class="mono">${missionId || '—'}</td>
         `;
         ui.targetsBody.appendChild(tr);
+      }
+    }
+
+    function formatGrid(gp) {
+      if (!gp || !Number.isFinite(gp.x) || !Number.isFinite(gp.y)) return '—';
+      return `${gp.x},${gp.y}`;
+    }
+
+    function formatMissionMeta(meta) {
+      const missionId = String(meta?.missionId || '').trim();
+      const template = String(meta?.template || '').trim();
+      if (missionId && template) return `${missionId} (${template})`;
+      if (missionId) return missionId;
+      if (template) return template;
+      return '—';
+    }
+
+    function renderInteractables(entries) {
+      ui.interactablesBody.innerHTML = '';
+      const list = Array.isArray(entries) ? entries : [];
+      ui.interactableCount.textContent = String(list.length);
+
+      list.sort((a, b) => {
+        const ak = String(a?.kind || '');
+        const bk = String(b?.kind || '');
+        if (ak !== bk) return ak.localeCompare(bk);
+        const ai = String(a?.id || '');
+        const bi = String(b?.id || '');
+        return ai.localeCompare(bi);
+      });
+
+      for (const entry of list) {
+        const tr = document.createElement('tr');
+        const kind = String(entry?.kind || '');
+        const id = String(entry?.id || '');
+        const gridStr = formatGrid(entry?.gridPos);
+        const meta = entry?.meta || null;
+        tr.innerHTML = `
+          <td>${kind || '—'}</td>
+          <td class="mono">${id || '—'}</td>
+          <td class="mono">${gridStr}</td>
+          <td class="mono">${formatMissionMeta(meta)}</td>
+        `;
+        ui.interactablesBody.appendChild(tr);
+      }
+    }
+
+    function renderDoorNetworks(missions) {
+      ui.doorsBody.innerHTML = '';
+      const rows = [];
+
+      const map = missions?.missions;
+      const all = map && typeof map.values === 'function' ? Array.from(map.values()) : [];
+      for (const mission of all) {
+        if (!mission || mission.template !== 'doorLockNetwork') continue;
+        const doors = Array.isArray(mission.state?.doors) ? mission.state.doors : [];
+        for (const door of doors) {
+          rows.push({
+            missionId: mission.id,
+            slot: door?.slot,
+            doorGridPos: door?.doorGridPos,
+            approachGridPos: door?.doorApproachGridPos,
+            requiresMissionId: door?.requiresMissionId,
+            requiresItem: door?.requiresItem,
+            hintMissionId: door?.hintMissionId
+          });
+        }
+      }
+
+      if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="5" class="mono">—</td>`;
+        ui.doorsBody.appendChild(tr);
+        return;
+      }
+
+      for (const row of rows) {
+        const tr = document.createElement('tr');
+        const missionId = String(row?.missionId || '');
+        const slot = String(row?.slot || '');
+        const doorGrid = formatGrid(row?.doorGridPos);
+        const approachGrid = formatGrid(row?.approachGridPos);
+        const gateMission = String(row?.requiresMissionId || '').trim();
+        const hintMission = String(row?.hintMissionId || '').trim();
+        const gateItem = row?.requiresItem ? 'item' : '';
+        const gate = gateMission
+          ? `mission:${gateMission}${hintMission ? ` (hint:${hintMission})` : ''}`
+          : (gateItem ? 'requires item' : '—');
+        tr.innerHTML = `
+          <td class="mono">${missionId || '—'}</td>
+          <td class="mono">${slot || '—'}</td>
+          <td class="mono">${doorGrid}</td>
+          <td class="mono">${approachGrid}</td>
+          <td class="mono">${gate}</td>
+        `;
+        ui.doorsBody.appendChild(tr);
       }
     }
 
@@ -358,6 +508,19 @@
       return levels;
     }
 
+    async function loadRecipeManifest() {
+      const manifest = await fetchJson('/level-recipes/manifest.json');
+      const recipes = Array.isArray(manifest?.recipes) ? manifest.recipes : [];
+      ui.recipeSelect.innerHTML = '';
+      for (const file of recipes) {
+        const opt = document.createElement('option');
+        opt.value = String(file || '');
+        opt.textContent = String(file || '');
+        ui.recipeSelect.appendChild(opt);
+      }
+      return recipes;
+    }
+
     async function loadSelectedLevel() {
       const file = String(ui.levelSelect.value || '').trim();
       if (!file) return null;
@@ -366,6 +529,20 @@
       ui.sourceLabel.textContent = url;
       ui.levelJson.value = JSON.stringify(level, null, 2);
       setStatus('Loaded', 'good');
+      return { file, url, level };
+    }
+
+    async function generateFromSelectedRecipe() {
+      const file = String(ui.recipeSelect.value || '').trim();
+      if (!file) return null;
+      const index = Math.max(0, Math.round(Number(ui.recipeIndex.value) || 0));
+      const url = `/level-recipes/${file}`;
+      const recipe = await fetchJson(url);
+      const director = new LevelDirector([], [recipe]);
+      const level = director.getLevelConfig(index);
+      ui.sourceLabel.textContent = `${url} (index ${index})`;
+      ui.levelJson.value = JSON.stringify(level, null, 2);
+      setStatus('Generated', 'good');
       return { file, url, level };
     }
 
@@ -429,16 +606,43 @@
       const state = missions.getAutopilotState?.() || null;
       const targets = Array.isArray(state?.targets) ? state.targets : [];
 
+      renderInteractables(interactables.list());
+      renderDoorNetworks(missions);
       renderTargets(targets);
       renderRoomDistribution(world);
 
       return { world, missions, targets };
     }
 
+    function syncSourceControls() {
+      const mode = String(ui.sourceMode.value || 'level');
+      if (mode === 'recipe') {
+        ui.levelControls.style.display = 'none';
+        ui.recipeControls.style.display = '';
+      } else {
+        ui.levelControls.style.display = '';
+        ui.recipeControls.style.display = 'none';
+      }
+    }
+
+    ui.sourceMode.addEventListener('change', () => {
+      syncSourceControls();
+    });
+
     ui.loadBtn.addEventListener('click', async () => {
       try {
         setStatus('Loading…');
         await loadSelectedLevel();
+      } catch (err) {
+        console.error(err);
+        setStatus(String(err?.message || err), 'bad');
+      }
+    });
+
+    ui.generateRecipeBtn.addEventListener('click', async () => {
+      try {
+        setStatus('Generating…');
+        await generateFromSelectedRecipe();
       } catch (err) {
         console.error(err);
         setStatus(String(err?.message || err), 'bad');
@@ -489,6 +693,8 @@
         void CONFIG;
         setStatus('Loading manifest…');
         const levels = await loadManifest();
+        await loadRecipeManifest();
+        syncSourceControls();
         if (levels.length > 0) {
           ui.levelSelect.value = levels[levels.length - 1];
           await loadSelectedLevel();
@@ -504,4 +710,3 @@
   </script>
 </body>
 </html>
-
