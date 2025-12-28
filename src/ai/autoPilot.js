@@ -221,6 +221,17 @@ export class AutoPilot {
       }
     }
 
+    if (objectiveTemplate === 'lureToSensor') {
+      const stage = String(objective?.progress?.stage || '').trim();
+      if (stage === 'wait' && objectiveGoalGrid && Number.isFinite(objectiveGoalGrid.x) && Number.isFinite(objectiveGoalGrid.y)) {
+        this.taskTargetType = 'mission';
+        this.taskRunner.setTasks([
+          new MoveToTask(objectiveGoalGrid, { threshold: 0 })
+        ]);
+        return;
+      }
+    }
+
     // Interactable objectives: go to the closest target and interact.
     const wantsInteractTargets =
       objectiveTemplate === 'findKeycard' ||
@@ -239,6 +250,8 @@ export class AutoPilot {
       objectiveTemplate === 'switchSequence' ||
       objectiveTemplate === 'switchSequenceWithClues' ||
       objectiveTemplate === 'hideForSeconds' ||
+      objectiveTemplate === 'hideUntilClear' ||
+      objectiveTemplate === 'lureToSensor' ||
       objectiveTemplate === 'escort';
 
     if (wantsInteractTargets) {
@@ -593,6 +606,37 @@ export class AutoPilot {
       }
     }
 
+    if (objective?.template === 'hideUntilClear') {
+      const completed = !!objective?.progress?.completed;
+      const hidden = !!objective?.progress?.hidden;
+      if (!completed && hidden) {
+        return {
+          move: { x: 0, y: 0 },
+          lookYaw: Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0,
+          lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
+          sprint: false,
+          block,
+          interact: false,
+          fire: false
+        };
+      }
+
+      if (completed && hidden) {
+        const forcedId = this.playerController?.getForcedInteractId?.() || null;
+        if (forcedId) {
+          return {
+            move: { x: 0, y: 0 },
+            lookYaw: Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0,
+            lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
+            sprint: false,
+            block,
+            interact: forcedId,
+            fire: false
+          };
+        }
+      }
+    }
+
     if (objective?.template === 'escort') {
       const started = !!objective?.progress?.started;
       const completed = !!objective?.progress?.completed;
@@ -644,6 +688,22 @@ export class AutoPilot {
             };
           }
         }
+      }
+    }
+
+    if (objective?.template === 'lureToSensor') {
+      const stage = String(objective?.progress?.stage || '').trim();
+      const goal = objective?.progress?.goalGridPos || null;
+      if (stage === 'wait' && goal && goal.x === playerPos.x && goal.y === playerPos.y) {
+        return {
+          move: { x: 0, y: 0 },
+          lookYaw: Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0,
+          lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
+          sprint: false,
+          block,
+          interact: false,
+          fire: false
+        };
       }
     }
 
