@@ -46,6 +46,27 @@ export function createEvidenceObject() {
   return group;
 }
 
+export function createDeliveryItemObject() {
+  const group = new THREE.Group();
+
+  const crateMat = makeEmissiveMaterial(0xffcc66, 0xffb74d, 0.22);
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.18, 0.20), crateMat);
+  crate.castShadow = false;
+  crate.receiveShadow = true;
+  crate.position.y = 0.09;
+  group.add(crate);
+
+  const strapMat = makeEmissiveMaterial(0x263238, 0x000000, 0.0);
+  const strap = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.02, 0.04), strapMat);
+  strap.castShadow = false;
+  strap.receiveShadow = true;
+  strap.position.set(0, 0.16, 0);
+  group.add(strap);
+
+  group.rotation.y = Math.random() * Math.PI * 2;
+  return group;
+}
+
 export function createPowerSwitchObject(isOn = false) {
   const group = new THREE.Group();
 
@@ -367,6 +388,38 @@ export function createPhotoTargetObject() {
   dot.receiveShadow = false;
   dot.position.set(0, 0.08, 0);
   group.add(dot);
+
+  group.rotation.y = Math.random() * Math.PI * 2;
+  return group;
+}
+
+export function createEscortBuddyObject() {
+  const group = new THREE.Group();
+
+  const coreMat = makeEmissiveMaterial(0x66ff99, 0x66ff99, 0.55, true, 0.92);
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.10, 0.34, 12), coreMat);
+  core.castShadow = false;
+  core.receiveShadow = true;
+  core.position.y = 0.22;
+  group.add(core);
+
+  const capA = new THREE.Mesh(new THREE.SphereGeometry(0.10, 12, 12), coreMat);
+  capA.castShadow = false;
+  capA.receiveShadow = true;
+  capA.position.set(0, 0.39, 0);
+  group.add(capA);
+
+  const capB = capA.clone();
+  capB.position.set(0, 0.05, 0);
+  group.add(capB);
+
+  const ringMat = makeEmissiveMaterial(0x263238, 0x66ff99, 0.15);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.02, 10, 18), ringMat);
+  ring.castShadow = false;
+  ring.receiveShadow = false;
+  ring.position.set(0, 0.22, 0);
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
 
   group.rotation.y = Math.random() * Math.PI * 2;
   return group;

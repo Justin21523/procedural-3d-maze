@@ -136,7 +136,8 @@ export class GameLoop {
         const elapsedSec = this.gameState?.getElapsedTime ? this.gameState.getElapsedTime() : null;
         if (bus?.emit && Number.isFinite(elapsedSec) && elapsedSec !== this.lastTimerTickSec) {
           this.lastTimerTickSec = elapsedSec;
-          bus.emit(EVENTS.TIMER_TICK, { elapsedSec });
+          const playerGridPos = this.player?.getGridPosition ? this.player.getGridPosition() : null;
+          bus.emit(EVENTS.TIMER_TICK, { elapsedSec, playerGridPos });
         }
       }
     }, { order: 5 });
