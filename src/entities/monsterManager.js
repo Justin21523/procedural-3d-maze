@@ -815,7 +815,9 @@ export class MonsterManager {
       playerPosition && playerPosition.isVector3 ? playerPosition :
       this.playerRef?.getPosition ? this.playerRef.getPosition() :
       null;
-    const playerGrid = this.playerRef?.getGridPosition ? this.playerRef.getGridPosition() : null;
+    const playerGrid = this.playerRef?.getAIPerceivedGridPosition
+      ? this.playerRef.getAIPerceivedGridPosition()
+      : (this.playerRef?.getGridPosition ? this.playerRef.getGridPosition() : null);
 
     if (playerPos) {
       this.updatePlayerNoise(dt, playerPos);

@@ -535,12 +535,26 @@ export class InteractableSystem {
     if (!wantsManual && !wantsAuto) return;
 
     if (wantsManual) {
-      if (!hovered) return;
-      this.tryInteract(hovered, {
-        actorKind: 'player',
-        playerPos,
-        nowMs: ctx?.nowMs
-      });
+      if (hovered) {
+        this.tryInteract(hovered, {
+          actorKind: 'player',
+          playerPos,
+          nowMs: ctx?.nowMs
+        });
+        return;
+      }
+
+      const forcedId = String(ctx?.forcedInteractId || '').trim();
+      if (forcedId) {
+        const forced = this.get(forcedId);
+        if (forced) {
+          this.tryInteract(forced, {
+            actorKind: 'player',
+            playerPos,
+            nowMs: ctx?.nowMs
+          });
+        }
+      }
       return;
     }
 

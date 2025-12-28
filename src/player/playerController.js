@@ -47,6 +47,10 @@ export class PlayerController {
     this.footstepTimer = 0;
     this.stuckTimer = 0;
 
+    // Hiding (locker/under-desk style): AI should not see the player while hidden.
+    this.hidden = false;
+    this.hiddenSpotId = null;
+
     // Spawn at a safe tile center
     const spawnPoint = worldState.getSpawnPoint();
     const worldSpawn = gridToWorld(spawnPoint.x, spawnPoint.y, CONFIG.TILE_SIZE);
@@ -105,6 +109,13 @@ export class PlayerController {
         this.camera.setPitch(currentPitch + applied);
       }
       this.externalLookPitch = null;
+    }
+
+    if (this.hidden) {
+      this.externalMove = null;
+      this.velocity.set(0, 0, 0);
+      this.camera.updatePosition(this.position.x, this.position.y, this.position.z);
+      return;
     }
 
     let moveVector = this.externalMove
@@ -468,6 +479,29 @@ export class PlayerController {
     return worldToGrid(this.position.x, this.position.z, CONFIG.TILE_SIZE);
   }
 
+  isHidden() {
+    return !!this.hidden;
+  }
+
+  setHidden(hidden, spotId = null) {
+    this.hidden = !!hidden;
+    this.hiddenSpotId = this.hidden ? (String(spotId || '').trim() || null) : null;
+  }
+
+  getForcedInteractId() {
+    return this.hidden ? this.hiddenSpotId : null;
+  }
+
+  getAIPerceivedGridPosition() {
+    if (this.hidden) return null;
+    return this.getGridPosition();
+  }
+
+  getAIPerceivedWorldPosition() {
+    if (this.hidden) return null;
+    return this.getPosition();
+  }
+
   /**
    * @returns {boolean} True if sprinting
    */
@@ -574,6 +608,8 @@ export class PlayerController {
    * @param {number} z
    */
   setPosition(x, y, z) {
+    this.setHidden(false);
+
     const nextX = Number.isFinite(x) ? x : this.position.x;
     const nextY = Number.isFinite(y) ? y : this.position.y;
     const nextZ = Number.isFinite(z) ? z : this.position.z;
