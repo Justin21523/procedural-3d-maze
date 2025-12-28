@@ -3,9 +3,11 @@ import { EVENTS } from '../events.js';
 import { CONFIG } from '../config.js';
 import { normalizeMissionsConfig } from './missionTemplates.js';
 import { pickDistinctTiles, gridToWorldCenter, manhattan } from './missionUtils.js';
+import { Pathfinding } from '../../ai/pathfinding.js';
 import {
   createKeycardObject,
   createEvidenceObject,
+  createDeliveryItemObject,
   createPowerSwitchObject,
   setPowerSwitchState,
   createClueNoteObject,
@@ -20,7 +22,8 @@ import {
   setLockedDoorState,
   createAltarObject,
   setAltarState,
-  createPhotoTargetObject
+  createPhotoTargetObject,
+  createEscortBuddyObject
 } from './missionObjects.js';
 import { ROOM_CONFIGS, ROOM_TYPES, TILE_TYPES } from '../../world/tileTypes.js';
 
@@ -139,6 +142,7 @@ export class MissionDirector {
     this.gameState = options.gameState || null;
     this.exitPoint = options.exitPoint || null;
     this.interactables = options.interactableSystem || null;
+    this.pathfinder = this.worldState ? new Pathfinding(this.worldState) : null;
 
     this.levelConfig = null;
     this.missionsConfig = null;
@@ -159,6 +163,9 @@ export class MissionDirector {
     this.exitUnlocked = true;
     this.exitLockMessage = '';
 
+    this.playerHidden = false;
+    this.playerHiddenSpotId = null;
+
     this.hintTier = 0;
     this.hintObjectiveKey = '';
 
@@ -170,7 +177,10 @@ export class MissionDirector {
 
   setRefs({ eventBus, worldState, scene, gameState, exitPoint, interactableSystem } = {}) {
     if (eventBus) this.eventBus = eventBus;
-    if (worldState) this.worldState = worldState;
+    if (worldState) {
+      this.worldState = worldState;
+      this.pathfinder = new Pathfinding(worldState);
+    }
     if (scene) this.scene = scene;
     if (gameState) this.gameState = gameState;
     if (exitPoint) this.exitPoint = exitPoint;
@@ -212,6 +222,8 @@ export class MissionDirector {
     this.exitUnlocked = true;
     this.exitLockMessage = '';
     this.lastStatusKey = '';
+    this.playerHidden = false;
+    this.playerHiddenSpotId = null;
     this.hintTier = 0;
     this.hintObjectiveKey = '';
     this.completedMissionIds.clear();
@@ -343,6 +355,46 @@ export class MissionDirector {
       mission.state.photos = 0;
       mission.state.required = 0;
       mission.state.targets = [];
+      return;
+    }
+
+    if (template === 'deliverItemToTerminal') {
+      mission.state.itemId = String(mission.state.itemId || mission.params?.itemId || 'package').trim() || 'package';
+      mission.state.collected = 0;
+      mission.state.required = 0;
+      mission.state.total = 0;
+      mission.state.items = [];
+      mission.state.delivered = true;
+      mission.state.terminalId = null;
+      mission.state.terminalGridPos = null;
+      return;
+    }
+
+    if (template === 'switchSequence') {
+      mission.state.total = 0;
+      mission.state.sequence = [];
+      mission.state.sequenceSlots = [];
+      mission.state.index = 0;
+      mission.state.resetOnWrong = mission.state.resetOnWrong !== false;
+      mission.state.switches = [];
+      return;
+    }
+
+    if (template === 'hideForSeconds') {
+      mission.state.seconds = 0;
+      mission.state.hiddenForSec = 0;
+      mission.state.completed = true;
+      return;
+    }
+
+    if (template === 'escort') {
+      mission.state.started = true;
+      mission.state.completed = true;
+      mission.state.escortId = null;
+      mission.state.escortGridPos = null;
+      mission.state.goalGridPos = null;
+      mission.state.followDistance = 1;
+      mission.state.object3d = null;
       return;
     }
   }
@@ -479,6 +531,44 @@ export class MissionDirector {
         const required = clamp(Math.round(mission.params.count ?? 3), 1, 24);
         mission.state = { photos: 0, required, targets: [] };
         this.spawnPhotographEvidence(mission, { avoid: [spawn, exit] });
+      } else if (template === 'deliverItemToTerminal') {
+        const total = clamp(Math.round(mission.params.count ?? 3), 1, 24);
+        const required = clamp(Math.round(mission.params.required ?? total), 1, total);
+        mission.state = {
+          itemId: String(mission.params.itemId || 'package').trim() || 'package',
+          collected: 0,
+          required,
+          total,
+          delivered: false,
+          items: [],
+          terminalId: null,
+          terminalGridPos: null
+        };
+        this.spawnDeliverItemToTerminal(mission, { avoid: [spawn, exit] });
+      } else if (template === 'switchSequence') {
+        const switches = clamp(Math.round(mission.params.switches ?? mission.params.count ?? 3), 2, 10);
+        mission.state = {
+          total: switches,
+          sequence: [],
+          index: 0,
+          resetOnWrong: mission.params.resetOnWrong !== false,
+          switches: []
+        };
+        this.spawnSwitchSequence(mission, { avoid: [spawn, exit] });
+      } else if (template === 'hideForSeconds') {
+        const seconds = clamp(Math.round(mission.params.seconds ?? 10), 3, 600);
+        mission.state = { seconds, hiddenForSec: 0, completed: false };
+      } else if (template === 'escort') {
+        mission.state = {
+          started: false,
+          completed: false,
+          escortId: null,
+          escortGridPos: null,
+          goalGridPos: null,
+          followDistance: clamp(Math.round(mission.params.followDistance ?? 1), 1, 4),
+          object3d: null
+        };
+        this.spawnEscort(mission, { avoid: [spawn, exit] });
       } else if (template === 'surviveTimer') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 60), 5, 3600);
         mission.state = { seconds, completed: false };
@@ -1733,6 +1823,322 @@ export class MissionDirector {
     }
   }
 
+  spawnDeliverItemToTerminal(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const itemRoomTypes = Array.isArray(mission.params.roomTypesItems)
+      ? mission.params.roomTypesItems
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+    const terminalRoomTypes = Array.isArray(mission.params.roomTypesTerminal)
+      ? mission.params.roomTypesTerminal
+      : (Array.isArray(mission.params.terminalRoomTypes) ? mission.params.terminalRoomTypes : null);
+
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const terminalTiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: terminalRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (terminalTiles.length === 0) {
+      this.failOpenMission(mission, 'no valid terminal tile');
+      return;
+    }
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const terminalPos = terminalTiles[0];
+    const terminalObject = createTerminalObject({ uploaded: false });
+    const terminalWorld = gridToWorldCenter(terminalPos);
+    terminalObject.position.set(terminalWorld.x, 0, terminalWorld.z);
+    this.scene.add(terminalObject);
+    this.spawnedObjects.push(terminalObject);
+    this.consumeMissionObjectBudget(1);
+
+    const terminalId = `deliveryTerminal:${mission.id}`;
+    mission.state.terminalId = terminalId;
+    mission.state.terminalGridPos = { x: terminalPos.x, y: terminalPos.y };
+
+    const desired = clamp(Math.round(mission.state.total ?? mission.params.count ?? 3), 1, 24);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+
+    const tiles = pickDistinctTiles(ws, want, {
+      allowedRoomTypes: itemRoomTypes,
+      minDistFrom: avoid.concat([terminalPos]),
+      minDist: mission.params.minDistFromSpawn ?? 6,
+      margin: 1
+    });
+
+    mission.state.items = [];
+
+    for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = tiles[i];
+      const object3d = createDeliveryItemObject();
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const interactableId = `deliveryItem:${mission.id}:${i + 1}`;
+      const label = 'Pick up Package';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'deliveryItem',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: 'Package acquired' }),
+          meta: { missionId: mission.id, template: mission.template, index: i }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.items.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, collected: false });
+    }
+
+    mission.state.total = mission.state.items.length;
+    if (mission.state.total > 0) {
+      mission.state.required = clamp(Math.round(mission.state.required ?? mission.params.required ?? mission.state.total), 1, mission.state.total);
+    } else {
+      mission.state.required = 0;
+    }
+
+    const itemId = String(mission.state.itemId || mission.params.itemId || 'package').trim() || 'package';
+    mission.state.itemId = itemId;
+
+    const requiresPower = mission.params.requiresPower === true;
+    const powerItemId = String(mission.params.powerItemId || 'power_on').trim() || 'power_on';
+
+    const label = 'Delivery Terminal';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: terminalId,
+        kind: 'terminal',
+        label,
+        gridPos: { x: terminalPos.x, y: terminalPos.y },
+        object3d: terminalObject,
+        maxDistance: 2.6,
+        requiresItem: requiresPower ? { itemId: powerItemId, count: 1, message: 'Power is off.' } : null,
+        consumeItem: (mission.state.required || 0) > 0 ? { itemId, count: mission.state.required || 0 } : null,
+        prompt: () => {
+          if (mission.state.delivered) return 'E: Delivery Terminal (Complete)';
+          if (requiresPower) {
+            const q = { itemId: powerItemId, result: null };
+            this.eventBus?.emit?.(EVENTS.INVENTORY_QUERY_ITEM, q);
+            const havePower = Number(q.result?.count) || 0;
+            if (havePower <= 0) return 'E: Delivery Terminal (No Power)';
+          }
+          const missing = Math.max(0, (mission.state.required || 0) - (mission.state.collected || 0));
+          if (missing > 0) return `E: Delivery Terminal (Need ${missing} package${missing === 1 ? '' : 's'})`;
+          return 'E: Deliver Packages';
+        },
+        interact: ({ entry }) => {
+          if (mission.state.delivered) {
+            if (entry) {
+              entry.requiresItem = [];
+              entry.consumeItem = [];
+            }
+            return { ok: true, message: 'Already delivered', state: { delivered: true } };
+          }
+
+          const meta = entry?.meta || {};
+          meta.delivered = true;
+          if (entry) {
+            entry.requiresItem = [];
+            entry.consumeItem = [];
+          }
+          setTerminalState(terminalObject, { uploaded: true });
+          return { ok: true, message: 'Packages delivered', state: { delivered: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, delivered: false }
+      })
+    );
+    this.interactableMeta.set(terminalId, { missionId: mission.id, template: mission.template });
+  }
+
+  spawnSwitchSequence(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const roomTypes = Array.isArray(mission.params.roomTypesSwitches)
+      ? mission.params.roomTypesSwitches
+      : (Array.isArray(mission.params.roomTypesTargets)
+        ? mission.params.roomTypesTargets
+        : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null));
+
+    const desired = clamp(Math.round(mission.state.total ?? mission.params.switches ?? mission.params.count ?? 3), 2, 10);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+
+    const tiles = pickDistinctTiles(ws, want, {
+      allowedRoomTypes: roomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (tiles.length < 2) {
+      this.failOpenMission(mission, want <= 0 ? 'mission object budget exhausted' : 'no valid switch tiles');
+      return;
+    }
+
+    mission.state.total = tiles.length;
+    mission.state.switches = [];
+
+    for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = tiles[i];
+      const slot = toSlotLabel(i);
+      const object3d = createPowerSwitchObject(false);
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const interactableId = `seqSwitch:${mission.id}:${slot}`;
+      const label = `Sequence Switch ${slot}`;
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'sequenceSwitch',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          maxDistance: 2.6,
+          prompt: ({ entry }) => {
+            const on = !!entry?.meta?.on;
+            return on ? `E: ${label} (On)` : `E: ${label} (Off)`;
+          },
+          interact: ({ entry }) => {
+            const meta = entry?.meta || {};
+            if (meta.on) {
+              return { ok: true, message: 'Already activated', state: { on: true, slot } };
+            }
+            meta.on = true;
+            setPowerSwitchState(object3d, true);
+            return { ok: true, message: `Activated ${slot}`, state: { on: true, slot } };
+          },
+          meta: { missionId: mission.id, template: mission.template, index: i, slot, on: false }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.switches.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, slot, on: false });
+    }
+
+    mission.state.total = mission.state.switches.length;
+    const slots = mission.state.switches.map((s) => s?.slot).filter(Boolean);
+    if (slots.length < 2) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const rawSeq = Array.isArray(mission.params.sequence) ? mission.params.sequence : null;
+    const desiredLen = clamp(Math.round(mission.params.length ?? slots.length), 2, slots.length);
+
+    const normalized = [];
+    if (rawSeq) {
+      for (const entry of rawSeq) {
+        if (normalized.length >= desiredLen) break;
+        if (typeof entry === 'string') {
+          const label = entry.trim().toUpperCase();
+          if (slots.includes(label)) normalized.push(label);
+        } else if (Number.isFinite(Number(entry))) {
+          const idx = clamp(Math.round(Number(entry)), 0, slots.length - 1);
+          normalized.push(slots[idx]);
+        }
+      }
+    }
+
+    let sequenceSlots = normalized.filter((v, i, a) => a.indexOf(v) === i);
+    if (sequenceSlots.length < 2) {
+      sequenceSlots = shuffleInPlace(slots.slice()).slice(0, desiredLen);
+    }
+
+    mission.state.sequenceSlots = sequenceSlots.slice();
+    mission.state.sequence = sequenceSlots
+      .map((slot) => mission.state.switches.find((s) => s?.slot === slot)?.id)
+      .filter(Boolean);
+    mission.state.index = 0;
+  }
+
+  spawnEscort(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const roomTypes = Array.isArray(mission.params.roomTypesEscort)
+      ? mission.params.roomTypesEscort
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const tiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: roomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 8,
+      margin: 1
+    });
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, 'no valid escort tile');
+      return;
+    }
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const pos = tiles[0];
+    const object3d = createEscortBuddyObject();
+    const world = gridToWorldCenter(pos);
+    object3d.position.set(world.x, 0, world.z);
+
+    this.scene.add(object3d);
+    this.spawnedObjects.push(object3d);
+    this.consumeMissionObjectBudget(1);
+
+    const escortId = `escort:${mission.id}`;
+    mission.state.escortId = escortId;
+    mission.state.escortGridPos = { x: pos.x, y: pos.y };
+    mission.state.goalGridPos = ws.getExitPoint?.() || null;
+    mission.state.object3d = object3d;
+
+    const label = 'Escort Survivor';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: escortId,
+        kind: 'escortBuddy',
+        label,
+        gridPos: { x: pos.x, y: pos.y },
+        object3d,
+        maxDistance: 2.6,
+        prompt: () => (mission.state.started ? 'Escort in progress' : 'E: Start Escort'),
+        interact: ({ entry }) => {
+          void entry;
+          if (mission.state.started) return { ok: true, message: 'Escort already started', state: { started: true } };
+          return { ok: true, message: 'Escort started', state: { started: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, started: false }
+      })
+    );
+    this.interactableMeta.set(escortId, { missionId: mission.id, template: mission.template });
+  }
+
   onKeypadCodeSubmitted(payload) {
     const keypadId = String(payload?.keypadId || '').trim();
     if (!keypadId) return;
@@ -1831,6 +2237,21 @@ export class MissionDirector {
 
       if (!mission.state.uploaded && (mission.state.collected || 0) >= (mission.state.required || 0)) {
         this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Evidence collected. Find the upload terminal.', seconds: 2.0 });
+      }
+    } else if (mission.template === 'deliverItemToTerminal') {
+      mission.state.collected = Math.min(mission.state.total || 0, (mission.state.collected || 0) + 1);
+      if (Array.isArray(mission.state.items) && Number.isFinite(meta.index)) {
+        const item = mission.state.items[meta.index];
+        if (item && !item.collected) {
+          item.collected = true;
+          const itemId = String(mission.state.itemId || mission.params.itemId || 'package').trim() || 'package';
+          mission.state.itemId = itemId;
+          this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: payload?.actorKind || 'player', itemId, count: 1, sourceId: id });
+        }
+      }
+
+      if (!mission.state.delivered && (mission.state.collected || 0) >= (mission.state.required || 0)) {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Packages collected. Find the delivery terminal.', seconds: 2.0 });
       }
     } else if (mission.template === 'codeLock') {
       const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
@@ -1936,6 +2357,24 @@ export class MissionDirector {
       return;
     }
 
+    if (payload?.kind === 'hidingSpot') {
+      const hidden = payload?.result?.state?.hidden;
+      if (typeof hidden === 'boolean') {
+        this.playerHidden = hidden;
+        this.playerHiddenSpotId = hidden ? id : null;
+        if (!hidden) {
+          for (const mission of this.missions.values()) {
+            if (!mission) continue;
+            if (mission.template !== 'hideForSeconds') continue;
+            if (mission.state?.completed) continue;
+            mission.state.hiddenForSec = 0;
+          }
+        }
+        this.syncStatus();
+      }
+      return;
+    }
+
     const meta = this.interactableMeta.get(id);
     if (!meta) return;
 
@@ -1986,6 +2425,70 @@ export class MissionDirector {
         if (uploaded && !mission.state.uploaded) {
           mission.state.uploaded = true;
           this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Evidence uploaded.', seconds: 1.8 });
+        }
+      }
+    } else if (mission.template === 'deliverItemToTerminal') {
+      if (payload?.kind === 'terminal') {
+        const delivered = !!payload?.result?.state?.delivered;
+        if (delivered && !mission.state.delivered) {
+          mission.state.delivered = true;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Delivery complete.', seconds: 1.8 });
+        }
+      }
+    } else if (mission.template === 'switchSequence') {
+      if (payload?.kind === 'sequenceSwitch') {
+        const turnedOn = !!payload?.result?.state?.on;
+        if (turnedOn && Array.isArray(mission.state.switches)) {
+          const sw = mission.state.switches.find((s) => s?.id === id);
+          if (sw) sw.on = true;
+
+          const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+          const slots = Array.isArray(mission.state.sequenceSlots) ? mission.state.sequenceSlots : [];
+          const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
+          const expectedId = idx >= 0 && idx < seq.length ? seq[idx] : null;
+          const expectedSlot = idx >= 0 && idx < slots.length ? slots[idx] : null;
+          const actualSlot = payload?.result?.state?.slot || sw?.slot || null;
+
+          if (expectedId && id === expectedId) {
+            mission.state.index = Math.min(seq.length, idx + 1);
+            const nextIdx = mission.state.index;
+            if (nextIdx >= seq.length && seq.length >= 2) {
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Switch sequence complete.', seconds: 1.8 });
+            } else if (seq.length >= 2) {
+              const nextSlot = slots[nextIdx] || '?';
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Correct: ${actualSlot || '?'} → Next: ${nextSlot}`, seconds: 1.4 });
+            }
+          } else if (seq.length >= 2) {
+            if (mission.state.resetOnWrong !== false) {
+              mission.state.index = 0;
+              for (const s of mission.state.switches) {
+                if (!s?.id) continue;
+                s.on = false;
+                const entry = this.interactables?.get?.(s.id) || null;
+                if (entry?.meta) entry.meta.on = false;
+                if (entry?.object3d) setPowerSwitchState(entry.object3d, false);
+              }
+              const hint = expectedSlot ? `Expected ${expectedSlot}` : 'Wrong switch';
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `${hint}. Sequence reset.`, seconds: 1.6 });
+            } else {
+              const entry = this.interactables?.get?.(id) || null;
+              if (entry?.meta) entry.meta.on = false;
+              if (entry?.object3d) setPowerSwitchState(entry.object3d, false);
+              if (sw) sw.on = false;
+              const hint = expectedSlot ? `Expected ${expectedSlot}` : 'Wrong switch';
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `${hint}.`, seconds: 1.3 });
+            }
+          }
+        }
+      }
+    } else if (mission.template === 'escort') {
+      if (payload?.kind === 'escortBuddy') {
+        const started = !!payload?.result?.state?.started;
+        if (started && !mission.state.started) {
+          mission.state.started = true;
+          const entry = this.interactables?.get?.(id) || null;
+          if (entry) entry.enabled = false;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Escort started. Lead them to the exit.', seconds: 2.0 });
         }
       }
     } else if (mission.template === 'codeLock') {
@@ -2254,6 +2757,30 @@ export class MissionDirector {
           : tier === 2
             ? 'Get close enough and keep the target centered.'
             : 'If you cannot interact, try stepping closer or clearing line of sight.';
+      } else if (m.template === 'deliverItemToTerminal') {
+        hintText = tier === 1
+          ? 'Collect all packages first.'
+          : tier === 2
+            ? 'After collecting enough packages, find the delivery terminal and press E.'
+            : 'If the terminal says you are missing packages, keep exploring new rooms.';
+      } else if (m.template === 'switchSequence') {
+        hintText = tier === 1
+          ? 'Activate the switches in the correct order.'
+          : tier === 2
+            ? 'Follow the next switch shown in the objective text.'
+            : 'If you trigger the wrong switch, the sequence will reset—try again.';
+      } else if (m.template === 'hideForSeconds') {
+        hintText = tier === 1
+          ? 'Find a hiding spot (locker) and press E.'
+          : tier === 2
+            ? 'Stay hidden until the timer completes (do not move).'
+            : 'If progress resets, you left the hiding spot—hide again and wait.';
+      } else if (m.template === 'escort') {
+        hintText = tier === 1
+          ? 'Find the survivor and press E to start the escort.'
+          : tier === 2
+            ? 'Lead the survivor to the exit and wait for them to catch up.'
+            : 'If they get stuck, move slowly and stay near corridors to keep a clear path.';
       } else {
         hintText = tier === 1
           ? 'Follow the current objective.'
@@ -2323,6 +2850,66 @@ export class MissionDirector {
       }
     }
 
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'hideForSeconds') continue;
+      if (mission.state.completed) continue;
+
+      const seconds = Number(mission.state.seconds) || 0;
+      if (seconds <= 0) {
+        mission.state.completed = true;
+        continue;
+      }
+
+      if (this.playerHidden) {
+        mission.state.hiddenForSec = Math.min(seconds, (mission.state.hiddenForSec || 0) + 1);
+      } else {
+        mission.state.hiddenForSec = 0;
+      }
+
+      if (mission.state.hiddenForSec >= seconds) {
+        mission.state.completed = true;
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'You stayed hidden.', seconds: 1.6 });
+      }
+    }
+
+    const playerGridPos = payload?.playerGridPos || payload?.playerGrid || null;
+    if (playerGridPos && Number.isFinite(playerGridPos.x) && Number.isFinite(playerGridPos.y)) {
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'escort') continue;
+        if (mission.state.completed) continue;
+        if (!mission.state.started) continue;
+
+        const goal = mission.state.goalGridPos || null;
+        const escortGridPos = mission.state.escortGridPos || null;
+        if (!goal || !escortGridPos) continue;
+
+        const distToPlayer = manhattan(escortGridPos, playerGridPos);
+        const followDistance = Number(mission.state.followDistance) || 1;
+        if (distToPlayer > followDistance) {
+          const path = this.pathfinder?.findPath?.(escortGridPos, playerGridPos, true, null) || [];
+          const next = Array.isArray(path) && path.length >= 2 ? path[1] : null;
+          if (next && Number.isFinite(next.x) && Number.isFinite(next.y)) {
+            mission.state.escortGridPos = { x: next.x, y: next.y };
+            const obj = mission.state.object3d || null;
+            if (obj) {
+              const world = gridToWorldCenter(next);
+              obj.position.set(world.x, 0, world.z);
+            }
+            const entry = this.interactables?.get?.(mission.state.escortId) || null;
+            if (entry) entry.gridPos = { x: next.x, y: next.y };
+          }
+        }
+
+        const eg = mission.state.escortGridPos || null;
+        if (eg && eg.x === goal.x && eg.y === goal.y) {
+          mission.state.completed = true;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Escort complete.', seconds: 1.8 });
+        }
+      }
+    }
+
     this.syncStatus();
   }
 
@@ -2380,6 +2967,21 @@ export class MissionDirector {
     }
     if (mission.template === 'photographEvidence') {
       return (mission.state.photos || 0) >= (mission.state.required || 0);
+    }
+    if (mission.template === 'deliverItemToTerminal') {
+      return !!mission.state.delivered;
+    }
+    if (mission.template === 'switchSequence') {
+      const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+      const idx = Number(mission.state.index) || 0;
+      if (seq.length < 2) return true;
+      return idx >= seq.length;
+    }
+    if (mission.template === 'hideForSeconds') {
+      return !!mission.state.completed;
+    }
+    if (mission.template === 'escort') {
+      return !!mission.state.completed;
     }
     if (mission.template === 'stealthNoise') {
       return !!mission.state.completed;
@@ -2524,6 +3126,37 @@ export class MissionDirector {
       if (mission.template === 'photographEvidence') {
         return `Photograph evidence (${mission.state.photos || 0}/${mission.state.required || 0})`;
       }
+      if (mission.template === 'deliverItemToTerminal') {
+        const required = Number(mission.state.required) || 0;
+        const collected = Number(mission.state.collected) || 0;
+        if (!mission.state.delivered) {
+          if (required > 0 && collected < required) {
+            return `Collect packages (${collected}/${required})`;
+          }
+          return 'Deliver packages at the terminal (E)';
+        }
+        return 'Delivery complete. Reach the exit.';
+      }
+      if (mission.template === 'switchSequence') {
+        const seqSlots = Array.isArray(mission.state.sequenceSlots) ? mission.state.sequenceSlots : [];
+        const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+        const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
+        if (seq.length < 2 || seqSlots.length < 2) return 'Activate the switch sequence';
+        if (idx >= seq.length) return 'Switch sequence complete. Reach the exit.';
+        const nextSlot = seqSlots[idx] || '?';
+        return `Switch sequence (${idx}/${seq.length}) → Next: ${nextSlot}`;
+      }
+      if (mission.template === 'hideForSeconds') {
+        if (mission.state.completed) return 'Hiding complete. Reach the exit.';
+        const seconds = Number(mission.state.seconds) || 0;
+        const hiddenFor = Number(mission.state.hiddenForSec) || 0;
+        const remaining = Math.max(0, seconds - hiddenFor);
+        return remaining > 0 ? `Hide (${remaining}s)` : 'Hide (done)';
+      }
+      if (mission.template === 'escort') {
+        if (mission.state.completed) return 'Escort complete. Reach the exit.';
+        return mission.state.started ? 'Escort the survivor to the exit.' : 'Find the survivor and start the escort (E)';
+      }
       if (mission.template === 'stealthNoise') {
         if (mission.state.failed) return 'Stay quiet (failed)';
         const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
@@ -2667,6 +3300,50 @@ export class MissionDirector {
         photos: mission.state.photos || 0,
         required: mission.state.required || 0,
         targetsTotal: Array.isArray(mission.state.targets) ? mission.state.targets.length : 0
+      };
+    }
+    if (mission.template === 'deliverItemToTerminal') {
+      return {
+        itemId: mission.state.itemId || null,
+        collected: mission.state.collected || 0,
+        required: mission.state.required || 0,
+        total: mission.state.total || 0,
+        delivered: !!mission.state.delivered,
+        terminalId: mission.state.terminalId || null,
+        terminalGridPos: mission.state.terminalGridPos || null
+      };
+    }
+    if (mission.template === 'switchSequence') {
+      const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+      const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
+      const slots = Array.isArray(mission.state.sequenceSlots) ? mission.state.sequenceSlots : [];
+      const nextSlot = idx >= 0 && idx < slots.length ? slots[idx] : null;
+      return {
+        index: idx,
+        total: seq.length,
+        nextSlot,
+        sequenceSlots: slots.slice()
+      };
+    }
+    if (mission.template === 'hideForSeconds') {
+      const seconds = Number(mission.state.seconds) || 0;
+      const hiddenForSec = Number(mission.state.hiddenForSec) || 0;
+      const remaining = Math.max(0, seconds - hiddenForSec);
+      return {
+        seconds,
+        hiddenForSec,
+        remaining,
+        hidden: !!this.playerHidden,
+        completed: !!mission.state.completed
+      };
+    }
+    if (mission.template === 'escort') {
+      return {
+        started: !!mission.state.started,
+        completed: !!mission.state.completed,
+        escortGridPos: mission.state.escortGridPos || null,
+        goalGridPos: mission.state.goalGridPos || null,
+        followDistance: mission.state.followDistance || 1
       };
     }
     if (mission.template === 'stealthNoise') {
@@ -2897,6 +3574,50 @@ export class MissionDirector {
       return next ? { id: next.id || null, gridPos: next.gridPos } : null;
     }
 
+    if (mission.template === 'deliverItemToTerminal') {
+      if (mission.state.delivered) return null;
+      const required = Number(mission.state.required) || 0;
+      const collected = Number(mission.state.collected) || 0;
+
+      if (collected < required) {
+        const items = Array.isArray(mission.state.items) ? mission.state.items : [];
+        const pending = items.filter((i) => i && !i.collected && i.gridPos);
+        pending.sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
+        const next = pending[0] || null;
+        return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+      }
+
+      if (mission.state.terminalId && mission.state.terminalGridPos) {
+        return { id: mission.state.terminalId, gridPos: mission.state.terminalGridPos };
+      }
+      return null;
+    }
+
+    if (mission.template === 'switchSequence') {
+      const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+      const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
+      if (seq.length < 2 || idx >= seq.length) return null;
+      const nextId = seq[idx];
+      const sw = Array.isArray(mission.state.switches)
+        ? mission.state.switches.find((s) => s && s.id === nextId)
+        : null;
+      if (sw?.gridPos) return { id: nextId, gridPos: sw.gridPos };
+      const entry = this.interactables?.get?.(nextId) || null;
+      return entry?.gridPos ? { id: nextId, gridPos: entry.gridPos } : null;
+    }
+
+    if (mission.template === 'hideForSeconds') {
+      return null;
+    }
+
+    if (mission.template === 'escort') {
+      if (mission.state.completed) return null;
+      if (!mission.state.started && mission.state.escortId && mission.state.escortGridPos) {
+        return { id: mission.state.escortId, gridPos: mission.state.escortGridPos };
+      }
+      return null;
+    }
+
     if (mission.template === 'unlockExit') {
       const gp = this.exitPoint?.getGridPosition?.() || this.worldState?.getExitPoint?.() || null;
       return { id: 'exit', gridPos: gp };
@@ -3027,6 +3748,47 @@ export class MissionDirector {
           if (point?.photographed) continue;
           if (!point?.gridPos) continue;
           targets.push({ collected: false, id: point.id || null, gridPos: point.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'deliverItemToTerminal') {
+        if (mission.state.delivered) continue;
+        const required = Number(mission.state.required) || 0;
+        const collected = Number(mission.state.collected) || 0;
+
+        if (collected < required) {
+          const items = Array.isArray(mission.state.items) ? mission.state.items : [];
+          for (const item of items) {
+            if (item?.collected) continue;
+            if (!item?.gridPos) continue;
+            targets.push({ collected: false, id: item.id || null, gridPos: item.gridPos, missionId: mission.id, template: mission.template });
+          }
+        } else if (mission.state.terminalGridPos && mission.state.terminalId) {
+          targets.push({ collected: false, id: mission.state.terminalId, gridPos: mission.state.terminalGridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'switchSequence') {
+        const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+        const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
+        if (seq.length < 2 || idx >= seq.length) continue;
+        const switches = Array.isArray(mission.state.switches) ? mission.state.switches : [];
+        for (const sw of switches) {
+          if (!sw || sw.on) continue;
+          if (!sw.gridPos) continue;
+          targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'hideForSeconds') {
+        if (mission.state.completed) continue;
+        if (this.playerHidden) continue;
+        const spots = this.interactables?.list?.() || [];
+        for (const entry of spots) {
+          if (!entry || entry.enabled === false || entry.collected) continue;
+          if (entry.kind !== 'hidingSpot') continue;
+          if (!entry.gridPos) continue;
+          targets.push({ collected: false, id: entry.id || null, gridPos: entry.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'escort') {
+        if (mission.state.completed) continue;
+        if (mission.state.started) continue;
+        if (mission.state.escortId && mission.state.escortGridPos) {
+          targets.push({ collected: false, id: mission.state.escortId, gridPos: mission.state.escortGridPos, missionId: mission.id, template: mission.template });
         }
       }
     }
