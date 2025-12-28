@@ -1,0 +1,121 @@
+{
+  "schema": "v1",
+  "id": "classrooms-basic",
+  "name": "Classrooms Basic",
+  "weight": 1.0,
+  "difficulty": { "min": 0.8, "max": 6.5 },
+  "level": {
+    "maze": { "width": 33, "height": 33, "roomDensity": 2.9, "extraConnectionChance": 0.14 },
+    "rooms": {
+      "typeWeights": {
+        "CLASSROOM": 2.8,
+        "CLASSROOMS_BLOCK": 1.8,
+        "OFFICE": 1.6,
+        "LIBRARY": 1.1,
+        "LAB": 0.9,
+        "STORAGE": 0.9,
+        "BATHROOM": 0.65,
+        "CAFETERIA": 0.6,
+        "GYM": 0.3,
+        "POOL": 0.18
+      }
+    },
+    "monsters": {
+      "count": 2,
+      "maxCount": 5,
+      "speedMultiplier": 1.0,
+      "visionMultiplier": 1.0,
+      "memoryMultiplier": 1.0,
+      "typeWeights": { "WANDERER": 0.6, "HUNTER": 0.25, "SENTINEL": 0.1, "GREETER": 0.05 },
+      "allowSprintTypes": ["HUNTER"]
+    },
+    "player": {
+      "maxHealthMultiplier": 1.0,
+      "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+      "upgradesPerLevel": 1
+    },
+    "autopilot": { "avoidRadius": 5, "replanInterval": 0.5, "stuckSeconds": 1.0, "noProgressSeconds": 0.7 }
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "required": [
+      {
+        "id": "power",
+        "template": "restorePowerFuses",
+        "params": {
+          "fuses": 2,
+          "itemId": "fuse",
+          "roomTypesFuses": ["STORAGE", "LAB", "OFFICE"],
+          "roomTypesPanel": ["LAB", "OFFICE"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Collect the fuses.",
+            "After collecting all fuses, find the power panel and press E to install them.",
+            "Press E again on the power panel to restore power."
+          ]
+        }
+      },
+      {
+        "id": "upload",
+        "template": "uploadEvidence",
+        "params": {
+          "count": 3,
+          "required": 2,
+          "itemId": "evidence",
+          "requiresPower": true,
+          "powerItemId": "power_on",
+          "roomTypesEvidence": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK", "LIBRARY"],
+          "roomTypesTerminal": ["OFFICE", "LAB"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Collect evidence pickups.",
+            "Restore power so the upload terminal can be used.",
+            "Upload the evidence at the terminal to complete the objective."
+          ]
+        }
+      }
+    ],
+    "optionalCount": { "min": 0, "max": 2 },
+    "optionalPool": [
+      {
+        "template": "enterRoomType",
+        "weight": 1.0,
+        "params": {
+          "count": 1,
+          "roomTypes": ["CLASSROOMS_BLOCK", "LIBRARY"],
+          "hints": [
+            "Find and enter the target room type.",
+            "Use the minimap to locate big themed rooms.",
+            "If you are stuck, follow corridors to unexplored areas."
+          ]
+        }
+      },
+      {
+        "template": "stealthNoise",
+        "weight": 0.7,
+        "params": {
+          "seconds": 10,
+          "hints": [
+            "Stay quiet until the timer completes.",
+            "Do not shoot; footsteps also reset the timer.",
+            "Stop moving and wait—any noise will restart the countdown."
+          ]
+        }
+      },
+      {
+        "template": "killCount",
+        "weight": 0.55,
+        "params": {
+          "count": 2,
+          "hints": [
+            "Defeat monsters to reach the required count.",
+            "Keep distance and use bursts; reloading at safe moments helps.",
+            "If overwhelmed, retreat down corridors to separate targets."
+          ]
+        }
+      }
+    ],
+    "includeUnlockExit": true
+  }
+}
+
