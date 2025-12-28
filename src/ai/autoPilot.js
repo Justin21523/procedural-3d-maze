@@ -165,10 +165,17 @@ export class AutoPilot {
       : '';
 
     const template = String(objective?.template || '').trim();
-    const extra =
-      template === 'hideForSeconds'
-        ? `:H${objective?.progress?.hidden ? '1' : '0'}`
-        : (template === 'escort' ? `:S${objective?.progress?.started ? '1' : '0'}` : '');
+    let extra = '';
+    if (template === 'hideForSeconds') {
+      extra = `:H${objective?.progress?.hidden ? '1' : '0'}`;
+    } else if (template === 'escort' || template === 'escortToSafeRoom') {
+      extra = `:S${objective?.progress?.started ? '1' : '0'}`;
+      if (template === 'escortToSafeRoom') {
+        extra += `:T${Number.isFinite(objective?.progress?.stage) ? objective.progress.stage : 0}`;
+      }
+    } else if (template === 'deliverFragile') {
+      extra = `:C${objective?.progress?.carrying ? '1' : '0'}`;
+    }
 
     return `${exitUnlocked === false ? '0' : '1'}:${objectiveKey}${extra}:${pending}`;
   }
@@ -198,7 +205,7 @@ export class AutoPilot {
     const objectiveNextId = String(objective?.nextInteractId || '').trim();
     const objectiveGoalGrid = objective?.progress?.goalGridPos || null;
 
-    if (objectiveTemplate === 'escort') {
+    if (objectiveTemplate === 'escort' || objectiveTemplate === 'escortToSafeRoom') {
       const started = !!objective?.progress?.started;
       const completed = !!objective?.progress?.completed;
       if (!completed && started && objectiveGoalGrid && Number.isFinite(objectiveGoalGrid.x) && Number.isFinite(objectiveGoalGrid.y)) {
@@ -243,16 +250,20 @@ export class AutoPilot {
       objectiveTemplate === 'uploadEvidence' ||
       objectiveTemplate === 'codeLock' ||
       objectiveTemplate === 'lockedDoor' ||
+      objectiveTemplate === 'placeKeysAtLocks' ||
       objectiveTemplate === 'placeItemsAtAltars' ||
       objectiveTemplate === 'searchRoomTypeN' ||
+      objectiveTemplate === 'searchAndTagRoom' ||
       objectiveTemplate === 'photographEvidence' ||
       objectiveTemplate === 'deliverItemToTerminal' ||
+      objectiveTemplate === 'deliverFragile' ||
       objectiveTemplate === 'switchSequence' ||
       objectiveTemplate === 'switchSequenceWithClues' ||
       objectiveTemplate === 'hideForSeconds' ||
       objectiveTemplate === 'hideUntilClear' ||
       objectiveTemplate === 'lureToSensor' ||
-      objectiveTemplate === 'escort';
+      objectiveTemplate === 'escort' ||
+      objectiveTemplate === 'escortToSafeRoom';
 
     if (wantsInteractTargets) {
       const objectiveTargets = (objectiveId && objectiveTemplate !== 'exit')
@@ -557,6 +568,13 @@ export class AutoPilot {
     }
 
     const objective = this._missionState?.objective || null;
+    if (combat && objective?.template === 'deliverFragile') {
+      const carrying = !!objective?.progress?.carrying;
+      const breakOnGunfire = objective?.progress?.breakOnGunfire !== false;
+      if (carrying && breakOnGunfire) {
+        combat.fire = false;
+      }
+    }
     if (objective?.template === 'stealthNoise') {
       const completed = !!objective?.progress?.completed;
       const failed = !!objective?.progress?.failed;
@@ -637,7 +655,7 @@ export class AutoPilot {
       }
     }
 
-    if (objective?.template === 'escort') {
+    if (objective?.template === 'escort' || objective?.template === 'escortToSafeRoom') {
       const started = !!objective?.progress?.started;
       const completed = !!objective?.progress?.completed;
       const goal = objective?.progress?.goalGridPos || null;
