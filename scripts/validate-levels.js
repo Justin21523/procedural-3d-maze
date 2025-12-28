@@ -124,8 +124,10 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     'placeItemsAtAltars',
     'searchRoomTypeN',
     'photographEvidence',
+    'holdToScan',
     'deliverItemToTerminal',
     'switchSequence',
+    'switchSequenceWithClues',
     'hideForSeconds',
     'escort'
   ]);
@@ -346,6 +348,41 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     }
     validateRoomTypesParam('roomTypesTargets');
     validateRoomTypesParam('roomTypes');
+  } else if (template === 'holdToScan') {
+    const count = Number(params.count);
+    if (params.count !== undefined && (!Number.isFinite(count) || count <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'count'], 'count should be a positive number');
+    }
+    const seconds = Number(params.seconds ?? params.holdSeconds);
+    if ((params.seconds !== undefined || params.holdSeconds !== undefined) && (!Number.isFinite(seconds) || seconds <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'seconds'], 'seconds should be a positive number');
+    }
+    if (params.maxDistance !== undefined) {
+      const d = Number(params.maxDistance);
+      if (!Number.isFinite(d) || d <= 0) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'maxDistance'], 'maxDistance should be a positive number');
+      }
+    }
+    if (params.aimMinDot !== undefined) {
+      const d = Number(params.aimMinDot);
+      if (!Number.isFinite(d) || d <= 0 || d >= 1) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'aimMinDot'], 'aimMinDot should be a number in (0, 1)');
+      }
+    }
+    if (params.aimAngleDeg !== undefined) {
+      const deg = Number(params.aimAngleDeg);
+      if (!Number.isFinite(deg) || deg <= 0) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'aimAngleDeg'], 'aimAngleDeg should be a positive number');
+      }
+    }
+    if (params.aimOffsetY !== undefined) {
+      const v = Number(params.aimOffsetY);
+      if (!Number.isFinite(v)) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'aimOffsetY'], 'aimOffsetY should be a number');
+      }
+    }
+    validateRoomTypesParam('roomTypesTargets');
+    validateRoomTypesParam('roomTypes');
   } else if (template === 'deliverItemToTerminal') {
     const count = Number(params.count);
     const required = Number(params.required);
@@ -374,7 +411,7 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     validateRoomTypesParam('roomTypesTerminal');
     validateRoomTypesParam('terminalRoomTypes');
     validateRoomTypesParam('roomTypes');
-  } else if (template === 'switchSequence') {
+  } else if (template === 'switchSequence' || template === 'switchSequenceWithClues') {
     const switches = Number(params.switches ?? params.count);
     if (params.switches !== undefined || params.count !== undefined) {
       if (!Number.isFinite(switches) || switches < 2) {
@@ -395,6 +432,15 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     }
     validateRoomTypesParam('roomTypesSwitches');
     validateRoomTypesParam('roomTypesTargets');
+    if (template === 'switchSequenceWithClues') {
+      if (params.clues !== undefined) {
+        const clues = Number(params.clues);
+        if (!Number.isFinite(clues) || clues < 2) {
+          pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'clues'], 'clues should be a number ≥ 2');
+        }
+      }
+      validateRoomTypesParam('roomTypesClues');
+    }
     validateRoomTypesParam('roomTypes');
   } else if (template === 'hideForSeconds') {
     const seconds = Number(params.seconds);
