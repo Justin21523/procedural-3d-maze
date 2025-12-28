@@ -821,11 +821,14 @@ export class MonsterManager {
       this.updatePlayerNoise(dt, playerPos);
     }
 
-    const tileSize = CONFIG.TILE_SIZE || 1;
-    const farDistanceTiles = CONFIG.MONSTER_AI_FAR_DISTANCE_TILES ?? 12;
-    const farDistanceWorld = Math.max(0, farDistanceTiles) * tileSize;
-    const farDistanceSq = farDistanceWorld * farDistanceWorld;
-    const farTickSeconds = Math.max(0.05, CONFIG.MONSTER_AI_FAR_TICK_SECONDS ?? 0.35);
+	    const tileSize = CONFIG.TILE_SIZE || 1;
+	    const farDistanceTiles = CONFIG.MONSTER_AI_FAR_DISTANCE_TILES ?? 12;
+	    const farDistanceWorld = Math.max(0, farDistanceTiles) * tileSize;
+	    const farDistanceSq = farDistanceWorld * farDistanceWorld;
+	    const farTickSeconds = Math.max(0.05, CONFIG.MONSTER_AI_FAR_TICK_SECONDS ?? 0.35);
+	    const cullTiles = CONFIG.MONSTER_RENDER_CULL_DISTANCE_TILES ?? 0;
+	    const cullWorld = Number.isFinite(cullTiles) && cullTiles > 0 ? cullTiles * tileSize : 0;
+	    const cullSq = cullWorld > 0 ? cullWorld * cullWorld : 0;
 
     for (const monster of this.monsters) {
       if (monster?.isDead) continue;
@@ -848,11 +851,15 @@ export class MonsterManager {
       const brain = this.brains.get(monster);
       if (!brain) continue;
 
-      const posRef = monster?.model?.position || monster?.position || null;
-      const dx = playerPos && posRef ? (posRef.x - playerPos.x) : 0;
-      const dz = playerPos && posRef ? (posRef.z - playerPos.z) : 0;
-      const distSq = playerPos && posRef ? (dx * dx + dz * dz) : 0;
-      const isFar = playerPos && posRef ? distSq > farDistanceSq : false;
+	      const posRef = monster?.model?.position || monster?.position || null;
+	      const dx = playerPos && posRef ? (posRef.x - playerPos.x) : 0;
+	      const dz = playerPos && posRef ? (posRef.z - playerPos.z) : 0;
+	      const distSq = playerPos && posRef ? (dx * dx + dz * dz) : 0;
+	      const isFar = playerPos && posRef ? distSq > farDistanceSq : false;
+	      const isCulled = cullSq > 0 && playerPos && posRef ? distSq > cullSq : false;
+	      if (monster?.model) {
+	        monster.model.visible = !isCulled;
+	      }
 
       if (isFar) {
         monster.aiTickAccumulator = (monster.aiTickAccumulator || 0) + dt;
@@ -905,17 +912,17 @@ export class MonsterManager {
         monster.isSprinting = false;
       }
 
-      if (monster.updateAnimation) {
-        if (!isFar || shouldTick) {
-          monster.updateAnimation(dt);
-        }
-      }
+	      if (monster.updateAnimation && !isCulled) {
+	        if (!isFar || shouldTick) {
+	          monster.updateAnimation(dt);
+	        }
+	      }
 
-      if (shouldTick && command?.fire) {
-        this.fireMonsterProjectile(monster, command.fire);
-      }
-    }
-  }
+	      if (shouldTick && command?.fire && !isFar) {
+	        this.fireMonsterProjectile(monster, command.fire);
+	      }
+	    }
+	  }
 
   fireMonsterProjectile(monster, fire) {
     if (!monster || monster.isDead || monster.isDying) return;

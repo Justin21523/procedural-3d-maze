@@ -115,13 +115,15 @@ export const CONFIG = {
   // Spawn Director (waves / squads / drops)
   SPAWN_DIRECTOR_ENABLED: true,
   SPAWN_DIRECTOR_INITIAL_RATIO: 0.5,   // initial alive = count * ratio
-  SPAWN_DIRECTOR_WAVE_INTERVAL: 4.0,   // seconds between spawn waves
-  SPAWN_DIRECTOR_BUDGET_RATE: 2.0,     // budget points per second
-  SPAWN_DIRECTOR_MAX_PICKUPS: 18,
+	  SPAWN_DIRECTOR_WAVE_INTERVAL: 4.0,   // seconds between spawn waves
+	  SPAWN_DIRECTOR_BUDGET_RATE: 2.0,     // budget points per second
+	  SPAWN_DIRECTOR_MAX_PICKUPS: 18,
+	  SPAWN_DIRECTOR_PRESSURE_START: 0.65, // begin slowing spawns when projectile/FX load rises
+	  SPAWN_DIRECTOR_PRESSURE_STOP: 0.85,  // pause spawns when projectile/FX load is high
 
-  // Rendering settings
-  FOV: 75,               // Field of view in degrees
-  NEAR_PLANE: 0.1,
+	  // Rendering settings
+	  FOV: 75,               // Field of view in degrees
+	  NEAR_PLANE: 0.1,
   FAR_PLANE: 1000,
   TARGET_FPS: 60,        // Target frames per second
 
@@ -144,16 +146,20 @@ export const CONFIG = {
   PROP_OBSTACLE_MARGIN: 1,                // keep 1-tile margin around obstacles
   MONSTER_AI_FAR_DISTANCE_TILES: 12,      // Beyond this distance, throttle monster AI (tiles)
   MONSTER_AI_FAR_TICK_SECONDS: 0.35,      // AI tick interval for far monsters (seconds)
-  MAX_ACTIVE_PROJECTILES: 160,            // Hard cap to avoid runaway projectiles
-  MAX_ACTIVE_PLAYER_PROJECTILES: 80,
-  MAX_ACTIVE_MONSTER_PROJECTILES: 80,
-  MAX_ACTIVE_IMPACTS: 80,
-  MAX_ACTIVE_EXPLOSIONS: 40,
-  MAX_ACTIVE_MUZZLE_FLASHES: 24,
+	  MAX_ACTIVE_PROJECTILES: 160,            // Hard cap to avoid runaway projectiles
+	  MAX_ACTIVE_PLAYER_PROJECTILES: 80,
+	  MAX_ACTIVE_MONSTER_PROJECTILES: 80,
+	  MAX_ACTIVE_IMPACTS: 80,
+	  MAX_ACTIVE_EXPLOSIONS: 40,
+	  MAX_ACTIVE_MUZZLE_FLASHES: 24,
+	  PROJECTILE_FAR_DISTANCE_TILES: 18,      // beyond this distance, tick projectiles less often
+	  PROJECTILE_FAR_TICK_SECONDS: 0.06,      // far projectile tick interval (seconds)
+	  FX_RENDER_DISTANCE_TILES: 18,           // skip spawning impact/explosion visuals beyond this distance
+	  MONSTER_RENDER_CULL_DISTANCE_TILES: 22, // hide monster models beyond this distance to reduce draw cost
 
-  // Shadow settings
-  SHADOW_ENABLED: true,           // Enable real-time shadows
-  SHADOW_QUALITY: 'medium',       // 'low' | 'medium' | 'high'
+	  // Shadow settings
+	  SHADOW_ENABLED: true,           // Enable real-time shadows
+	  SHADOW_QUALITY: 'medium',       // 'low' | 'medium' | 'high'
 
   // Camera effects
   HEAD_BOB_ENABLED: true,         // Enable head bobbing while walking

@@ -383,6 +383,16 @@ export class ProjectileManager {
   }
 
   updateProjectiles(dt) {
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const farTiles = CONFIG.PROJECTILE_FAR_DISTANCE_TILES ?? 0;
+    const farWorld = Number.isFinite(farTiles) && farTiles > 0 ? farTiles * tileSize : 0;
+    const farSq = farWorld > 0 ? farWorld * farWorld : 0;
+    const farTickSeconds = Math.max(0.016, CONFIG.PROJECTILE_FAR_TICK_SECONDS ?? 0.06);
+    const playerPos = this.playerRef?.getPosition ? this.playerRef.getPosition() : null;
+
+    const tmpStart = new THREE.Vector3();
+    const tmpEnd = new THREE.Vector3();
+
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       p.life -= dt;
@@ -392,21 +402,41 @@ export class ProjectileManager {
         continue;
       }
 
-      const start = p.mesh.position.clone();
-      const end = start.clone().addScaledVector(p.velocity, dt);
-      const segLen = start.distanceTo(end);
+      let stepDt = dt;
+      if (playerPos && farSq > 0) {
+        const dx = p.mesh.position.x - playerPos.x;
+        const dz = p.mesh.position.z - playerPos.z;
+        const distSq = dx * dx + dz * dz;
+        if (distSq > farSq) {
+          p.lodAccumulator = (p.lodAccumulator || 0) + dt;
+          if ((p.lodAccumulator || 0) < farTickSeconds) {
+            continue;
+          }
+          stepDt = p.lodAccumulator || dt;
+          p.lodAccumulator = 0;
+        } else {
+          p.lodAccumulator = 0;
+        }
+      } else if (p.lodAccumulator) {
+        p.lodAccumulator = 0;
+      }
+
+      tmpStart.copy(p.mesh.position);
+      tmpEnd.copy(tmpStart).addScaledVector(p.velocity, stepDt);
+      const segLen = tmpStart.distanceTo(tmpEnd);
 
       // If dt is tiny, just move.
       if (segLen <= 1e-6) {
+        p.mesh.position.copy(tmpEnd);
         continue;
       }
 
-      const wallHit = this.sweepWall(start, end);
-      let monsterHit = p.canHitMonsters ? this.sweepMonsters(start, end, p.hitRadius ?? this.hitRadius) : null;
+      const wallHit = this.sweepWall(tmpStart, tmpEnd);
+      let monsterHit = p.canHitMonsters ? this.sweepMonsters(tmpStart, tmpEnd, p.hitRadius ?? this.hitRadius) : null;
       if (monsterHit && p.hitMonsters && p.hitMonsters.has(monsterHit.target)) {
         monsterHit = null;
       }
-      const playerHit = p.canHitPlayer ? this.sweepPlayer(start, end, p.playerHitRadius ?? this.playerHitRadius) : null;
+      const playerHit = p.canHitPlayer ? this.sweepPlayer(tmpStart, tmpEnd, p.playerHitRadius ?? this.playerHitRadius) : null;
 
       let hitType = null;
       let hitResult = null;
@@ -425,7 +455,7 @@ export class ProjectileManager {
       }
 
       if (hitResult) {
-        const hitPos = hitResult.point || end;
+        const hitPos = hitResult.point || tmpEnd;
         p.mesh.position.copy(hitPos);
 
         if (hitType === 'wall') {
@@ -489,11 +519,11 @@ export class ProjectileManager {
       }
 
       // No hit: apply movement
-      p.mesh.position.copy(end);
+      p.mesh.position.copy(tmpEnd);
       if (p.spin) {
-        p.mesh.rotation.x += p.spin.x * dt;
-        p.mesh.rotation.y += p.spin.y * dt;
-        p.mesh.rotation.z += p.spin.z * dt;
+        p.mesh.rotation.x += p.spin.x * stepDt;
+        p.mesh.rotation.y += p.spin.y * stepDt;
+        p.mesh.rotation.z += p.spin.z * stepDt;
       }
     }
   }
@@ -784,6 +814,21 @@ export class ProjectileManager {
     if (Number.isFinite(maxImpacts) && maxImpacts >= 0 && this.impacts.length >= maxImpacts) {
       return;
     }
+
+    const fxTiles = CONFIG.FX_RENDER_DISTANCE_TILES ?? 0;
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const fxWorld = Number.isFinite(fxTiles) && fxTiles > 0 ? fxTiles * tileSize : 0;
+    if (fxWorld > 0) {
+      const playerPos = this.playerRef?.getPosition ? this.playerRef.getPosition() : null;
+      if (playerPos) {
+        const dx = position.x - playerPos.x;
+        const dz = position.z - playerPos.z;
+        if ((dx * dx + dz * dz) > fxWorld * fxWorld) {
+          return;
+        }
+      }
+    }
+
     const owner = projectile?.owner || 'player';
     const color = owner === 'monster' ? 0x88ccff : 0xffddaa;
 
@@ -806,6 +851,20 @@ export class ProjectileManager {
     const maxExplosions = CONFIG.MAX_ACTIVE_EXPLOSIONS;
     if (Number.isFinite(maxExplosions) && maxExplosions >= 0 && this.explosions.length >= maxExplosions) {
       return;
+    }
+
+    const fxTiles = CONFIG.FX_RENDER_DISTANCE_TILES ?? 0;
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const fxWorld = Number.isFinite(fxTiles) && fxTiles > 0 ? fxTiles * tileSize : 0;
+    if (fxWorld > 0) {
+      const playerPos = this.playerRef?.getPosition ? this.playerRef.getPosition() : null;
+      if (playerPos) {
+        const dx = position.x - playerPos.x;
+        const dz = position.z - playerPos.z;
+        if ((dx * dx + dz * dz) > fxWorld * fxWorld) {
+          return;
+        }
+      }
     }
 
     const color = options.color ?? 0xffaa55;
