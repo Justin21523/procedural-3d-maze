@@ -17,6 +17,10 @@ function toCount(value, fallback = 1) {
   return Math.max(0, n);
 }
 
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
 function normalizeItemSpec(spec) {
   if (!spec) return [];
   if (typeof spec === 'string') {
@@ -126,6 +130,8 @@ export class InteractableSystem {
     this.hoverText = '';
 
     this._tmpCamDir = new THREE.Vector3();
+    this._tmpTargetWorld = new THREE.Vector3();
+    this._tmpToTarget = new THREE.Vector3();
   }
 
   setRefs({ eventBus, scene, camera, input, worldState } = {}) {
@@ -353,6 +359,35 @@ export class InteractableSystem {
       const dz = entry.object3d.position.z - playerPos.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
       if (dist > maxDist + 0.01) return false;
+    }
+
+    if (entry.kind === 'photoTarget') {
+      const cam = this.getCameraObject();
+      const obj = entry.object3d || null;
+      const minDotRaw = Number(entry?.meta?.aimMinDot);
+      const minDot = Number.isFinite(minDotRaw) ? clamp(minDotRaw, 0.2, 0.9999) : 0.94;
+      const offsetYRaw = Number(entry?.meta?.aimOffsetY);
+      const offsetY = Number.isFinite(offsetYRaw) ? clamp(offsetYRaw, 0, 2.5) : 0.7;
+      if (cam && obj) {
+        cam.getWorldDirection(this._tmpCamDir);
+        if (this._tmpCamDir.lengthSq() > 1e-8) this._tmpCamDir.normalize();
+
+        this._tmpTargetWorld.copy(obj.position);
+        this._tmpTargetWorld.y += offsetY;
+        this._tmpToTarget.subVectors(this._tmpTargetWorld, cam.position);
+        if (this._tmpToTarget.lengthSq() > 1e-8) this._tmpToTarget.normalize();
+
+        const dot = this._tmpCamDir.dot(this._tmpToTarget);
+        if (!(dot >= minDot)) {
+          const message = typeof entry?.meta?.aimHint === 'string' && entry.meta.aimHint.trim()
+            ? entry.meta.aimHint.trim()
+            : 'Aim at the target';
+          if (actorKind === 'player') {
+            this.eventBus?.emit?.(EVENTS.INTERACTABLE_HOVER, { id: entry.id, text: message });
+          }
+          return false;
+        }
+      }
     }
 
     const bus = this.eventBus;
