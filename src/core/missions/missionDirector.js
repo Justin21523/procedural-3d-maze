@@ -23,7 +23,9 @@ import {
   createAltarObject,
   setAltarState,
   createPhotoTargetObject,
-  createEscortBuddyObject
+  createEscortBuddyObject,
+  createSensorObject,
+  setSensorState
 } from './missionObjects.js';
 import { ROOM_CONFIGS, ROOM_TYPES, TILE_TYPES } from '../../world/tileTypes.js';
 
@@ -138,6 +140,7 @@ export class MissionDirector {
   constructor(options = {}) {
     this.eventBus = options.eventBus || null;
     this.worldState = options.worldState || null;
+    this.monsterManager = options.monsterManager || null;
     this.scene = options.scene || null;
     this.gameState = options.gameState || null;
     this.exitPoint = options.exitPoint || null;
@@ -175,12 +178,13 @@ export class MissionDirector {
     this.unsubs = [];
   }
 
-  setRefs({ eventBus, worldState, scene, gameState, exitPoint, interactableSystem } = {}) {
+  setRefs({ eventBus, worldState, monsterManager, scene, gameState, exitPoint, interactableSystem } = {}) {
     if (eventBus) this.eventBus = eventBus;
     if (worldState) {
       this.worldState = worldState;
       this.pathfinder = new Pathfinding(worldState);
     }
+    if (monsterManager) this.monsterManager = monsterManager;
     if (scene) this.scene = scene;
     if (gameState) this.gameState = gameState;
     if (exitPoint) this.exitPoint = exitPoint;
@@ -380,6 +384,21 @@ export class MissionDirector {
       return;
     }
 
+    if (template === 'lureToSensor') {
+      mission.state.completed = true;
+      mission.state.armed = true;
+      mission.state.requireLure = false;
+      mission.state.lureSeconds = 0;
+      mission.state.lureUntilSec = 0;
+      mission.state.playerRadius = 0;
+      mission.state.triggerRadius = 0;
+      mission.state.sensorId = null;
+      mission.state.sensorGridPos = null;
+      mission.state.lureId = null;
+      mission.state.lureGridPos = null;
+      return;
+    }
+
     if (template === 'deliverItemToTerminal') {
       mission.state.itemId = String(mission.state.itemId || mission.params?.itemId || 'package').trim() || 'package';
       mission.state.collected = 0;
@@ -420,6 +439,17 @@ export class MissionDirector {
       mission.state.seconds = 0;
       mission.state.hiddenForSec = 0;
       mission.state.completed = true;
+      return;
+    }
+
+    if (template === 'hideUntilClear') {
+      mission.state.completed = true;
+      mission.state.minDistance = 0;
+      mission.state.quietSeconds = 0;
+      mission.state.requireNoLOS = false;
+      mission.state.lastNoiseAtSec = 0;
+      mission.state.nearestMonsterDist = null;
+      mission.state.nearestMonsterHasLOS = null;
       return;
     }
 
@@ -588,6 +618,22 @@ export class MissionDirector {
         const seconds = clamp(Math.round(mission.params.seconds ?? mission.params.holdSeconds ?? 5), 2, 120);
         mission.state = { required: count, scanned: 0, seconds, targets: [], completed: false };
         this.spawnHoldToScan(mission, { avoid: [spawn, exit] });
+      } else if (template === 'lureToSensor') {
+        const lureSeconds = clamp(Math.round(mission.params.lureSeconds ?? mission.params.seconds ?? 10), 3, 120);
+        mission.state = {
+          armed: false,
+          completed: false,
+          requireLure: mission.params.requireLure !== false,
+          lureSeconds,
+          lureUntilSec: 0,
+          playerRadius: clamp(Math.round(mission.params.playerRadius ?? 3), 1, 20),
+          triggerRadius: clamp(Math.round(mission.params.triggerRadius ?? 1), 0, 10),
+          sensorId: null,
+          sensorGridPos: null,
+          lureId: null,
+          lureGridPos: null
+        };
+        this.spawnLureToSensor(mission, { avoid: [spawn, exit] });
       } else if (template === 'deliverItemToTerminal') {
         const total = clamp(Math.round(mission.params.count ?? 3), 1, 24);
         const required = clamp(Math.round(mission.params.required ?? total), 1, total);
@@ -630,6 +676,18 @@ export class MissionDirector {
       } else if (template === 'hideForSeconds') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 10), 3, 600);
         mission.state = { seconds, hiddenForSec: 0, completed: false };
+      } else if (template === 'hideUntilClear') {
+        const minDistance = clamp(Math.round(mission.params.minDistance ?? mission.params.minMonsterDistance ?? 8), 1, 999);
+        const quietSeconds = clamp(Math.round(mission.params.quietSeconds ?? 0), 0, 999);
+        mission.state = {
+          completed: false,
+          minDistance,
+          quietSeconds,
+          requireNoLOS: mission.params.requireNoLOS !== false,
+          lastNoiseAtSec: 0,
+          nearestMonsterDist: null,
+          nearestMonsterHasLOS: null
+        };
       } else if (template === 'escort') {
         mission.state = {
           started: false,
@@ -2188,6 +2246,137 @@ export class MissionDirector {
     }
   }
 
+  spawnLureToSensor(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const sensorRoomTypes = Array.isArray(mission.params.roomTypesSensor)
+      ? mission.params.roomTypesSensor
+      : (Array.isArray(mission.params.roomTypesTargets)
+        ? mission.params.roomTypesTargets
+        : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null));
+
+    if (!this.canSpawnMissionObject(2)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const sensorTiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: sensorRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 8,
+      margin: 1
+    });
+    const sensorPos = sensorTiles[0] || null;
+    if (!sensorPos) {
+      this.failOpenMission(mission, 'no valid sensor tile');
+      return;
+    }
+
+    const sensorObject = createSensorObject({ armed: false, active: false, success: false });
+    const sensorWorld = gridToWorldCenter(sensorPos);
+    sensorObject.position.set(sensorWorld.x, 0, sensorWorld.z);
+    this.scene.add(sensorObject);
+    this.spawnedObjects.push(sensorObject);
+    this.consumeMissionObjectBudget(1);
+
+    const sensorId = `sensor:${mission.id}`;
+    mission.state.sensorId = sensorId;
+    mission.state.sensorGridPos = { x: sensorPos.x, y: sensorPos.y };
+
+    this.registeredIds.push(
+      this.interactables.register({
+        id: sensorId,
+        kind: 'sensor',
+        label: 'Sensor',
+        gridPos: { x: sensorPos.x, y: sensorPos.y },
+        object3d: sensorObject,
+        maxDistance: 2.8,
+        prompt: () => {
+          if (mission.state.completed) return 'Sensor (Complete)';
+          if (mission.state.armed) return 'E: Sensor (Armed)';
+          return 'E: Arm Sensor';
+        },
+        interact: ({ entry }) => {
+          if (mission.state.completed) return { ok: true, message: 'Sensor already complete', state: { armed: true } };
+          if (mission.state.armed) return { ok: true, message: 'Sensor already armed', state: { armed: true } };
+          mission.state.armed = true;
+          if (entry?.meta) entry.meta.armed = true;
+          setSensorState(sensorObject, { armed: true, active: false, success: false });
+          return { ok: true, message: 'Sensor armed', state: { armed: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, armed: false }
+      })
+    );
+    this.interactableMeta.set(sensorId, { missionId: mission.id, template: mission.template });
+
+    // Place the lure device near the sensor (best effort).
+    const offsets = shuffleInPlace([
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 }
+    ]);
+
+    let lurePos = null;
+    for (const o of offsets) {
+      const x = sensorPos.x + o.dx;
+      const y = sensorPos.y + o.dy;
+      if (!ws.isWalkable?.(x, y)) continue;
+      lurePos = { x, y };
+      break;
+    }
+    if (!lurePos) lurePos = { x: sensorPos.x, y: sensorPos.y };
+
+    const lureObject = createPowerSwitchObject(false);
+    const lureWorld = gridToWorldCenter(lurePos);
+    lureObject.position.set(lureWorld.x, 0, lureWorld.z);
+    if (lurePos.x === sensorPos.x && lurePos.y === sensorPos.y) {
+      lureObject.position.x += 0.35;
+      lureObject.position.z += 0.15;
+    }
+    this.scene.add(lureObject);
+    this.spawnedObjects.push(lureObject);
+    this.consumeMissionObjectBudget(1);
+
+    const lureId = `lure:${mission.id}`;
+    mission.state.lureId = lureId;
+    mission.state.lureGridPos = { x: lurePos.x, y: lurePos.y };
+
+    this.registeredIds.push(
+      this.interactables.register({
+        id: lureId,
+        kind: 'lureDevice',
+        label: 'Lure Device',
+        gridPos: { x: lurePos.x, y: lurePos.y },
+        object3d: lureObject,
+        maxDistance: 2.6,
+        prompt: () => {
+          if (mission.state.completed) return 'Lure Device (Complete)';
+          const remaining = Math.max(0, (Number(mission.state.lureUntilSec) || 0) - this.elapsedSec);
+          if (remaining > 0) return `Lure active (${Math.ceil(remaining)}s)`;
+          return 'E: Trigger Lure';
+        },
+        interact: ({ entry }) => {
+          if (mission.state.completed) return { ok: true, message: 'Lure already complete', state: { active: false } };
+          if (!mission.state.armed) {
+            return { ok: false, message: 'Arm the sensor first', state: { blocked: true } };
+          }
+
+          const seconds = clamp(Math.round(mission.state.lureSeconds ?? mission.params.lureSeconds ?? 10), 3, 120);
+          mission.state.lureUntilSec = this.elapsedSec + seconds;
+          if (entry?.meta) entry.meta.active = true;
+          setPowerSwitchState(lureObject, true);
+          this.eventBus?.emit?.(EVENTS.NOISE_EMITTED, { source: 'player', kind: 'lure', strength: 0.7 });
+          return { ok: true, message: 'Lure triggered', state: { active: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, active: false }
+      })
+    );
+    this.interactableMeta.set(lureId, { missionId: mission.id, template: mission.template });
+  }
+
   spawnDeliverItemToTerminal(mission, options = {}) {
     const ws = this.worldState;
     const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
@@ -3179,6 +3368,14 @@ export class MissionDirector {
       }
     }
 
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'hideUntilClear') continue;
+      if (this.isMissionComplete(mission)) continue;
+
+      mission.state.lastNoiseAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
+    }
+
     this.syncStatus();
   }
 
@@ -3500,6 +3697,130 @@ export class MissionDirector {
         }
       }
 
+      const monsterPositions = (() => {
+        const mm = this.monsterManager;
+        if (!mm) return [];
+        if (typeof mm.getMonsterPositions === 'function') {
+          const raw = mm.getMonsterPositions();
+          return Array.isArray(raw) ? raw.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)) : [];
+        }
+        if (typeof mm.getMonsters === 'function') {
+          const monsters = mm.getMonsters();
+          if (!Array.isArray(monsters)) return [];
+          const out = [];
+          for (const m of monsters) {
+            if (!m || m.isDead || m.isDying) continue;
+            const gp = m.getGridPosition ? m.getGridPosition() : null;
+            if (gp && Number.isFinite(gp.x) && Number.isFinite(gp.y)) out.push({ x: gp.x, y: gp.y });
+          }
+          return out;
+        }
+        return [];
+      })();
+
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'hideUntilClear') continue;
+        if (mission.state.completed) continue;
+
+        if (!this.playerHidden) continue;
+
+        const minDistance = Number(mission.state.minDistance) || 0;
+        const requireNoLOS = mission.state.requireNoLOS !== false;
+        const quietSeconds = Number(mission.state.quietSeconds) || 0;
+        const lastNoiseAt = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
+        const quietFor = this.elapsedSec - lastNoiseAt;
+        const quietOk = quietSeconds <= 0 || quietFor >= quietSeconds;
+
+        let nearestDist = Infinity;
+        let nearest = null;
+        for (const m of monsterPositions) {
+          const dist = Math.abs(m.x - playerGridPos.x) + Math.abs(m.y - playerGridPos.y);
+          if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = m;
+          }
+        }
+
+        const distOk = minDistance <= 0 || nearestDist >= minDistance;
+        let hasLOS = false;
+        if (requireNoLOS && nearest && ws?.hasLineOfSight) {
+          hasLOS = !!ws.hasLineOfSight(playerGridPos, nearest);
+        }
+        const losOk = !requireNoLOS || !hasLOS;
+
+        mission.state.nearestMonsterDist = Number.isFinite(nearestDist) && nearestDist < 1e9 ? nearestDist : null;
+        mission.state.nearestMonsterHasLOS = requireNoLOS ? hasLOS : null;
+
+        if (quietOk && distOk && losOk) {
+          mission.state.completed = true;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Threat cleared. You can leave hiding.', seconds: 1.9 });
+        }
+      }
+
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'lureToSensor') continue;
+        if (mission.state.completed) continue;
+
+        const sensorGridPos = mission.state.sensorGridPos || null;
+        const lureSeconds = clamp(Math.round(mission.state.lureSeconds ?? mission.params.lureSeconds ?? 10), 3, 120);
+        const requireLure = mission.state.requireLure !== false;
+        const until = Number(mission.state.lureUntilSec) || 0;
+        const lureActive = !requireLure || (until > 0 && this.elapsedSec <= until);
+
+        if (requireLure && until > 0 && this.elapsedSec > until) {
+          mission.state.lureUntilSec = 0;
+          const lureEntry = mission.state.lureId ? (this.interactables?.get?.(mission.state.lureId) || null) : null;
+          if (lureEntry?.meta) lureEntry.meta.active = false;
+          if (lureEntry?.object3d) setPowerSwitchState(lureEntry.object3d, false);
+        }
+
+        if (sensorGridPos && Number.isFinite(sensorGridPos.x) && Number.isFinite(sensorGridPos.y)) {
+          const sensorEntry = mission.state.sensorId ? (this.interactables?.get?.(mission.state.sensorId) || null) : null;
+          const stage = !mission.state.armed
+            ? 'arm'
+            : (requireLure && !lureActive ? 'trigger' : 'wait');
+
+          if (sensorEntry?.object3d) {
+            setSensorState(sensorEntry.object3d, { armed: !!mission.state.armed, active: stage === 'wait' && lureActive, success: false });
+          }
+
+          if (stage === 'wait') {
+            const playerRadius = Number(mission.state.playerRadius) || 3;
+            const triggerRadius = Number(mission.state.triggerRadius) || 1;
+            const playerNear = manhattan(playerGridPos, sensorGridPos) <= playerRadius;
+
+            let monsterNear = false;
+            for (const m of monsterPositions) {
+              const dist = Math.abs(m.x - sensorGridPos.x) + Math.abs(m.y - sensorGridPos.y);
+              if (dist <= triggerRadius) {
+                monsterNear = true;
+                break;
+              }
+            }
+
+            if (playerNear && monsterNear) {
+              mission.state.completed = true;
+              if (sensorEntry?.object3d) {
+                setSensorState(sensorEntry.object3d, { armed: true, active: false, success: true });
+              }
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Sensor triggered.', seconds: 1.8 });
+
+              const lureEntry = mission.state.lureId ? (this.interactables?.get?.(mission.state.lureId) || null) : null;
+              if (lureEntry?.object3d) setPowerSwitchState(lureEntry.object3d, false);
+              mission.state.lureUntilSec = 0;
+            }
+          } else if (stage === 'trigger' && requireLure && until <= 0 && mission.state.armed) {
+            // Keep the lure device visually off until triggered.
+            const lureEntry = mission.state.lureId ? (this.interactables?.get?.(mission.state.lureId) || null) : null;
+            if (lureEntry?.object3d) setPowerSwitchState(lureEntry.object3d, false);
+            if (lureEntry?.meta) lureEntry.meta.active = false;
+            mission.state.lureSeconds = lureSeconds;
+          }
+        }
+      }
+
       for (const mission of this.missions.values()) {
         if (!mission) continue;
         if (mission.template !== 'escort') continue;
@@ -3614,10 +3935,16 @@ export class MissionDirector {
     if (mission.template === 'hideForSeconds') {
       return !!mission.state.completed;
     }
+    if (mission.template === 'hideUntilClear') {
+      return !!mission.state.completed;
+    }
     if (mission.template === 'escort') {
       return !!mission.state.completed;
     }
     if (mission.template === 'stealthNoise') {
+      return !!mission.state.completed;
+    }
+    if (mission.template === 'lureToSensor') {
       return !!mission.state.completed;
     }
     return false;
@@ -3821,6 +4148,23 @@ export class MissionDirector {
         const remaining = Math.max(0, seconds - hiddenFor);
         return remaining > 0 ? `Hide (${remaining}s)` : 'Hide (done)';
       }
+      if (mission.template === 'hideUntilClear') {
+        if (mission.state.completed) return 'Threat cleared. Reach the exit.';
+        const minDistance = Number(mission.state.minDistance) || 0;
+        const nearest = Number(mission.state.nearestMonsterDist);
+        const requireNoLOS = mission.state.requireNoLOS !== false;
+        const hasLOS = mission.state.nearestMonsterHasLOS === true;
+        const quietSeconds = Number(mission.state.quietSeconds) || 0;
+        const lastNoiseAt = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
+        const quietRemaining = quietSeconds > 0 ? Math.max(0, quietSeconds - (this.elapsedSec - lastNoiseAt)) : 0;
+
+        const parts = [];
+        if (minDistance > 0 && Number.isFinite(nearest)) parts.push(`distance ${nearest}/${minDistance}`);
+        if (requireNoLOS) parts.push(hasLOS ? 'LOS' : 'no LOS');
+        if (quietSeconds > 0) parts.push(`quiet ${Math.ceil(quietRemaining)}s`);
+        const suffix = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+        return `Stay hidden until clear${suffix}`;
+      }
       if (mission.template === 'escort') {
         if (mission.state.completed) return 'Escort complete. Reach the exit.';
         return mission.state.started ? 'Escort the survivor to the exit.' : 'Find the survivor and start the escort (E)';
@@ -3831,6 +4175,15 @@ export class MissionDirector {
         const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
         const remainingSec = Math.ceil(remaining);
         return remaining > 0 ? `Stay quiet (${remainingSec}s)` : 'Stay quiet (done)';
+      }
+      if (mission.template === 'lureToSensor') {
+        if (mission.state.completed) return 'Sensor triggered. Reach the exit.';
+        if (!mission.state.armed) return 'Arm the sensor (E)';
+        const requireLure = mission.state.requireLure !== false;
+        const until = Number(mission.state.lureUntilSec) || 0;
+        const remaining = Math.max(0, until - this.elapsedSec);
+        if (requireLure && remaining <= 0) return 'Trigger the lure device (E)';
+        return remaining > 0 ? `Lure a monster to the sensor (${Math.ceil(remaining)}s)` : 'Lure a monster to the sensor';
       }
       return mission.id;
     };
@@ -4043,6 +4396,24 @@ export class MissionDirector {
         completed: !!mission.state.completed
       };
     }
+    if (mission.template === 'hideUntilClear') {
+      const minDistance = Number(mission.state.minDistance) || 0;
+      const requireNoLOS = mission.state.requireNoLOS !== false;
+      const hasLOS = mission.state.nearestMonsterHasLOS === true;
+      const quietSeconds = Number(mission.state.quietSeconds) || 0;
+      const lastNoiseAt = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
+      const quietRemaining = quietSeconds > 0 ? Math.max(0, quietSeconds - (this.elapsedSec - lastNoiseAt)) : 0;
+      return {
+        minDistance,
+        nearestMonsterDist: mission.state.nearestMonsterDist ?? null,
+        requireNoLOS,
+        hasLOS,
+        quietSeconds,
+        quietRemaining,
+        hidden: !!this.playerHidden,
+        completed: !!mission.state.completed
+      };
+    }
     if (mission.template === 'escort') {
       return {
         started: !!mission.state.started,
@@ -4060,6 +4431,30 @@ export class MissionDirector {
         remaining,
         gunshots: mission.state.gunshots || 0,
         failed: !!mission.state.failed,
+        completed: !!mission.state.completed
+      };
+    }
+    if (mission.template === 'lureToSensor') {
+      const requireLure = mission.state.requireLure !== false;
+      const until = Number(mission.state.lureUntilSec) || 0;
+      const lureRemaining = Math.max(0, until - this.elapsedSec);
+      const lureActive = !requireLure || (until > 0 && lureRemaining > 0);
+      const stage = mission.state.completed
+        ? 'completed'
+        : (!mission.state.armed
+          ? 'arm'
+          : (requireLure && !lureActive ? 'trigger' : 'wait'));
+      return {
+        stage,
+        armed: !!mission.state.armed,
+        requireLure,
+        lureRemaining,
+        lureActive,
+        sensorId: mission.state.sensorId || null,
+        sensorGridPos: mission.state.sensorGridPos || null,
+        lureId: mission.state.lureId || null,
+        lureGridPos: mission.state.lureGridPos || null,
+        goalGridPos: mission.state.sensorGridPos || null,
         completed: !!mission.state.completed
       };
     }
@@ -4303,6 +4698,21 @@ export class MissionDirector {
       return next ? { id: next.id || null, gridPos: next.gridPos } : null;
     }
 
+    if (mission.template === 'lureToSensor') {
+      if (mission.state.completed) return null;
+      const requireLure = mission.state.requireLure !== false;
+      const until = Number(mission.state.lureUntilSec) || 0;
+      const lureActive = !requireLure || (until > 0 && this.elapsedSec <= until);
+
+      if (!mission.state.armed && mission.state.sensorId && mission.state.sensorGridPos) {
+        return { id: mission.state.sensorId, gridPos: mission.state.sensorGridPos };
+      }
+      if (requireLure && !lureActive && mission.state.lureId && mission.state.lureGridPos) {
+        return { id: mission.state.lureId, gridPos: mission.state.lureGridPos };
+      }
+      return null;
+    }
+
     if (mission.template === 'deliverItemToTerminal') {
       if (mission.state.delivered) return null;
       const required = Number(mission.state.required) || 0;
@@ -4356,6 +4766,10 @@ export class MissionDirector {
     }
 
     if (mission.template === 'hideForSeconds') {
+      return null;
+    }
+
+    if (mission.template === 'hideUntilClear') {
       return null;
     }
 
@@ -4562,7 +4976,30 @@ export class MissionDirector {
             targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos, missionId: mission.id, template: mission.template });
           }
         }
+      } else if (mission.template === 'lureToSensor') {
+        if (mission.state.completed) continue;
+        const requireLure = mission.state.requireLure !== false;
+        const until = Number(mission.state.lureUntilSec) || 0;
+        const lureActive = !requireLure || (until > 0 && this.elapsedSec <= until);
+
+        if (!mission.state.armed && mission.state.sensorId && mission.state.sensorGridPos) {
+          targets.push({ collected: false, id: mission.state.sensorId, gridPos: mission.state.sensorGridPos, missionId: mission.id, template: mission.template });
+        } else if (requireLure && !lureActive && mission.state.lureId && mission.state.lureGridPos) {
+          targets.push({ collected: false, id: mission.state.lureId, gridPos: mission.state.lureGridPos, missionId: mission.id, template: mission.template });
+        } else if (mission.state.sensorId && mission.state.sensorGridPos) {
+          targets.push({ collected: false, id: mission.state.sensorId, gridPos: mission.state.sensorGridPos, missionId: mission.id, template: mission.template });
+        }
       } else if (mission.template === 'hideForSeconds') {
+        if (mission.state.completed) continue;
+        if (this.playerHidden) continue;
+        const spots = this.interactables?.list?.() || [];
+        for (const entry of spots) {
+          if (!entry || entry.enabled === false || entry.collected) continue;
+          if (entry.kind !== 'hidingSpot') continue;
+          if (!entry.gridPos) continue;
+          targets.push({ collected: false, id: entry.id || null, gridPos: entry.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'hideUntilClear') {
         if (mission.state.completed) continue;
         if (this.playerHidden) continue;
         const spots = this.interactables?.list?.() || [];

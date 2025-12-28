@@ -425,6 +425,42 @@ export function createEscortBuddyObject() {
   return group;
 }
 
+export function createSensorObject({ armed = false, active = false, success = false } = {}) {
+  const group = new THREE.Group();
+
+  const baseMat = makeEmissiveMaterial(0x263238, 0x000000, 0.0);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.38, 0.10, 18), baseMat);
+  base.castShadow = false;
+  base.receiveShadow = true;
+  base.position.y = 0.05;
+  group.add(base);
+
+  const ringMat = makeEmissiveMaterial(0x66aaff, 0x66aaff, 0.55, true, 0.9);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.04, 12, 30), ringMat);
+  ring.castShadow = false;
+  ring.receiveShadow = false;
+  ring.position.y = 0.10;
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+
+  group.userData.__sensor = { ring };
+  setSensorState(group, { armed, active, success });
+
+  group.rotation.y = Math.random() * Math.PI * 2;
+  return group;
+}
+
+export function setSensorState(object3d, { armed = false, active = false, success = false } = {}) {
+  const data = object3d?.userData?.__sensor || null;
+  const ring = data?.ring || null;
+  const mat = ring?.material || null;
+  if (!mat) return;
+
+  const color = success ? 0x66ff99 : (active ? 0x66aaff : (armed ? 0xffcc66 : 0xff4444));
+  mat.color.setHex(color);
+  mat.emissive.setHex(color);
+}
+
 export function getDefaultMissionRoomTypes() {
   // Default to "human rooms" for objectives.
   // New archetypes can be injected via level config.

@@ -129,6 +129,8 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     'switchSequence',
     'switchSequenceWithClues',
     'hideForSeconds',
+    'hideUntilClear',
+    'lureToSensor',
     'escort'
   ]);
   if (template && !allowedTemplates.has(template)) {
@@ -447,6 +449,47 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     if (!Number.isFinite(seconds) || seconds <= 0) {
       pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'seconds'], 'seconds should be a positive number');
     }
+  } else if (template === 'hideUntilClear') {
+    if (params.minDistance !== undefined) {
+      const d = Number(params.minDistance);
+      if (!Number.isFinite(d) || d <= 0) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'minDistance'], 'minDistance should be a positive number');
+      }
+    }
+    if (params.quietSeconds !== undefined) {
+      const d = Number(params.quietSeconds);
+      if (!Number.isFinite(d) || d < 0) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'quietSeconds'], 'quietSeconds should be a number ≥ 0');
+      }
+    }
+    if (params.requireNoLOS !== undefined && typeof params.requireNoLOS !== 'boolean') {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'requireNoLOS'], 'requireNoLOS should be a boolean');
+    }
+  } else if (template === 'lureToSensor') {
+    if (params.lureSeconds !== undefined) {
+      const d = Number(params.lureSeconds);
+      if (!Number.isFinite(d) || d <= 0) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'lureSeconds'], 'lureSeconds should be a positive number');
+      }
+    }
+    if (params.requireLure !== undefined && typeof params.requireLure !== 'boolean') {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'requireLure'], 'requireLure should be a boolean');
+    }
+    if (params.playerRadius !== undefined) {
+      const d = Number(params.playerRadius);
+      if (!Number.isFinite(d) || d <= 0) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'playerRadius'], 'playerRadius should be a positive number');
+      }
+    }
+    if (params.triggerRadius !== undefined) {
+      const d = Number(params.triggerRadius);
+      if (!Number.isFinite(d) || d < 0) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'triggerRadius'], 'triggerRadius should be a number ≥ 0');
+      }
+    }
+    validateRoomTypesParam('roomTypesSensor');
+    validateRoomTypesParam('roomTypesTargets');
+    validateRoomTypesParam('roomTypes');
   } else if (template === 'escort') {
     if (params.followDistance !== undefined) {
       const d = Number(params.followDistance);

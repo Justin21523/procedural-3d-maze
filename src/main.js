@@ -468,6 +468,7 @@ async function initGame() {
   missionDirector = new MissionDirector({
     eventBus,
     worldState,
+    monsterManager,
     scene: sceneManager.getScene(),
     gameState,
     exitPoint,
