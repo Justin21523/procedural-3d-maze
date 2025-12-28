@@ -229,6 +229,21 @@ export class RangedCombatModule {
 
     if (!allowFire) return base;
 
+    // Squad focus-fire limiter: avoid every member firing at the same time.
+    const squadFireLimiterEnabled = this.options?.squadFireLimiterEnabled ?? true;
+    const monsterId = Number.isFinite(this.monster?.id) ? this.monster.id : null;
+    if (squadFireLimiterEnabled && squadId && monsterId !== null && squadCoordinator?.allowRangedFire) {
+      const ok = squadCoordinator.allowRangedFire(squadId, monsterId, nowSec, {
+        role,
+        maxShooters: this.options?.maxRangedShooters ?? this.options?.squadMaxRangedShooters,
+        grantSeconds: this.options?.fireGrantSeconds ?? this.options?.squadFireGrantSeconds
+      });
+      if (!ok) {
+        this.shotCooldown = Math.max(this.shotCooldown || 0, Math.max(0.08, shotInterval * 0.35));
+        return base;
+      }
+    }
+
     const chance = Math.min(1.0, (ranged.fireChance ?? 1.0) * (0.7 + 0.3 * diff));
     if (chance < 1.0 && Math.random() > chance) {
       this.shotCooldown = Math.max(0.18, shotInterval * 0.55);

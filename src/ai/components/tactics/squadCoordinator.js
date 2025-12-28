@@ -44,6 +44,7 @@ export class SquadCoordinator {
         targetReportedRole: null,
 
         flankAssignments: new Map(), // monsterId -> { slot, expiresAt }
+        fireGrants: new Map(), // monsterId -> expiresAt (focus-fire limiter)
 
         updatedAt: 0,
         lastSeenAt: 0,
@@ -235,5 +236,56 @@ export class SquadCoordinator {
       lastSeenAt: squad.lastSeenAt,
       leaderId: squad.leaderId
     };
+  }
+
+  allowRangedFire(squadId, memberId, now, options = {}) {
+    const squad = this.ensureSquad(squadId);
+    if (!squad) return true;
+    const id = Number.isFinite(memberId) ? memberId : null;
+    if (id === null) return true;
+
+    const t = Number.isFinite(now) ? now : 0;
+    squad.lastTouchedAt = t;
+
+    const grants = squad.fireGrants || new Map();
+    squad.fireGrants = grants;
+
+    // Cleanup expired grants
+    for (const [mid, exp] of grants.entries()) {
+      if (!Number.isFinite(exp) || exp <= t) {
+        grants.delete(mid);
+      }
+    }
+
+    const existing = grants.get(id);
+    if (Number.isFinite(existing) && existing > t) {
+      return true;
+    }
+
+    const role = normalizeRole(options.role || squad.members?.get?.(id)?.role || null);
+
+    const maxShootersRaw =
+      options.maxShooters ??
+      (CONFIG.AI_SQUAD_MAX_RANGED_SHOOTERS ?? 2);
+    const maxShooters = Math.max(1, Math.round(Number(maxShootersRaw) || 2));
+
+    // Keep flankers mostly moving; let leader/cover do most shooting.
+    const isFlanker = role === 'flanker' || role === 'scout';
+    if (isFlanker && grants.size >= 1) {
+      return false;
+    }
+
+    if (grants.size >= maxShooters) {
+      return false;
+    }
+
+    const baseGrant =
+      Number.isFinite(options.grantSeconds)
+        ? options.grantSeconds
+        : (CONFIG.AI_SQUAD_FIRE_GRANT_SECONDS ?? 0.9);
+    const grantSeconds = Math.max(0.2, Math.min(6, Number(baseGrant) || 0.9));
+    grants.set(id, t + grantSeconds * (0.85 + Math.random() * 0.3));
+
+    return true;
   }
 }
