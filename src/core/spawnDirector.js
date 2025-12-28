@@ -33,6 +33,7 @@ export class SpawnDirector {
     this.eventBus = eventBus;
     this.gameState = null;
     this.gun = null;
+    this.projectileManager = null;
 
     this.enabled = CONFIG.SPAWN_DIRECTOR_ENABLED ?? true;
 
@@ -89,6 +90,33 @@ export class SpawnDirector {
   setGun(gun) {
     this.gun = gun;
     this.pickupManager?.setGun?.(gun);
+  }
+
+  setProjectileManager(projectileManager) {
+    this.projectileManager = projectileManager;
+  }
+
+  getPerfPressure() {
+    const pm = this.projectileManager;
+    if (!pm) return 0;
+
+    const ratio = (count, cap) => {
+      const c = Math.max(0, Number(count) || 0);
+      const k = Number(cap);
+      if (!Number.isFinite(k) || k <= 0) return 0;
+      return c / k;
+    };
+
+    const proj = pm?.projectiles?.length ?? 0;
+    const impacts = pm?.impacts?.length ?? 0;
+    const explosions = pm?.explosions?.length ?? 0;
+
+    return Math.max(
+      ratio(proj, CONFIG.MAX_ACTIVE_PROJECTILES),
+      ratio(impacts, CONFIG.MAX_ACTIVE_IMPACTS),
+      ratio(explosions, CONFIG.MAX_ACTIVE_EXPLOSIONS),
+      0
+    );
   }
 
   async startLevel(levelConfig) {
@@ -207,7 +235,23 @@ export class SpawnDirector {
     if (alive >= this.targetAlive) return;
 
     const budgetRate = CONFIG.SPAWN_DIRECTOR_BUDGET_RATE ?? 2.4;
-    this.spawnBudget += dt * budgetRate;
+    const pressure = this.getPerfPressure();
+    const start = Number.isFinite(CONFIG.SPAWN_DIRECTOR_PRESSURE_START) ? CONFIG.SPAWN_DIRECTOR_PRESSURE_START : 0.65;
+    const stop = Number.isFinite(CONFIG.SPAWN_DIRECTOR_PRESSURE_STOP) ? CONFIG.SPAWN_DIRECTOR_PRESSURE_STOP : 0.85;
+
+    if (pressure >= stop) {
+      // Under heavy projectile/FX load, pause monster spawns to keep FPS stable.
+      this.waveCooldown = Math.max(this.waveCooldown, 0.35);
+      return;
+    }
+
+    let rateMult = 1;
+    if (pressure > start && stop > start) {
+      const t = clamp((pressure - start) / (stop - start), 0, 1);
+      rateMult = clamp(1 - t * 0.85, 0.15, 1);
+    }
+
+    this.spawnBudget += dt * budgetRate * rateMult;
 
     if (this.waveCooldown > 0) return;
 

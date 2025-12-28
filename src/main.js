@@ -505,11 +505,12 @@ async function initGame() {
   });
   missionDirector?.syncStatus?.(true);
 
-  pickupManager = new PickupManager(sceneManager.getScene(), player, gameState, gun, audioManager, eventBus);
-  spawnDirector = new SpawnDirector(monsterManager, player, pickupManager, eventBus);
-  spawnDirector.setGameState(gameState);
-  spawnDirector.setGun(gun);
-  levelLoading = spawnDirector.startLevel(levelConfig);
+	  pickupManager = new PickupManager(sceneManager.getScene(), player, gameState, gun, audioManager, eventBus);
+	  spawnDirector = new SpawnDirector(monsterManager, player, pickupManager, eventBus);
+	  spawnDirector.setGameState(gameState);
+	  spawnDirector.setGun(gun);
+	  spawnDirector.setProjectileManager?.(projectileManager);
+	  levelLoading = spawnDirector.startLevel(levelConfig);
 
   // Combat resolution (damage/explosions) driven by EventBus.
   const combatSystem = new CombatSystem({
