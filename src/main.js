@@ -49,13 +49,14 @@ async function initGame() {
   const container = document.getElementById('canvas-container');
   const instructionsOverlay = document.getElementById('instructions');
   const startButton = document.getElementById('start-button');
-  const minimapCanvas = document.getElementById('minimap');
-  const minimapToggle = document.getElementById('minimap-toggle');
-  const minimapSizeSlider = document.getElementById('minimap-size');
-  const minimapSizeValue = document.getElementById('minimap-size-value');
-  const minimapZoomSlider = document.getElementById('minimap-zoom');
-  const minimapZoomValue = document.getElementById('minimap-zoom-value');
-  const minimapResetButton = document.getElementById('minimap-reset');
+	  const minimapCanvas = document.getElementById('minimap');
+	  const minimapViewport = document.getElementById('minimap-viewport');
+	  const minimapToggle = document.getElementById('minimap-toggle');
+	  const minimapSizeSlider = document.getElementById('minimap-size');
+	  const minimapSizeValue = document.getElementById('minimap-size-value');
+	  const minimapZoomSlider = document.getElementById('minimap-zoom');
+	  const minimapZoomValue = document.getElementById('minimap-zoom-value');
+	  const minimapResetButton = document.getElementById('minimap-reset');
   const levelLabel = document.getElementById('level-label');
   const levelPrevBtn = document.getElementById('level-prev');
   const levelNextBtn = document.getElementById('level-next');
@@ -296,14 +297,15 @@ async function initGame() {
   const minimap = new Minimap(minimapCanvas, worldState);
   console.log('Minimap created');
 
-  const MINIMAP_STORAGE_SIZE = 'maze:minimap:size';
-  const MINIMAP_STORAGE_ZOOM = 'maze:minimap:zoom';
-  const DEFAULT_MINIMAP_SIZE = 240;
-  const DEFAULT_MINIMAP_ZOOM = 1.1;
-  const MINIMAP_SIZE_MIN = 140;
-  const MINIMAP_SIZE_MAX = 320;
-  const MINIMAP_ZOOM_MIN = 1.0;
-  const MINIMAP_ZOOM_MAX = 3.0;
+	  const MINIMAP_STORAGE_SIZE = 'maze:minimap:size';
+	  const MINIMAP_STORAGE_ZOOM = 'maze:minimap:zoom';
+	  const MINIMAP_RENDER_SIZE = 240;
+	  const DEFAULT_MINIMAP_SIZE = 240;
+	  const DEFAULT_MINIMAP_ZOOM = 1.1;
+	  const MINIMAP_SIZE_MIN = 140;
+	  const MINIMAP_SIZE_MAX = 320;
+	  const MINIMAP_ZOOM_MIN = 1.0;
+	  const MINIMAP_ZOOM_MAX = 3.0;
 
   const safeStorageGet = (key) => {
     try {
@@ -339,56 +341,65 @@ async function initGame() {
     return Math.max(MINIMAP_ZOOM_MIN, Math.min(MINIMAP_ZOOM_MAX, n));
   }
 
-  // Restore minimap size/zoom from storage (applied before first render).
-  let initialMinimapSize = minimapCanvas?.width || DEFAULT_MINIMAP_SIZE;
-  const storedSize = clampMinimapSize(parseInt(safeStorageGet(MINIMAP_STORAGE_SIZE) || '', 10));
-  initialMinimapSize = storedSize ?? clampMinimapSize(initialMinimapSize) ?? DEFAULT_MINIMAP_SIZE;
+	  // Restore minimap size/zoom from storage (applied before first render).
+	  let initialMinimapSize = DEFAULT_MINIMAP_SIZE;
+	  const storedSize = clampMinimapSize(parseInt(safeStorageGet(MINIMAP_STORAGE_SIZE) || '', 10));
+	  initialMinimapSize = storedSize ?? DEFAULT_MINIMAP_SIZE;
 
-  let initialMinimapZoom = DEFAULT_MINIMAP_ZOOM;
-  const storedZoom = clampMinimapZoom(parseFloat(safeStorageGet(MINIMAP_STORAGE_ZOOM) || ''));
-  initialMinimapZoom = storedZoom ?? DEFAULT_MINIMAP_ZOOM;
+	  let initialMinimapZoom = DEFAULT_MINIMAP_ZOOM;
+	  const storedZoom = clampMinimapZoom(parseFloat(safeStorageGet(MINIMAP_STORAGE_ZOOM) || ''));
+	  initialMinimapZoom = storedZoom ?? DEFAULT_MINIMAP_ZOOM;
 
-  if (minimapCanvas) {
-    minimapCanvas.width = initialMinimapSize;
-    minimapCanvas.height = initialMinimapSize;
-    minimapCanvas.style.width = `${initialMinimapSize}px`;
-    minimapCanvas.style.height = `${initialMinimapSize}px`;
-    minimap.resize(initialMinimapSize);
-    minimap.setZoom(initialMinimapZoom);
-  }
+	  if (minimapCanvas) {
+	    minimapCanvas.width = MINIMAP_RENDER_SIZE;
+	    minimapCanvas.height = MINIMAP_RENDER_SIZE;
+	    minimap.resize(MINIMAP_RENDER_SIZE);
+	    minimap.setZoom(initialMinimapZoom);
+	  }
+	  if (minimapViewport) {
+	    minimapViewport.style.width = `${initialMinimapSize}px`;
+	    minimapViewport.style.height = `${initialMinimapSize}px`;
+	  } else if (minimapCanvas) {
+	    minimapCanvas.style.width = `${initialMinimapSize}px`;
+	    minimapCanvas.style.height = `${initialMinimapSize}px`;
+	  }
 
-  function ensureMinimapVisibleForAdjust() {
-    if (!minimapCanvas) return;
-    if (!minimapHidden) return;
-    minimapHidden = false;
-    minimapCanvas.style.display = 'block';
-    const controls = document.getElementById('minimap-controls');
-    if (controls) controls.style.display = 'block';
-    if (minimapToggle) minimapToggle.textContent = 'Hide';
-  }
+	  function ensureMinimapVisibleForAdjust() {
+	    const viewport = minimapViewport || minimapCanvas;
+	    if (!viewport) return;
+	    if (!minimapHidden) return;
+	    minimapHidden = false;
+	    viewport.style.display = 'block';
+	    const controls = document.getElementById('minimap-controls');
+	    if (controls) controls.style.display = 'block';
+	    if (minimapToggle) minimapToggle.textContent = 'Hide';
+	  }
 
-  function applyMinimapSize(size) {
-    ensureMinimapVisibleForAdjust();
-    const clamped = clampMinimapSize(size) ?? clampMinimapSize(minimapCanvas?.width) ?? DEFAULT_MINIMAP_SIZE;
-    minimapCanvas.width = clamped;
-    minimapCanvas.height = clamped;
-    minimapCanvas.style.width = `${clamped}px`;
-    minimapCanvas.style.height = `${clamped}px`;
-    minimap.resize(clamped);
-    safeStorageSet(MINIMAP_STORAGE_SIZE, clamped);
-    if (minimapZoomSlider) {
-      const zoom = clampMinimapZoom(parseFloat(minimapZoomSlider.value)) ?? minimap.zoom ?? DEFAULT_MINIMAP_ZOOM;
-      minimapZoomSlider.value = String(zoom);
-      minimap.setZoom(zoom);
-    }
-    if (minimapSizeValue) minimapSizeValue.textContent = `${clamped}px`;
-    minimap.render(
-      player.getGridPosition(),
-      monsterManager?.getMonsterPositions() || [],
-      exitPoint?.getGridPosition() || null,
-      missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
-    );
-  }
+	  function applyMinimapSize(size) {
+	    ensureMinimapVisibleForAdjust();
+	    const clamped = clampMinimapSize(size) ?? clampMinimapSize(minimapCanvas?.width) ?? DEFAULT_MINIMAP_SIZE;
+	    if (minimapViewport) {
+	      minimapViewport.style.width = `${clamped}px`;
+	      minimapViewport.style.height = `${clamped}px`;
+	    } else if (minimapCanvas) {
+	      minimapCanvas.style.width = `${clamped}px`;
+	      minimapCanvas.style.height = `${clamped}px`;
+	    }
+	    safeStorageSet(MINIMAP_STORAGE_SIZE, clamped);
+	    if (minimapZoomSlider) {
+	      const zoom = clampMinimapZoom(parseFloat(minimapZoomSlider.value)) ?? minimap.zoom ?? DEFAULT_MINIMAP_ZOOM;
+	      minimapZoomSlider.value = String(zoom);
+	      minimap.setZoom(zoom);
+	    }
+	    if (minimapSizeValue) minimapSizeValue.textContent = `${clamped}px`;
+	    minimap.render(
+	      player.getGridPosition(),
+	      monsterManager?.getMonsterPositions() || [],
+	      exitPoint?.getGridPosition() || null,
+	      missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
+	    );
+	    return clamped;
+	  }
 
   // Create input handler
   const input = new InputHandler();
@@ -562,15 +573,15 @@ async function initGame() {
     return clamped;
   }
 
-  if (minimapSizeSlider) {
-    const initSize = clampMinimapSize(minimapCanvas.width) ?? DEFAULT_MINIMAP_SIZE;
-    minimapSizeSlider.value = String(initSize);
-    if (minimapSizeValue) minimapSizeValue.textContent = `${initSize}px`;
-    minimapSizeSlider.addEventListener('input', (e) => {
-      const size = parseInt(e.target.value, 10);
-      applyMinimapSize(size);
-    });
-  }
+	  if (minimapSizeSlider) {
+	    const initSize = clampMinimapSize(initialMinimapSize) ?? DEFAULT_MINIMAP_SIZE;
+	    minimapSizeSlider.value = String(initSize);
+	    if (minimapSizeValue) minimapSizeValue.textContent = `${initSize}px`;
+	    minimapSizeSlider.addEventListener('input', (e) => {
+	      const size = parseInt(e.target.value, 10);
+	      applyMinimapSize(size);
+	    });
+	  }
 
   if (minimapZoomSlider) {
     minimapZoomSlider.value = String(clampMinimapZoom(initialMinimapZoom) ?? DEFAULT_MINIMAP_ZOOM);
@@ -605,14 +616,17 @@ async function initGame() {
     });
   }
 
-  if (minimapToggle) {
-    minimapToggle.addEventListener('click', () => {
-      minimapHidden = !minimapHidden;
-      minimapCanvas.style.display = minimapHidden ? 'none' : 'block';
-      document.getElementById('minimap-controls').style.display = minimapHidden ? 'none' : 'block';
-      minimapToggle.textContent = minimapHidden ? 'Show' : 'Hide';
-    });
-  }
+	  if (minimapToggle) {
+	    minimapToggle.addEventListener('click', () => {
+	      minimapHidden = !minimapHidden;
+	      const viewport = minimapViewport || minimapCanvas;
+	      if (viewport) {
+	        viewport.style.display = minimapHidden ? 'none' : 'block';
+	      }
+	      document.getElementById('minimap-controls').style.display = minimapHidden ? 'none' : 'block';
+	      minimapToggle.textContent = minimapHidden ? 'Show' : 'Hide';
+	    });
+	  }
 
   /**
    * 重新載入指定關卡
