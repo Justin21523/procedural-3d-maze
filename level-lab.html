@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Level Lab</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: rgba(20, 24, 32, 0.92);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: rgba(255, 255, 255, 0.92);
+      --muted: rgba(255, 255, 255, 0.68);
+      --accent: #7aa2ff;
+      --danger: #ff6666;
+      --good: #66ff99;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 26px 16px 60px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 13px;
+    }
+
+    .panel {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 4px;
+    }
+
+    select, button, input {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: rgba(122, 162, 255, 0.5);
+      background: rgba(122, 162, 255, 0.18);
+    }
+
+    .pill {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+      background: rgba(0, 0, 0, 0.25);
+    }
+
+    .pill.good {
+      color: rgba(102, 255, 153, 0.95);
+      border-color: rgba(102, 255, 153, 0.35);
+      background: rgba(102, 255, 153, 0.08);
+    }
+
+    .pill.bad {
+      color: rgba(255, 102, 102, 0.95);
+      border-color: rgba(255, 102, 102, 0.35);
+      background: rgba(255, 102, 102, 0.08);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 12px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 520px;
+      resize: vertical;
+      background: rgba(0, 0, 0, 0.25);
+      color: rgba(255, 255, 255, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.35;
+      box-sizing: border-box;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 6px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      vertical-align: top;
+      word-break: break-word;
+    }
+
+    th {
+      color: rgba(255, 255, 255, 0.75);
+      font-weight: 650;
+    }
+
+    .subtle {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    @media (max-width: 980px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      textarea {
+        min-height: 420px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Level Lab</h1>
+    <p>
+      Load a <span class="mono">public/levels/*.json</span> file, generate a preview world, and inspect objective placements and room type distribution.
+      Edit JSON directly, then click <strong>Generate Preview</strong> to re-run placement.
+    </p>
+
+    <div class="panel">
+      <label for="levelSelect">Level</label>
+      <select id="levelSelect"></select>
+      <button id="loadBtn">Load</button>
+      <button id="previewBtn" class="primary">Generate Preview</button>
+      <button id="copyBtn">Copy JSON</button>
+      <button id="downloadBtn">Download JSON</button>
+      <span id="statusPill" class="pill">Idle</span>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Level JSON</h2>
+        <div class="subtle">Source: <span id="sourceLabel" class="mono">—</span></div>
+        <textarea id="levelJson" spellcheck="false"></textarea>
+      </div>
+
+      <div class="card">
+        <h2>Preview</h2>
+        <div class="subtle">
+          Spawn: <span id="spawnLabel" class="mono">—</span> · Exit: <span id="exitLabel" class="mono">—</span> ·
+          Targets: <span id="targetCount" class="mono">—</span>
+        </div>
+
+        <h2 style="margin-top: 12px;">Mission Targets</h2>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 20%;">Template</th>
+              <th style="width: 28%;">Interactable</th>
+              <th style="width: 18%;">Grid</th>
+              <th>Mission</th>
+            </tr>
+          </thead>
+          <tbody id="targetsBody"></tbody>
+        </table>
+
+        <h2 style="margin-top: 14px;">Room Type Distribution</h2>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 48%;">Room</th>
+              <th style="width: 20%;">Tiles</th>
+              <th style="width: 20%;">Share</th>
+              <th>ID</th>
+            </tr>
+          </thead>
+          <tbody id="roomsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/ui/toolNav.js"></script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    import { CONFIG } from '/src/core/config.js';
+    import { EventBus } from '/src/core/eventBus.js';
+    import { WorldState } from '/src/world/worldState.js';
+    import { ROOM_CONFIGS } from '/src/world/tileTypes.js';
+    import { InteractableSystem } from '/src/core/interactions/interactableSystem.js';
+    import { MissionDirector } from '/src/core/missions/missionDirector.js';
+
+    const ui = {
+      levelSelect: document.getElementById('levelSelect'),
+      loadBtn: document.getElementById('loadBtn'),
+      previewBtn: document.getElementById('previewBtn'),
+      copyBtn: document.getElementById('copyBtn'),
+      downloadBtn: document.getElementById('downloadBtn'),
+      statusPill: document.getElementById('statusPill'),
+      sourceLabel: document.getElementById('sourceLabel'),
+      levelJson: document.getElementById('levelJson'),
+      spawnLabel: document.getElementById('spawnLabel'),
+      exitLabel: document.getElementById('exitLabel'),
+      targetCount: document.getElementById('targetCount'),
+      targetsBody: document.getElementById('targetsBody'),
+      roomsBody: document.getElementById('roomsBody')
+    };
+
+    function setStatus(text, kind = '') {
+      ui.statusPill.textContent = String(text || '');
+      ui.statusPill.classList.remove('good', 'bad');
+      if (kind === 'good') ui.statusPill.classList.add('good');
+      if (kind === 'bad') ui.statusPill.classList.add('bad');
+    }
+
+    async function fetchJson(url) {
+      const res = await fetch(url, { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      return res.json();
+    }
+
+    function safeParseJson(text) {
+      try {
+        return { ok: true, value: JSON.parse(String(text || '')) };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    }
+
+    function renderTargets(targets) {
+      ui.targetsBody.innerHTML = '';
+      const list = Array.isArray(targets) ? targets : [];
+      ui.targetCount.textContent = String(list.length);
+
+      for (const t of list) {
+        const tr = document.createElement('tr');
+        const template = String(t?.template || '');
+        const id = String(t?.id || '');
+        const gp = t?.gridPos;
+        const gridStr = gp && Number.isFinite(gp.x) && Number.isFinite(gp.y) ? `${gp.x},${gp.y}` : '—';
+        const missionId = String(t?.missionId || '');
+
+        tr.innerHTML = `
+          <td>${template || '—'}</td>
+          <td class="mono">${id || '—'}</td>
+          <td class="mono">${gridStr}</td>
+          <td class="mono">${missionId || '—'}</td>
+        `;
+        ui.targetsBody.appendChild(tr);
+      }
+    }
+
+    function roomName(type) {
+      return ROOM_CONFIGS?.[type]?.name || `Room ${type}`;
+    }
+
+    function renderRoomDistribution(worldState) {
+      ui.roomsBody.innerHTML = '';
+      const map = worldState?.getRoomMap ? worldState.getRoomMap() : null;
+      if (!Array.isArray(map) || map.length === 0) return;
+
+      const height = map.length;
+      const width = map[0]?.length || 0;
+      const total = width * height;
+
+      const counts = new Map();
+      for (let y = 0; y < height; y++) {
+        const row = map[y];
+        for (let x = 0; x < width; x++) {
+          const t = row?.[x];
+          if (!Number.isFinite(t)) continue;
+          counts.set(t, (counts.get(t) || 0) + 1);
+        }
+      }
+
+      const rows = Array.from(counts.entries())
+        .map(([type, tiles]) => ({ type, tiles }))
+        .sort((a, b) => b.tiles - a.tiles);
+
+      for (const r of rows) {
+        const share = total > 0 ? `${Math.round((r.tiles / total) * 100)}%` : '—';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${roomName(r.type)}</td>
+          <td class="mono">${r.tiles}</td>
+          <td class="mono">${share}</td>
+          <td class="mono">${r.type}</td>
+        `;
+        ui.roomsBody.appendChild(tr);
+      }
+    }
+
+    async function loadManifest() {
+      const manifest = await fetchJson('/levels/manifest.json');
+      const levels = Array.isArray(manifest?.levels) ? manifest.levels : [];
+      ui.levelSelect.innerHTML = '';
+      for (const file of levels) {
+        const opt = document.createElement('option');
+        opt.value = String(file || '');
+        opt.textContent = String(file || '');
+        ui.levelSelect.appendChild(opt);
+      }
+      return levels;
+    }
+
+    async function loadSelectedLevel() {
+      const file = String(ui.levelSelect.value || '').trim();
+      if (!file) return null;
+      const url = `/levels/${file}`;
+      const level = await fetchJson(url);
+      ui.sourceLabel.textContent = url;
+      ui.levelJson.value = JSON.stringify(level, null, 2);
+      setStatus('Loaded', 'good');
+      return { file, url, level };
+    }
+
+    function copyText(text) {
+      const value = String(text || '');
+      if (navigator.clipboard?.writeText) {
+        return navigator.clipboard.writeText(value);
+      }
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      return Promise.resolve();
+    }
+
+    function downloadJson(filename, jsonText) {
+      const blob = new Blob([jsonText], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function generatePreviewFromJson(levelConfig) {
+      const bus = new EventBus();
+      const scene = new THREE.Scene();
+      const world = new WorldState();
+      world.initialize(levelConfig);
+
+      const spawn = world.getSpawnPoint?.() || null;
+      const exit = world.getExitPoint?.() || null;
+      ui.spawnLabel.textContent = spawn ? `${spawn.x},${spawn.y}` : '—';
+      ui.exitLabel.textContent = exit ? `${exit.x},${exit.y}` : '—';
+
+      const interactables = new InteractableSystem({
+        eventBus: bus,
+        scene,
+        camera: null,
+        input: null,
+        worldState: world
+      });
+
+      const missions = new MissionDirector({
+        eventBus: bus,
+        worldState: world,
+        scene,
+        gameState: null,
+        exitPoint: null,
+        interactableSystem: interactables
+      });
+
+      missions.startLevel(levelConfig);
+      const state = missions.getAutopilotState?.() || null;
+      const targets = Array.isArray(state?.targets) ? state.targets : [];
+
+      renderTargets(targets);
+      renderRoomDistribution(world);
+
+      return { world, missions, targets };
+    }
+
+    ui.loadBtn.addEventListener('click', async () => {
+      try {
+        setStatus('Loading…');
+        await loadSelectedLevel();
+      } catch (err) {
+        console.error(err);
+        setStatus(String(err?.message || err), 'bad');
+      }
+    });
+
+    ui.previewBtn.addEventListener('click', async () => {
+      try {
+        const parsed = safeParseJson(ui.levelJson.value);
+        if (!parsed.ok) {
+          setStatus(`Invalid JSON: ${parsed.error}`, 'bad');
+          return;
+        }
+        setStatus('Generating…');
+        generatePreviewFromJson(parsed.value);
+        setStatus('Preview generated', 'good');
+      } catch (err) {
+        console.error(err);
+        setStatus(String(err?.message || err), 'bad');
+      }
+    });
+
+    ui.copyBtn.addEventListener('click', async () => {
+      try {
+        await copyText(ui.levelJson.value);
+        setStatus('Copied', 'good');
+      } catch (err) {
+        console.error(err);
+        setStatus('Copy failed', 'bad');
+      }
+    });
+
+    ui.downloadBtn.addEventListener('click', async () => {
+      const parsed = safeParseJson(ui.levelJson.value);
+      if (!parsed.ok) {
+        setStatus(`Invalid JSON: ${parsed.error}`, 'bad');
+        return;
+      }
+      const id = Number(parsed.value?.id) || 0;
+      const base = String(ui.levelSelect.value || 'level.json').replaceAll('/', '').trim() || 'level.json';
+      const name = id > 0 ? `l${id}-${base}` : base;
+      downloadJson(name, ui.levelJson.value);
+      setStatus('Downloaded', 'good');
+    });
+
+    async function boot() {
+      try {
+        void CONFIG;
+        setStatus('Loading manifest…');
+        const levels = await loadManifest();
+        if (levels.length > 0) {
+          ui.levelSelect.value = levels[levels.length - 1];
+          await loadSelectedLevel();
+        }
+        setStatus('Ready', 'good');
+      } catch (err) {
+        console.error(err);
+        setStatus(String(err?.message || err), 'bad');
+      }
+    }
+
+    boot();
+  </script>
+</body>
+</html>
+
