@@ -371,6 +371,15 @@ export class MissionDirector {
       return;
     }
 
+    if (template === 'holdToScan') {
+      mission.state.seconds = 0;
+      mission.state.scanned = 0;
+      mission.state.required = 0;
+      mission.state.targets = [];
+      mission.state.completed = true;
+      return;
+    }
+
     if (template === 'deliverItemToTerminal') {
       mission.state.itemId = String(mission.state.itemId || mission.params?.itemId || 'package').trim() || 'package';
       mission.state.collected = 0;
@@ -390,6 +399,20 @@ export class MissionDirector {
       mission.state.index = 0;
       mission.state.resetOnWrong = mission.state.resetOnWrong !== false;
       mission.state.switches = [];
+      return;
+    }
+
+    if (template === 'switchSequenceWithClues') {
+      mission.state.total = 0;
+      mission.state.sequence = [];
+      mission.state.sequenceSlots = [];
+      mission.state.index = 0;
+      mission.state.resetOnWrong = mission.state.resetOnWrong !== false;
+      mission.state.switches = [];
+      mission.state.clues = [];
+      mission.state.cluesTotal = 0;
+      mission.state.cluesCollected = 0;
+      mission.state.sequenceKnown = true;
       return;
     }
 
@@ -560,6 +583,11 @@ export class MissionDirector {
         const required = clamp(Math.round(mission.params.count ?? 3), 1, 24);
         mission.state = { photos: 0, required, targets: [] };
         this.spawnPhotographEvidence(mission, { avoid: [spawn, exit] });
+      } else if (template === 'holdToScan') {
+        const count = clamp(Math.round(mission.params.count ?? 1), 1, 24);
+        const seconds = clamp(Math.round(mission.params.seconds ?? mission.params.holdSeconds ?? 5), 2, 120);
+        mission.state = { required: count, scanned: 0, seconds, targets: [], completed: false };
+        this.spawnHoldToScan(mission, { avoid: [spawn, exit] });
       } else if (template === 'deliverItemToTerminal') {
         const total = clamp(Math.round(mission.params.count ?? 3), 1, 24);
         const required = clamp(Math.round(mission.params.required ?? total), 1, total);
@@ -584,6 +612,21 @@ export class MissionDirector {
           switches: []
         };
         this.spawnSwitchSequence(mission, { avoid: [spawn, exit] });
+      } else if (template === 'switchSequenceWithClues') {
+        const switches = clamp(Math.round(mission.params.switches ?? mission.params.count ?? 3), 2, 10);
+        mission.state = {
+          total: switches,
+          sequence: [],
+          sequenceSlots: [],
+          index: 0,
+          resetOnWrong: mission.params.resetOnWrong !== false,
+          switches: [],
+          clues: [],
+          cluesTotal: 0,
+          cluesCollected: 0,
+          sequenceKnown: false
+        };
+        this.spawnSwitchSequenceWithClues(mission, { avoid: [spawn, exit] });
       } else if (template === 'hideForSeconds') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 10), 3, 600);
         mission.state = { seconds, hiddenForSec: 0, completed: false };
@@ -2059,6 +2102,92 @@ export class MissionDirector {
     }
   }
 
+  spawnHoldToScan(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const roomTypes = Array.isArray(mission.params.roomTypesTargets)
+      ? mission.params.roomTypesTargets
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const desired = clamp(Math.round(mission.state.required ?? mission.params.count ?? 1), 1, 24);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+
+    const tiles = pickDistinctRoomTiles(ws, want, {
+      allowedRoomTypes: roomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, want <= 0 ? 'mission object budget exhausted' : 'no valid scan tiles');
+      return;
+    }
+
+    const seconds = clamp(Math.round(mission.state.seconds ?? mission.params.seconds ?? mission.params.holdSeconds ?? 5), 2, 120);
+    const maxDistance = clamp(toFinite(mission.params.maxDistance, 3.6) ?? 3.6, 1.5, 10);
+    const aimMinDotParam = toFinite(mission.params.aimMinDot, null);
+    const aimAngleDeg = clamp(toFinite(mission.params.aimAngleDeg, 14) ?? 14, 5, 60);
+    const aimMinDot = Number.isFinite(aimMinDotParam)
+      ? clamp(aimMinDotParam, 0.2, 0.9999)
+      : Math.cos((aimAngleDeg * Math.PI) / 180);
+    const aimOffsetY = clamp(toFinite(mission.params.aimOffsetY, 0.9) ?? 0.9, 0, 2.5);
+
+    mission.state.seconds = seconds;
+    mission.state.required = tiles.length;
+    mission.state.scanned = 0;
+    mission.state.completed = false;
+    mission.state.targets = [];
+
+    for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = tiles[i];
+      const object3d = createPhotoTargetObject();
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const interactableId = `scan:${mission.id}:${i + 1}`;
+      const label = 'Scan Target';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'scanTarget',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          maxDistance,
+          prompt: () => `Hold aim to scan (${seconds}s)`,
+          interact: () => ({ ok: true, message: 'Hold aim to scan' }),
+          meta: {
+            missionId: mission.id,
+            template: mission.template,
+            index: i,
+            aimMinDot,
+            aimOffsetY,
+            seconds,
+            maxDistance
+          }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.targets.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, heldForSec: 0, completed: false });
+    }
+
+    mission.state.required = mission.state.targets.length;
+    if ((mission.state.required || 0) <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+    }
+  }
+
   spawnDeliverItemToTerminal(mission, options = {}) {
     const ws = this.worldState;
     const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
@@ -2315,6 +2444,90 @@ export class MissionDirector {
     mission.state.index = 0;
   }
 
+  spawnSwitchSequenceWithClues(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    // Reuse the switch spawner (creates `switches`, `sequenceSlots`, `sequence`).
+    this.spawnSwitchSequence(mission, options);
+
+    const seqSlots = Array.isArray(mission.state.sequenceSlots) ? mission.state.sequenceSlots : [];
+    if (seqSlots.length < 2) {
+      this.failOpenMission(mission, 'no valid sequence');
+      return;
+    }
+
+    const clueRoomTypes = Array.isArray(mission.params.roomTypesClues)
+      ? mission.params.roomTypesClues
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const switchTiles = Array.isArray(mission.state.switches)
+      ? mission.state.switches.map((s) => s?.gridPos).filter(Boolean)
+      : [];
+
+    const desiredClues = clamp(Math.round(mission.params.clues ?? mission.params.countClues ?? seqSlots.length), 2, seqSlots.length);
+    const maxClues = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desiredClues, this.objectBudgetRemaining))
+      : desiredClues;
+
+    const clueTiles = pickDistinctRoomTiles(ws, maxClues, {
+      allowedRoomTypes: clueRoomTypes,
+      minDistFrom: avoid.concat(switchTiles),
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+
+    const count = clueTiles.length;
+    mission.state.clues = [];
+    mission.state.cluesTotal = count;
+    mission.state.cluesCollected = 0;
+    mission.state.sequenceKnown = false;
+
+    if (count < 2) {
+      // Still solvable without clues; fail-open the clue gating.
+      mission.state.sequenceKnown = true;
+      return;
+    }
+
+    for (let i = 0; i < count; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = clueTiles[i];
+      const stepIndex = i;
+      const slot = seqSlots[stepIndex] || '?';
+      const object3d = createClueNoteObject(slot);
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const clueId = `seqClue:${mission.id}:${stepIndex + 1}`;
+      const label = `Read Sequence Note ${stepIndex + 1}`;
+      this.registeredIds.push(
+        this.interactables.register({
+          id: clueId,
+          kind: 'sequenceClue',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: `Note ${stepIndex + 1} found` }),
+          meta: { missionId: mission.id, template: mission.template, index: stepIndex, stepIndex, slot }
+        })
+      );
+      this.interactableMeta.set(clueId, { missionId: mission.id, template: mission.template, index: stepIndex, stepIndex, slot });
+      mission.state.clues.push({ id: clueId, gridPos: { x: pos.x, y: pos.y }, collected: false, stepIndex, slot });
+    }
+
+    mission.state.cluesTotal = mission.state.clues.length;
+    if (mission.state.cluesTotal < 2) {
+      mission.state.sequenceKnown = true;
+    }
+  }
+
   spawnEscort(mission, options = {}) {
     const ws = this.worldState;
     const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
@@ -2497,6 +2710,29 @@ export class MissionDirector {
         const text = list ? `Routing note: enable breakers ${list}.` : 'Routing note read.';
         if (payload?.actorKind === 'player') {
           this.eventBus?.emit?.(EVENTS.UI_TOAST, { text, seconds: 2.2 });
+        }
+      }
+    } else if (mission.template === 'switchSequenceWithClues') {
+      const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+      const clue = clues.find((c) => c && c.id === id);
+      if (clue && !clue.collected) {
+        clue.collected = true;
+      }
+      const collected = clues.filter((c) => c?.collected).length;
+      mission.state.cluesCollected = collected;
+      const total = Number(mission.state.cluesTotal) || clues.length || 0;
+      mission.state.cluesTotal = total;
+
+      if (payload?.actorKind === 'player' && clue?.slot) {
+        const step = Number.isFinite(clue.stepIndex) ? clue.stepIndex + 1 : null;
+        const stepLabel = Number.isFinite(step) ? `#${step}` : 'Note';
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `${stepLabel}: ${clue.slot}`, seconds: 1.5 });
+      }
+
+      if (total > 0 && collected >= total) {
+        mission.state.sequenceKnown = true;
+        if (payload?.actorKind === 'player') {
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All sequence notes found. Activate switches in order.', seconds: 2.1 });
         }
       }
     } else if (mission.template === 'codeLock') {
@@ -2723,7 +2959,7 @@ export class MissionDirector {
           this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Delivery complete.', seconds: 1.8 });
         }
       }
-    } else if (mission.template === 'switchSequence') {
+    } else if (mission.template === 'switchSequence' || mission.template === 'switchSequenceWithClues') {
       if (payload?.kind === 'sequenceSwitch') {
         const turnedOn = !!payload?.result?.state?.on;
         if (turnedOn && Array.isArray(mission.state.switches)) {
@@ -2737,7 +2973,22 @@ export class MissionDirector {
           const expectedSlot = idx >= 0 && idx < slots.length ? slots[idx] : null;
           const actualSlot = payload?.result?.state?.slot || sw?.slot || null;
 
-          if (expectedId && id === expectedId) {
+          const requiresClues = mission.template === 'switchSequenceWithClues';
+          const sequenceKnown = !requiresClues || !!mission.state.sequenceKnown;
+
+          if (!sequenceKnown) {
+            mission.state.index = 0;
+            for (const s of mission.state.switches) {
+              if (!s?.id) continue;
+              s.on = false;
+              const entry = this.interactables?.get?.(s.id) || null;
+              if (entry?.meta) entry.meta.on = false;
+              if (entry?.object3d) setPowerSwitchState(entry.object3d, false);
+            }
+            if (payload?.actorKind === 'player') {
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Find the sequence notes first.', seconds: 1.7 });
+            }
+          } else if (expectedId && id === expectedId) {
             mission.state.index = Math.min(seq.length, idx + 1);
             const nextIdx = mission.state.index;
             if (nextIdx >= seq.length && seq.length >= 2) {
@@ -3163,6 +3414,92 @@ export class MissionDirector {
 
     const playerGridPos = payload?.playerGridPos || payload?.playerGrid || null;
     if (playerGridPos && Number.isFinite(playerGridPos.x) && Number.isFinite(playerGridPos.y)) {
+      const ws = this.worldState;
+      const cam = this.interactables?.getCameraObject?.() || null;
+      const tileSize = CONFIG.TILE_SIZE || 1;
+      const camDir = new THREE.Vector3();
+      const targetWorld = new THREE.Vector3();
+      const toTarget = new THREE.Vector3();
+
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'holdToScan') continue;
+        if (mission.state.completed) continue;
+
+        const seconds = Number(mission.state.seconds) || 0;
+        if (seconds <= 0) {
+          mission.state.completed = true;
+          continue;
+        }
+
+        const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+        const required = Number(mission.state.required) || targets.length || 0;
+        mission.state.required = required;
+
+        const scanned = targets.filter((t) => t?.completed).length;
+        mission.state.scanned = Math.min(required, scanned);
+        if (required > 0 && scanned >= required) {
+          mission.state.completed = true;
+          continue;
+        }
+
+        const next = targets.find((t) => t && !t.completed && t.gridPos) || null;
+        if (!next || !next.gridPos) continue;
+
+        const entry = next.id ? (this.interactables?.get?.(next.id) || null) : null;
+        const aimMinDotRaw = Number(entry?.meta?.aimMinDot ?? mission.params?.aimMinDot);
+        const aimAngleDeg = clamp(toFinite(mission.params?.aimAngleDeg, 14) ?? 14, 5, 60);
+        const aimMinDot = Number.isFinite(aimMinDotRaw)
+          ? clamp(aimMinDotRaw, 0.2, 0.9999)
+          : Math.cos((aimAngleDeg * Math.PI) / 180);
+        const aimOffsetY = clamp(toFinite(entry?.meta?.aimOffsetY ?? mission.params?.aimOffsetY, 0.9) ?? 0.9, 0, 2.5);
+        const maxDistance = clamp(toFinite(entry?.meta?.maxDistance ?? mission.params?.maxDistance, 3.6) ?? 3.6, 1.5, 10);
+
+        const losOk = ws?.hasLineOfSight ? !!ws.hasLineOfSight(playerGridPos, next.gridPos) : true;
+        const distTiles = manhattan(playerGridPos, next.gridPos);
+        const distTilesOk = distTiles <= Math.ceil(maxDistance);
+
+        let aimedOk = false;
+        if (cam && typeof cam.getWorldDirection === 'function' && cam.position && losOk && distTilesOk) {
+          cam.getWorldDirection(camDir);
+          if (camDir.lengthSq() > 1e-8) camDir.normalize();
+
+          const targetWorldX = next.gridPos.x * tileSize + tileSize / 2;
+          const targetWorldZ = next.gridPos.y * tileSize + tileSize / 2;
+          targetWorld.set(targetWorldX, aimOffsetY, targetWorldZ);
+          toTarget.subVectors(targetWorld, cam.position);
+          if (toTarget.lengthSq() > 1e-8) toTarget.normalize();
+
+          const dot = camDir.dot(toTarget);
+          aimedOk = dot >= aimMinDot;
+        }
+
+        if (aimedOk) {
+          next.heldForSec = Math.min(seconds, (Number(next.heldForSec) || 0) + 1);
+        } else {
+          next.heldForSec = 0;
+        }
+
+        if ((Number(next.heldForSec) || 0) >= seconds) {
+          next.completed = true;
+          next.heldForSec = seconds;
+
+          if (entry) {
+            entry.enabled = false;
+            if (entry.object3d) entry.object3d.visible = false;
+          }
+
+          const done = targets.filter((t) => t?.completed).length;
+          mission.state.scanned = Math.min(required, done);
+          if (required > 0 && done >= required) {
+            mission.state.completed = true;
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All scans complete.', seconds: 1.8 });
+          } else {
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Scan complete (${done}/${required})`, seconds: 1.4 });
+          }
+        }
+      }
+
       for (const mission of this.missions.values()) {
         if (!mission) continue;
         if (mission.template !== 'escort') continue;
@@ -3259,10 +3596,16 @@ export class MissionDirector {
     if (mission.template === 'photographEvidence') {
       return (mission.state.photos || 0) >= (mission.state.required || 0);
     }
+    if (mission.template === 'holdToScan') {
+      if (mission.state.completed) return true;
+      const required = Number(mission.state.required) || 0;
+      if (required <= 0) return true;
+      return (mission.state.scanned || 0) >= required;
+    }
     if (mission.template === 'deliverItemToTerminal') {
       return !!mission.state.delivered;
     }
-    if (mission.template === 'switchSequence') {
+    if (mission.template === 'switchSequence' || mission.template === 'switchSequenceWithClues') {
       const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
       const idx = Number(mission.state.index) || 0;
       if (seq.length < 2) return true;
@@ -3425,6 +3768,18 @@ export class MissionDirector {
       if (mission.template === 'photographEvidence') {
         return `Photograph evidence (${mission.state.photos || 0}/${mission.state.required || 0})`;
       }
+      if (mission.template === 'holdToScan') {
+        if (mission.state.completed) return 'Scanning complete. Reach the exit.';
+        const required = Number(mission.state.required) || 0;
+        const scanned = Number(mission.state.scanned) || 0;
+        const seconds = Number(mission.state.seconds) || 0;
+        const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+        const next = targets.find((t) => t && !t.completed) || null;
+        const held = Number(next?.heldForSec) || 0;
+        const remaining = Math.max(0, seconds - held);
+        const suffix = seconds > 0 ? ` — hold ${Math.ceil(remaining)}s` : '';
+        return `Scan targets (${scanned}/${required})${suffix}`;
+      }
       if (mission.template === 'deliverItemToTerminal') {
         const required = Number(mission.state.required) || 0;
         const collected = Number(mission.state.collected) || 0;
@@ -3436,7 +3791,21 @@ export class MissionDirector {
         }
         return 'Delivery complete. Reach the exit.';
       }
-      if (mission.template === 'switchSequence') {
+      if (mission.template === 'switchSequenceWithClues') {
+        const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+        const total = Number(mission.state.cluesTotal) || clues.length || 0;
+        const collected = Number(mission.state.cluesCollected) || clues.filter((c) => c?.collected).length;
+        const ordered = clues
+          .slice()
+          .sort((a, b) => (Number(a?.stepIndex) || 0) - (Number(b?.stepIndex) || 0))
+          .map((c) => `${Number.isFinite(c?.stepIndex) ? c.stepIndex + 1 : '?'}=${c?.collected ? String(c?.slot || '?') : '?'}`)
+          .join(' ');
+
+        if (!mission.state.sequenceKnown) {
+          return total > 0 ? `Find sequence notes (${collected}/${total}) — ${ordered}` : 'Find sequence notes';
+        }
+      }
+      if (mission.template === 'switchSequence' || mission.template === 'switchSequenceWithClues') {
         const seqSlots = Array.isArray(mission.state.sequenceSlots) ? mission.state.sequenceSlots : [];
         const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
         const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
@@ -3613,6 +3982,25 @@ export class MissionDirector {
         targetsTotal: Array.isArray(mission.state.targets) ? mission.state.targets.length : 0
       };
     }
+    if (mission.template === 'holdToScan') {
+      const seconds = Number(mission.state.seconds) || 0;
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      const required = Number(mission.state.required) || targets.length || 0;
+      const scanned = targets.filter((t) => t?.completed).length;
+      const next = targets.find((t) => t && !t.completed) || null;
+      const heldForSec = Number(next?.heldForSec) || 0;
+      const remaining = Math.max(0, seconds - heldForSec);
+      return {
+        seconds,
+        required,
+        scanned,
+        heldForSec,
+        remaining,
+        nextTargetId: next?.id || null,
+        nextTargetGridPos: next?.gridPos || null,
+        completed: !!mission.state.completed
+      };
+    }
     if (mission.template === 'deliverItemToTerminal') {
       return {
         itemId: mission.state.itemId || null,
@@ -3624,17 +4012,24 @@ export class MissionDirector {
         terminalGridPos: mission.state.terminalGridPos || null
       };
     }
-    if (mission.template === 'switchSequence') {
+    if (mission.template === 'switchSequence' || mission.template === 'switchSequenceWithClues') {
       const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
       const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
       const slots = Array.isArray(mission.state.sequenceSlots) ? mission.state.sequenceSlots : [];
       const nextSlot = idx >= 0 && idx < slots.length ? slots[idx] : null;
-      return {
+      const out = {
         index: idx,
         total: seq.length,
         nextSlot,
         sequenceSlots: slots.slice()
       };
+      if (mission.template === 'switchSequenceWithClues') {
+        const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+        out.sequenceKnown = !!mission.state.sequenceKnown;
+        out.cluesCollected = Number(mission.state.cluesCollected) || clues.filter((c) => c?.collected).length;
+        out.cluesTotal = Number(mission.state.cluesTotal) || clues.length || 0;
+      }
+      return out;
     }
     if (mission.template === 'hideForSeconds') {
       const seconds = Number(mission.state.seconds) || 0;
@@ -3901,6 +4296,13 @@ export class MissionDirector {
       return next ? { id: next.id || null, gridPos: next.gridPos } : null;
     }
 
+    if (mission.template === 'holdToScan') {
+      if (mission.state.completed) return null;
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      const next = targets.find((t) => t && !t.completed && t.gridPos);
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+    }
+
     if (mission.template === 'deliverItemToTerminal') {
       if (mission.state.delivered) return null;
       const required = Number(mission.state.required) || 0;
@@ -3918,6 +4320,26 @@ export class MissionDirector {
         return { id: mission.state.terminalId, gridPos: mission.state.terminalGridPos };
       }
       return null;
+    }
+
+    if (mission.template === 'switchSequenceWithClues') {
+      if (Array.isArray(mission.state.clues) && !mission.state.sequenceKnown) {
+        const pending = mission.state.clues.filter((c) => c && !c.collected && c.gridPos);
+        pending.sort((a, b) => (Number(a?.stepIndex) || 0) - (Number(b?.stepIndex) || 0));
+        const nextClue = pending[0] || null;
+        if (nextClue) return { id: nextClue.id || null, gridPos: nextClue.gridPos };
+        mission.state.sequenceKnown = true;
+      }
+      const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+      const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
+      if (seq.length < 2 || idx >= seq.length) return null;
+      const nextId = seq[idx];
+      const sw = Array.isArray(mission.state.switches)
+        ? mission.state.switches.find((s) => s && s.id === nextId)
+        : null;
+      if (sw?.gridPos) return { id: nextId, gridPos: sw.gridPos };
+      const entry = this.interactables?.get?.(nextId) || null;
+      return entry?.gridPos ? { id: nextId, gridPos: entry.gridPos } : null;
     }
 
     if (mission.template === 'switchSequence') {
@@ -4087,6 +4509,14 @@ export class MissionDirector {
           if (!point?.gridPos) continue;
           targets.push({ collected: false, id: point.id || null, gridPos: point.gridPos, missionId: mission.id, template: mission.template });
         }
+      } else if (mission.template === 'holdToScan') {
+        if (mission.state.completed) continue;
+        const points = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+        for (const point of points) {
+          if (point?.completed) continue;
+          if (!point?.gridPos) continue;
+          targets.push({ collected: false, id: point.id || null, gridPos: point.gridPos, missionId: mission.id, template: mission.template });
+        }
       } else if (mission.template === 'deliverItemToTerminal') {
         if (mission.state.delivered) continue;
         const required = Number(mission.state.required) || 0;
@@ -4111,6 +4541,26 @@ export class MissionDirector {
           if (!sw || sw.on) continue;
           if (!sw.gridPos) continue;
           targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'switchSequenceWithClues') {
+        const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
+        const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
+        if (seq.length >= 2 && idx >= seq.length) continue;
+
+        if (!mission.state.sequenceKnown) {
+          const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+          for (const clue of clues) {
+            if (!clue || clue.collected) continue;
+            if (!clue.gridPos) continue;
+            targets.push({ collected: false, id: clue.id || null, gridPos: clue.gridPos, missionId: mission.id, template: mission.template });
+          }
+        } else {
+          const switches = Array.isArray(mission.state.switches) ? mission.state.switches : [];
+          for (const sw of switches) {
+            if (!sw || sw.on) continue;
+            if (!sw.gridPos) continue;
+            targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos, missionId: mission.id, template: mission.template });
+          }
         }
       } else if (mission.template === 'hideForSeconds') {
         if (mission.state.completed) continue;

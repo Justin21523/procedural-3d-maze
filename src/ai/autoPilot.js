@@ -210,6 +210,17 @@ export class AutoPilot {
       }
     }
 
+    if (objectiveTemplate === 'holdToScan') {
+      const nextGridPos = objective?.nextInteractGridPos || objective?.progress?.nextTargetGridPos || null;
+      if (nextGridPos && Number.isFinite(nextGridPos.x) && Number.isFinite(nextGridPos.y)) {
+        this.taskTargetType = 'mission';
+        this.taskRunner.setTasks([
+          new MoveToTask(nextGridPos, { threshold: 0 })
+        ]);
+        return;
+      }
+    }
+
     // Interactable objectives: go to the closest target and interact.
     const wantsInteractTargets =
       objectiveTemplate === 'findKeycard' ||
@@ -226,6 +237,7 @@ export class AutoPilot {
       objectiveTemplate === 'photographEvidence' ||
       objectiveTemplate === 'deliverItemToTerminal' ||
       objectiveTemplate === 'switchSequence' ||
+      objectiveTemplate === 'switchSequenceWithClues' ||
       objectiveTemplate === 'hideForSeconds' ||
       objectiveTemplate === 'escort';
 
@@ -595,6 +607,43 @@ export class AutoPilot {
           interact: false,
           fire: false
         };
+      }
+    }
+
+    if (objective?.template === 'holdToScan') {
+      const completed = !!objective?.progress?.completed;
+      const nextGridPos = objective?.nextInteractGridPos || objective?.progress?.nextTargetGridPos || null;
+      if (!completed && nextGridPos && Number.isFinite(nextGridPos.x) && Number.isFinite(nextGridPos.y)) {
+        const dist = Math.abs(nextGridPos.x - playerPos.x) + Math.abs(nextGridPos.y - playerPos.y);
+        if (dist <= 1) {
+          const cam = this.playerController?.camera || null;
+          const camObj = cam?.getCamera ? cam.getCamera() : null;
+          const playerWorld = camObj?.position || this.playerController?.position || null;
+          if (playerWorld) {
+            const tileSize = CONFIG.TILE_SIZE || 1;
+            const targetWorldX = nextGridPos.x * tileSize + tileSize / 2;
+            const targetWorldZ = nextGridPos.y * tileSize + tileSize / 2;
+            const aimOffsetYRaw = Number(objective?.params?.aimOffsetY);
+            const targetWorldY = Number.isFinite(aimOffsetYRaw) ? aimOffsetYRaw : 0.9;
+
+            const dx = targetWorldX - playerWorld.x;
+            const dy = targetWorldY - playerWorld.y;
+            const dz = targetWorldZ - playerWorld.z;
+
+            const aimYaw = Math.atan2(-dx, -dz);
+            const aimPitch = Math.atan2(dy, Math.hypot(dx, dz));
+
+            return {
+              move: { x: 0, y: 0 },
+              lookYaw: aimYaw,
+              lookPitch: aimPitch,
+              sprint: false,
+              block,
+              interact: false,
+              fire: false
+            };
+          }
+        }
       }
     }
 
