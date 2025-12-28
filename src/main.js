@@ -1040,16 +1040,29 @@ async function initGame() {
 	  const rebuildObstaclesButton = document.getElementById('rebuild-obstacles');
 
   // Advanced settings
-  const aiDifficultySlider = document.getElementById('ai-difficulty-slider');
-  const aiDifficultyValue = document.getElementById('ai-difficulty-value');
-  const monsterRangedToggle = document.getElementById('monster-ranged-toggle');
-  const monsterModelsToggle = document.getElementById('monster-models-toggle');
-  const respawnEnemiesButton = document.getElementById('respawn-enemies');
+	  const aiDifficultySlider = document.getElementById('ai-difficulty-slider');
+	  const aiDifficultyValue = document.getElementById('ai-difficulty-value');
+	  const monsterRangedToggle = document.getElementById('monster-ranged-toggle');
+	  const monsterModelsToggle = document.getElementById('monster-models-toggle');
+	  const respawnEnemiesButton = document.getElementById('respawn-enemies');
 
-  const weaponViewToggle = document.getElementById('weapon-view-toggle');
-  const crosshairToggle = document.getElementById('crosshair-toggle');
-  const recoilSlider = document.getElementById('weapon-recoil-slider');
-  const recoilValue = document.getElementById('weapon-recoil-value');
+	  const squadMaxShootersSlider = document.getElementById('squad-max-shooters');
+	  const squadMaxShootersValue = document.getElementById('squad-max-shooters-value');
+	  const squadFireGrantSlider = document.getElementById('squad-fire-grant');
+	  const squadFireGrantValue = document.getElementById('squad-fire-grant-value');
+	  const squadFlankHoldSlider = document.getElementById('squad-flank-hold');
+	  const squadFlankHoldValue = document.getElementById('squad-flank-hold-value');
+	  const squadMemorySlider = document.getElementById('squad-memory');
+	  const squadMemoryValue = document.getElementById('squad-memory-value');
+	  const squadNoiseShareSlider = document.getElementById('squad-noise-share');
+	  const squadNoiseShareValue = document.getElementById('squad-noise-share-value');
+	  const squadCoverRadiusSlider = document.getElementById('squad-cover-radius');
+	  const squadCoverRadiusValue = document.getElementById('squad-cover-radius-value');
+
+	  const weaponViewToggle = document.getElementById('weapon-view-toggle');
+	  const crosshairToggle = document.getElementById('crosshair-toggle');
+	  const recoilSlider = document.getElementById('weapon-recoil-slider');
+	  const recoilValue = document.getElementById('weapon-recoil-value');
 
 	  const poolFxToggle = document.getElementById('pool-fx-toggle');
 	  const hdrToggle = document.getElementById('hdr-toggle');
@@ -1283,20 +1296,68 @@ async function initGame() {
     });
   }
 
-  if (respawnEnemiesButton) {
-    respawnEnemiesButton.addEventListener('click', async () => {
-      if (typeof hooks.respawnEnemies === 'function') {
-        await hooks.respawnEnemies();
-      } else {
-        console.warn('⚠️ respawnEnemies hook not available');
-      }
-    });
-  }
+	  if (respawnEnemiesButton) {
+	    respawnEnemiesButton.addEventListener('click', async () => {
+	      if (typeof hooks.respawnEnemies === 'function') {
+	        await hooks.respawnEnemies();
+	      } else {
+	        console.warn('⚠️ respawnEnemies hook not available');
+	      }
+	    });
+	  }
 
-  // Weapon
-  if (weaponViewToggle) {
-    weaponViewToggle.addEventListener('change', (e) => {
-      const enabled = e.target.checked;
+	  if (squadMaxShootersSlider && squadMaxShootersValue) {
+	    squadMaxShootersSlider.addEventListener('input', (e) => {
+	      const value = Math.max(1, parseInt(e.target.value, 10) || 1);
+	      squadMaxShootersValue.textContent = String(value);
+	      CONFIG.AI_SQUAD_MAX_RANGED_SHOOTERS = value;
+	    });
+	  }
+
+	  if (squadFireGrantSlider && squadFireGrantValue) {
+	    squadFireGrantSlider.addEventListener('input', (e) => {
+	      const value = Math.max(0.2, parseFloat(e.target.value) || 0.9);
+	      squadFireGrantValue.textContent = value.toFixed(1);
+	      CONFIG.AI_SQUAD_FIRE_GRANT_SECONDS = value;
+	    });
+	  }
+
+	  if (squadFlankHoldSlider && squadFlankHoldValue) {
+	    squadFlankHoldSlider.addEventListener('input', (e) => {
+	      const value = Math.max(1, parseInt(e.target.value, 10) || 8);
+	      squadFlankHoldValue.textContent = String(value);
+	      CONFIG.AI_SQUAD_FLANK_SLOT_KEEP_SECONDS = value;
+	    });
+	  }
+
+	  if (squadMemorySlider && squadMemoryValue) {
+	    squadMemorySlider.addEventListener('input', (e) => {
+	      const value = Math.max(1, parseFloat(e.target.value) || 6.5);
+	      squadMemoryValue.textContent = value.toFixed(1);
+	      CONFIG.AI_SQUAD_MEMORY_SECONDS = value;
+	    });
+	  }
+
+	  if (squadNoiseShareSlider && squadNoiseShareValue) {
+	    squadNoiseShareSlider.addEventListener('input', (e) => {
+	      const value = Math.max(0, parseFloat(e.target.value) || 2.0);
+	      squadNoiseShareValue.textContent = value.toFixed(1);
+	      CONFIG.AI_SQUAD_NOISE_SHARE_SECONDS = value;
+	    });
+	  }
+
+	  if (squadCoverRadiusSlider && squadCoverRadiusValue) {
+	    squadCoverRadiusSlider.addEventListener('input', (e) => {
+	      const value = Math.max(1, parseInt(e.target.value, 10) || 9);
+	      squadCoverRadiusValue.textContent = String(value);
+	      CONFIG.AI_SQUAD_COVER_RADIUS = value;
+	    });
+	  }
+
+	  // Weapon
+	  if (weaponViewToggle) {
+	    weaponViewToggle.addEventListener('change', (e) => {
+	      const enabled = e.target.checked;
       CONFIG.PLAYER_WEAPON_VIEW_ENABLED = enabled;
       hooks.weaponView?.setEnabled?.(enabled);
     });
@@ -1362,10 +1423,46 @@ async function initGame() {
 	    propObstacleMarginSlider.value = String(value);
 	    propObstacleMarginValue.textContent = String(value);
 	  }
-	  autopilotToggle.checked = CONFIG.AUTOPILOT_ENABLED ?? false;
-	  const autopilotDelay = CONFIG.AUTOPILOT_DELAY ?? 2;
-	  autopilotDelaySlider.value = autopilotDelay;
-	  autopilotDelayValue.textContent = autopilotDelay.toFixed(1);
+		  autopilotToggle.checked = CONFIG.AUTOPILOT_ENABLED ?? false;
+		  const autopilotDelay = CONFIG.AUTOPILOT_DELAY ?? 2;
+		  autopilotDelaySlider.value = autopilotDelay;
+		  autopilotDelayValue.textContent = autopilotDelay.toFixed(1);
+
+		  if (squadMaxShootersSlider && squadMaxShootersValue) {
+		    const value = Math.max(1, Math.round(CONFIG.AI_SQUAD_MAX_RANGED_SHOOTERS ?? 2));
+		    squadMaxShootersSlider.value = String(value);
+		    squadMaxShootersValue.textContent = String(value);
+		  }
+
+		  if (squadFireGrantSlider && squadFireGrantValue) {
+		    const value = Number.isFinite(CONFIG.AI_SQUAD_FIRE_GRANT_SECONDS) ? CONFIG.AI_SQUAD_FIRE_GRANT_SECONDS : 0.9;
+		    squadFireGrantSlider.value = String(value);
+		    squadFireGrantValue.textContent = Number(value).toFixed(1);
+		  }
+
+		  if (squadFlankHoldSlider && squadFlankHoldValue) {
+		    const value = Math.max(1, Math.round(CONFIG.AI_SQUAD_FLANK_SLOT_KEEP_SECONDS ?? 8));
+		    squadFlankHoldSlider.value = String(value);
+		    squadFlankHoldValue.textContent = String(value);
+		  }
+
+		  if (squadMemorySlider && squadMemoryValue) {
+		    const value = Number.isFinite(CONFIG.AI_SQUAD_MEMORY_SECONDS) ? CONFIG.AI_SQUAD_MEMORY_SECONDS : 6.5;
+		    squadMemorySlider.value = String(value);
+		    squadMemoryValue.textContent = Number(value).toFixed(1);
+		  }
+
+		  if (squadNoiseShareSlider && squadNoiseShareValue) {
+		    const value = Number.isFinite(CONFIG.AI_SQUAD_NOISE_SHARE_SECONDS) ? CONFIG.AI_SQUAD_NOISE_SHARE_SECONDS : 2.0;
+		    squadNoiseShareSlider.value = String(value);
+		    squadNoiseShareValue.textContent = Number(value).toFixed(1);
+		  }
+
+		  if (squadCoverRadiusSlider && squadCoverRadiusValue) {
+		    const value = Math.max(1, Math.round(CONFIG.AI_SQUAD_COVER_RADIUS ?? 9));
+		    squadCoverRadiusSlider.value = String(value);
+		    squadCoverRadiusValue.textContent = String(value);
+		  }
 
   if (autopilotCombatToggle) {
     autopilotCombatToggle.checked = CONFIG.AUTOPILOT_COMBAT_ENABLED ?? true;
