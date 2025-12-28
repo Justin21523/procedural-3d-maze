@@ -148,6 +148,12 @@ export class MissionDirector {
     this.registeredIds = [];
     this.spawnedObjects = [];
 
+    // Content budget: cap mission interactables so content expansion doesn't tank FPS.
+    this.objectBudgetMax = Number.isFinite(CONFIG.MISSION_OBJECT_BUDGET_MAX)
+      ? Math.max(0, Math.round(CONFIG.MISSION_OBJECT_BUDGET_MAX))
+      : 80;
+    this.objectBudgetRemaining = Infinity;
+
     this.elapsedSec = 0;
     this.lastStatusKey = '';
     this.exitUnlocked = true;
@@ -201,6 +207,7 @@ export class MissionDirector {
     this.missions.clear();
     this.levelConfig = null;
     this.missionsConfig = null;
+    this.objectBudgetRemaining = Infinity;
     this.elapsedSec = 0;
     this.exitUnlocked = true;
     this.exitLockMessage = '';
@@ -217,10 +224,127 @@ export class MissionDirector {
     this.levelConfig = levelConfig || null;
     this.missionsConfig = normalizeMissionsConfig(levelConfig);
     this.elapsedSec = 0;
+    this.resetObjectBudget(levelConfig);
 
     this.spawnFromConfig(this.missionsConfig);
     this.bindEvents();
     this.syncStatus(true);
+  }
+
+  resetObjectBudget(levelConfig = null) {
+    const levelMax = levelConfig?.budgets?.missionObjectsMax;
+    const max = Number.isFinite(Number(levelMax))
+      ? Math.max(0, Math.round(Number(levelMax)))
+      : this.objectBudgetMax;
+    this.objectBudgetRemaining = max > 0 ? max : Infinity;
+  }
+
+  canSpawnMissionObject(count = 1) {
+    const n = Math.max(0, Math.round(Number(count) || 0));
+    if (n <= 0) return true;
+    if (!Number.isFinite(this.objectBudgetRemaining)) return true;
+    return this.objectBudgetRemaining >= n;
+  }
+
+  consumeMissionObjectBudget(count = 1) {
+    const n = Math.max(0, Math.round(Number(count) || 0));
+    if (n <= 0) return;
+    if (!Number.isFinite(this.objectBudgetRemaining)) return;
+    this.objectBudgetRemaining = Math.max(0, this.objectBudgetRemaining - n);
+  }
+
+  failOpenMission(mission, reason = '') {
+    const template = String(mission?.template || '').trim();
+    const id = String(mission?.id || '').trim();
+    const suffix = reason ? `: ${reason}` : '';
+    console.warn(`⚠️ Mission fallback (${template || 'unknown'}/${id || '?'})${suffix}`);
+
+    if (!mission?.state) mission.state = {};
+
+    if (template === 'findKeycard') {
+      mission.state.found = true;
+      return;
+    }
+
+    if (template === 'collectEvidence') {
+      mission.state.collected = 0;
+      mission.state.required = 0;
+      mission.state.total = 0;
+      mission.state.items = [];
+      return;
+    }
+
+    if (template === 'restorePower') {
+      mission.state.total = 0;
+      mission.state.switches = [];
+      if (!(mission.state.activated instanceof Set)) mission.state.activated = new Set();
+      return;
+    }
+
+    if (template === 'activateShrines') {
+      mission.state.total = 0;
+      mission.state.shrines = [];
+      if (!(mission.state.activated instanceof Set)) mission.state.activated = new Set();
+      return;
+    }
+
+    if (template === 'restorePowerFuses') {
+      mission.state.fusesRequired = 0;
+      mission.state.fusesCollected = 0;
+      mission.state.fuses = [];
+      mission.state.installed = true;
+      mission.state.powered = true;
+      return;
+    }
+
+    if (template === 'uploadEvidence') {
+      mission.state.collected = 0;
+      mission.state.required = 0;
+      mission.state.total = 0;
+      mission.state.items = [];
+      mission.state.uploaded = true;
+      return;
+    }
+
+    if (template === 'codeLock') {
+      mission.state.unlocked = true;
+      mission.state.codeReady = true;
+      mission.state.code = '';
+      mission.state.cluesTotal = 0;
+      mission.state.cluesCollected = 0;
+      mission.state.clues = [];
+      return;
+    }
+
+    if (template === 'lockedDoor') {
+      mission.state.unlocked = true;
+      return;
+    }
+
+    if (template === 'placeItemsAtAltars') {
+      mission.state.itemId = String(mission.state.itemId || mission.params?.itemId || 'relic').trim() || 'relic';
+      mission.state.itemsCollected = 0;
+      mission.state.itemsRequired = 0;
+      mission.state.altarsFilled = 0;
+      mission.state.altarsTotal = 0;
+      mission.state.items = [];
+      mission.state.altars = [];
+      return;
+    }
+
+    if (template === 'searchRoomTypeN') {
+      mission.state.searched = 0;
+      mission.state.required = 0;
+      mission.state.targets = [];
+      return;
+    }
+
+    if (template === 'photographEvidence') {
+      mission.state.photos = 0;
+      mission.state.required = 0;
+      mission.state.targets = [];
+      return;
+    }
   }
 
   bindEvents() {
@@ -471,7 +595,14 @@ export class MissionDirector {
       minDist: mission.params.minDistFromSpawn ?? 7,
       margin: 1
     });
-    if (tiles.length === 0) return;
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, 'no valid spawn tiles');
+      return;
+    }
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
 
     const pos = tiles[0];
     const object3d = createKeycardObject();
@@ -480,6 +611,7 @@ export class MissionDirector {
 
     this.scene.add(object3d);
     this.spawnedObjects.push(object3d);
+    this.consumeMissionObjectBudget(1);
 
     const interactableId = `keycard:${mission.id}`;
     const label = mission.params.label || 'Pick up Keycard';
@@ -505,17 +637,29 @@ export class MissionDirector {
     const allowedRoomTypes = Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null;
     const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
 
-    const tiles = pickDistinctTiles(ws, mission.state.total, {
+    const desired = clamp(Math.round(mission.state.total || 0), 0, 999);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+
+    const tiles = pickDistinctTiles(ws, want, {
       allowedRoomTypes,
       minDistFrom: avoid,
       minDist: mission.params.minDistFromSpawn ?? 6,
       margin: 1
     });
-    if (tiles.length === 0) return;
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, want <= 0 ? 'mission object budget exhausted' : 'no valid spawn tiles');
+      return;
+    }
+
+    mission.state.total = tiles.length;
+    mission.state.required = clamp(Math.round(mission.state.required ?? tiles.length), 1, tiles.length);
 
     mission.state.items = [];
 
     for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
       const pos = tiles[i];
       const object3d = createEvidenceObject();
       const world = gridToWorldCenter(pos);
@@ -524,6 +668,7 @@ export class MissionDirector {
 
       this.scene.add(object3d);
       this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
 
       const interactableId = `evidence:${mission.id}:${i + 1}`;
       const label = 'Collect Evidence';
@@ -542,6 +687,15 @@ export class MissionDirector {
       this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
       mission.state.items.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, collected: false });
     }
+
+    if (mission.state.items.length === 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    // Ensure required never exceeds what actually spawned.
+    mission.state.required = clamp(Math.round(mission.state.required ?? tiles.length), 1, mission.state.items.length);
+    mission.state.total = mission.state.items.length;
   }
 
   spawnPowerSwitches(mission, options = {}) {
@@ -549,17 +703,27 @@ export class MissionDirector {
     const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
     const allowedRoomTypes = Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null;
 
-    const tiles = pickDistinctTiles(ws, mission.state.total, {
+    const desired = clamp(Math.round(mission.state.total || 0), 0, 999);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+
+    const tiles = pickDistinctTiles(ws, want, {
       allowedRoomTypes,
       minDistFrom: avoid,
       minDist: mission.params.minDistFromSpawn ?? 6,
       margin: 1
     });
-    if (tiles.length === 0) return;
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, want <= 0 ? 'mission object budget exhausted' : 'no valid spawn tiles');
+      return;
+    }
 
+    mission.state.total = tiles.length;
     mission.state.switches = [];
 
     for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
       const pos = tiles[i];
       const object3d = createPowerSwitchObject(false);
       const world = gridToWorldCenter(pos);
@@ -567,6 +731,7 @@ export class MissionDirector {
 
       this.scene.add(object3d);
       this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
 
       const interactableId = `switch:${mission.id}:${i + 1}`;
       const label = 'Activate Power Switch';
@@ -592,6 +757,13 @@ export class MissionDirector {
       this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
       mission.state.switches.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, on: false });
     }
+
+    if (mission.state.switches.length === 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    mission.state.total = mission.state.switches.length;
   }
 
   spawnShrines(mission, options = {}) {
@@ -601,17 +773,27 @@ export class MissionDirector {
       ? mission.params.roomTypesShrines
       : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
 
-    const tiles = pickDistinctTiles(ws, mission.state.total, {
+    const desired = clamp(Math.round(mission.state.total || 0), 0, 999);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+
+    const tiles = pickDistinctTiles(ws, want, {
       allowedRoomTypes,
       minDistFrom: avoid,
       minDist: mission.params.minDistFromSpawn ?? 6,
       margin: 1
     });
-    if (tiles.length === 0) return;
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, want <= 0 ? 'mission object budget exhausted' : 'no valid spawn tiles');
+      return;
+    }
 
     mission.state.shrines = [];
+    mission.state.total = tiles.length;
 
     for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
       const pos = tiles[i];
       const object3d = createPowerSwitchObject(false);
       const world = gridToWorldCenter(pos);
@@ -619,6 +801,7 @@ export class MissionDirector {
 
       this.scene.add(object3d);
       this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
 
       const interactableId = `shrine:${mission.id}:${i + 1}`;
       const label = String(mission.params.label || 'Activate Shrine').trim() || 'Activate Shrine';
@@ -643,6 +826,13 @@ export class MissionDirector {
       this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
       mission.state.shrines.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, on: false });
     }
+
+    if (mission.state.shrines.length === 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    mission.state.total = mission.state.shrines.length;
   }
 
   spawnRestorePowerFuses(mission, options = {}) {
@@ -655,21 +845,61 @@ export class MissionDirector {
       ? mission.params.roomTypesPanel
       : (Array.isArray(mission.params.panelRoomTypes) ? mission.params.panelRoomTypes : null);
 
-    const fusesRequired = clamp(Math.round(mission.state.fusesRequired ?? mission.params.fuses ?? 3), 1, 12);
-    mission.state.fusesRequired = fusesRequired;
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
 
-    const fuseTiles = pickDistinctTiles(ws, fusesRequired, {
-      allowedRoomTypes: fuseRoomTypes,
+    const panelTiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: panelRoomTypes,
       minDistFrom: avoid,
       minDist: mission.params.minDistFromSpawn ?? 7,
       margin: 1
     });
-    if (fuseTiles.length === 0) return;
-    mission.state.fusesRequired = fuseTiles.length;
+    if (panelTiles.length === 0) {
+      this.failOpenMission(mission, 'no valid power panel tile');
+      return;
+    }
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const panelPos = panelTiles[0];
+    const panelObject = createFusePanelObject({ installed: false, powered: false });
+    const panelWorld = gridToWorldCenter(panelPos);
+    panelObject.position.set(panelWorld.x, 0, panelWorld.z);
+    this.scene.add(panelObject);
+    this.spawnedObjects.push(panelObject);
+    this.consumeMissionObjectBudget(1);
+
+    const panelId = `panel:${mission.id}`;
+    mission.state.panelId = panelId;
+    mission.state.panelGridPos = { x: panelPos.x, y: panelPos.y };
+
+    const desiredFuses = clamp(Math.round(mission.state.fusesRequired ?? mission.params.fuses ?? 3), 1, 12);
+    const fusesRequired = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desiredFuses, this.objectBudgetRemaining))
+      : desiredFuses;
+    mission.state.fusesRequired = fusesRequired;
+
+    const avoidForFuses = avoid.concat([panelPos]);
+    const fuseTiles = pickDistinctTiles(ws, fusesRequired, {
+      allowedRoomTypes: fuseRoomTypes,
+      minDistFrom: avoidForFuses,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (fusesRequired > 0 && fuseTiles.length === 0) {
+      mission.state.fusesRequired = 0;
+    } else {
+      mission.state.fusesRequired = fuseTiles.length;
+    }
 
     mission.state.fuses = [];
 
     for (let i = 0; i < fuseTiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
       const pos = fuseTiles[i];
       const object3d = createFuseObject();
       const world = gridToWorldCenter(pos);
@@ -677,6 +907,7 @@ export class MissionDirector {
 
       this.scene.add(object3d);
       this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
 
       const interactableId = `fuse:${mission.id}:${i + 1}`;
       const label = 'Pick up Fuse';
@@ -696,25 +927,7 @@ export class MissionDirector {
       mission.state.fuses.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, collected: false });
     }
 
-    const avoidForPanel = avoid.concat(fuseTiles);
-    const panelTiles = pickDistinctTiles(ws, 1, {
-      allowedRoomTypes: panelRoomTypes,
-      minDistFrom: avoidForPanel,
-      minDist: mission.params.minDistFromSpawn ?? 7,
-      margin: 1
-    });
-    if (panelTiles.length === 0) return;
-
-    const panelPos = panelTiles[0];
-    const panelObject = createFusePanelObject({ installed: false, powered: false });
-    const panelWorld = gridToWorldCenter(panelPos);
-    panelObject.position.set(panelWorld.x, 0, panelWorld.z);
-    this.scene.add(panelObject);
-    this.spawnedObjects.push(panelObject);
-
-    const panelId = `panel:${mission.id}`;
-    mission.state.panelId = panelId;
-    mission.state.panelGridPos = { x: panelPos.x, y: panelPos.y };
+    mission.state.fusesRequired = mission.state.fuses.length;
 
     const itemId = String(mission.params.itemId || 'fuse').trim() || 'fuse';
     const fuseCount = Math.max(0, Math.round(Number(mission.state.fusesRequired || 0)));
@@ -772,19 +985,54 @@ export class MissionDirector {
       ? mission.params.roomTypesTerminal
       : (Array.isArray(mission.params.terminalRoomTypes) ? mission.params.terminalRoomTypes : null);
 
-    const tiles = pickDistinctTiles(ws, mission.state.total, {
-      allowedRoomTypes: evidenceRoomTypes,
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const terminalTiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: terminalRoomTypes,
       minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (terminalTiles.length === 0) {
+      this.failOpenMission(mission, 'no valid terminal tile');
+      return;
+    }
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const terminalPos = terminalTiles[0];
+    const terminalObject = createTerminalObject({ uploaded: false });
+    const terminalWorld = gridToWorldCenter(terminalPos);
+    terminalObject.position.set(terminalWorld.x, 0, terminalWorld.z);
+    this.scene.add(terminalObject);
+    this.spawnedObjects.push(terminalObject);
+    this.consumeMissionObjectBudget(1);
+
+    const terminalId = `terminal:${mission.id}`;
+    mission.state.terminalId = terminalId;
+    mission.state.terminalGridPos = { x: terminalPos.x, y: terminalPos.y };
+
+    const desired = clamp(Math.round(mission.state.total || 0), 0, 999);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+
+    const tiles = pickDistinctTiles(ws, want, {
+      allowedRoomTypes: evidenceRoomTypes,
+      minDistFrom: avoid.concat([terminalPos]),
       minDist: mission.params.minDistFromSpawn ?? 6,
       margin: 1
     });
-    if (tiles.length === 0) return;
-    mission.state.total = tiles.length;
-    mission.state.required = clamp(Math.round(mission.state.required ?? mission.state.total), 1, mission.state.total);
 
     mission.state.items = [];
 
     for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
       const pos = tiles[i];
       const object3d = createEvidenceObject();
       const world = gridToWorldCenter(pos);
@@ -793,6 +1041,7 @@ export class MissionDirector {
 
       this.scene.add(object3d);
       this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
 
       const interactableId = `evidence:${mission.id}:${i + 1}`;
       const label = 'Collect Evidence';
@@ -812,25 +1061,12 @@ export class MissionDirector {
       mission.state.items.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, collected: false });
     }
 
-    const avoidForTerminal = avoid.concat(tiles);
-    const terminalTiles = pickDistinctTiles(ws, 1, {
-      allowedRoomTypes: terminalRoomTypes,
-      minDistFrom: avoidForTerminal,
-      minDist: mission.params.minDistFromSpawn ?? 7,
-      margin: 1
-    });
-    if (terminalTiles.length === 0) return;
-
-    const terminalPos = terminalTiles[0];
-    const terminalObject = createTerminalObject({ uploaded: false });
-    const terminalWorld = gridToWorldCenter(terminalPos);
-    terminalObject.position.set(terminalWorld.x, 0, terminalWorld.z);
-    this.scene.add(terminalObject);
-    this.spawnedObjects.push(terminalObject);
-
-    const terminalId = `terminal:${mission.id}`;
-    mission.state.terminalId = terminalId;
-    mission.state.terminalGridPos = { x: terminalPos.x, y: terminalPos.y };
+    mission.state.total = mission.state.items.length;
+    if (mission.state.total > 0) {
+      mission.state.required = clamp(Math.round(mission.state.required ?? mission.state.total), 1, mission.state.total);
+    } else {
+      mission.state.required = 0;
+    }
 
     const itemId = String(mission.params.itemId || 'evidence').trim() || 'evidence';
     const requiresPower = mission.params.requiresPower === true;
@@ -846,7 +1082,7 @@ export class MissionDirector {
         object3d: terminalObject,
         maxDistance: 2.6,
         requiresItem: requiresPower ? { itemId: powerItemId, count: 1, message: 'Power is off.' } : null,
-        consumeItem: { itemId, count: mission.state.required || 0 },
+        consumeItem: (mission.state.required || 0) > 0 ? { itemId, count: mission.state.required || 0 } : null,
         prompt: () => {
           if (mission.state.uploaded) return 'E: Terminal (Uploaded)';
           if (requiresPower) {
@@ -896,7 +1132,18 @@ export class MissionDirector {
     const requiresPower = mission.params.requiresPower === true;
     const powerItemId = String(mission.params.powerItemId || 'power_on').trim() || 'power_on';
 
-    let clueCount = clamp(Math.round(mission.state.cluesTotal ?? 3), 2, 6);
+    if (!this.canSpawnMissionObject(2)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const desiredClueCount = clamp(Math.round(mission.state.cluesTotal ?? 3), 2, 6);
+    const clueBudget = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, this.objectBudgetRemaining - 1) // reserve 1 for keypad
+      : desiredClueCount;
+    let clueCount = Number.isFinite(clueBudget)
+      ? clamp(desiredClueCount, 1, Math.max(1, Math.min(6, clueBudget)))
+      : desiredClueCount;
 
     const clueTiles = pickDistinctTiles(ws, clueCount, {
       allowedRoomTypes: clueRoomTypes,
@@ -904,7 +1151,10 @@ export class MissionDirector {
       minDist: mission.params.minDistFromSpawn ?? 7,
       margin: 1
     });
-    if (clueTiles.length === 0) return;
+    if (clueTiles.length === 0) {
+      this.failOpenMission(mission, 'no valid clue tiles');
+      return;
+    }
     clueCount = clueTiles.length;
     mission.state.cluesTotal = clueCount;
 
@@ -915,13 +1165,17 @@ export class MissionDirector {
       minDist: mission.params.minDistFromSpawn ?? 7,
       margin: 1
     });
-    if (keypadTiles.length === 0) return;
+    if (keypadTiles.length === 0) {
+      this.failOpenMission(mission, 'no valid keypad tile');
+      return;
+    }
 
     const digits = shuffleInPlace(Array.from({ length: 10 }, (_, i) => i)).slice(0, clueCount);
 
     mission.state.clues = [];
 
     for (let i = 0; i < clueTiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
       const pos = clueTiles[i];
       const slot = toSlotLabel(i);
       const digit = digits[i] ?? Math.floor(Math.random() * 10);
@@ -932,6 +1186,7 @@ export class MissionDirector {
 
       this.scene.add(object3d);
       this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
 
       const interactableId = `clue:${mission.id}:${slot}`;
       const label = 'Read Note';
@@ -951,12 +1206,24 @@ export class MissionDirector {
       mission.state.clues.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, slot, digit, collected: false });
     }
 
+    mission.state.cluesTotal = mission.state.clues.length;
+    if (mission.state.cluesTotal <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
     const keypadPos = keypadTiles[0];
     const keypadObject = createKeypadObject(false);
     const keypadWorld = gridToWorldCenter(keypadPos);
     keypadObject.position.set(keypadWorld.x, 0, keypadWorld.z);
     this.scene.add(keypadObject);
     this.spawnedObjects.push(keypadObject);
+    this.consumeMissionObjectBudget(1);
 
     const keypadId = `keypad:${mission.id}`;
     mission.state.keypadId = keypadId;
@@ -1014,6 +1281,10 @@ export class MissionDirector {
     const ws = this.worldState;
     const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
     if (!ws?.grid || !ws?.setObstacle) return;
+    if (!this.canSpawnMissionObject(2)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
 
     const minDist = mission.params.minDistFromSpawn ?? 7;
     const candidates = [];
@@ -1037,7 +1308,10 @@ export class MissionDirector {
     const doorPos = candidates.length > 0
       ? candidates[Math.floor(Math.random() * candidates.length)]
       : (fallbackDoor[0] || null);
-    if (!doorPos) return;
+    if (!doorPos) {
+      this.failOpenMission(mission, 'no valid door tile');
+      return;
+    }
 
     const findApproach = () => {
       const dirs = [
@@ -1059,6 +1333,52 @@ export class MissionDirector {
     // Block the tile until unlocked (affects pathing + movement).
     ws.setObstacle(doorPos.x, doorPos.y, true);
 
+    const keyItemId = String(mission.state.keyItemId || 'door_key').trim() || 'door_key';
+    const consumeKey = mission.params.consumeKey !== false;
+
+    const keyRoomTypes = Array.isArray(mission.params.roomTypesKey)
+      ? mission.params.roomTypesKey
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const spawnPos = ws.getSpawnPoint?.() || avoid[0] || null;
+    const reachable = new Set();
+    if (spawnPos && Number.isFinite(spawnPos.x) && Number.isFinite(spawnPos.y)) {
+      const q = [{ x: spawnPos.x, y: spawnPos.y }];
+      const dirs = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 }
+      ];
+      while (q.length > 0) {
+        const cur = q.pop();
+        const key = `${cur.x},${cur.y}`;
+        if (reachable.has(key)) continue;
+        if (!ws.isWalkable?.(cur.x, cur.y)) continue;
+        reachable.add(key);
+        for (const d of dirs) {
+          q.push({ x: cur.x + d.dx, y: cur.y + d.dy });
+        }
+      }
+    }
+
+    const keyTiles = pickDistinctTiles(ws, 12, {
+      allowedRoomTypes: keyRoomTypes,
+      minDistFrom: avoid.concat([doorPos]),
+      minDist,
+      margin: 1
+    });
+
+    const keyPos = (reachable.size > 0
+      ? keyTiles.find((t) => reachable.has(`${t.x},${t.y}`))
+      : null) || keyTiles[0] || null;
+
+    if (!keyPos) {
+      ws.setObstacle(doorPos.x, doorPos.y, false);
+      this.failOpenMission(mission, 'failed to place a key');
+      return;
+    }
+
     const doorObject = createLockedDoorObject({ unlocked: false });
     const doorWorld = gridToWorldCenter(doorPos);
     doorObject.position.set(doorWorld.x, 0, doorWorld.z);
@@ -1070,9 +1390,7 @@ export class MissionDirector {
 
     this.scene.add(doorObject);
     this.spawnedObjects.push(doorObject);
-
-    const keyItemId = String(mission.state.keyItemId || 'door_key').trim() || 'door_key';
-    const consumeKey = mission.params.consumeKey !== false;
+    this.consumeMissionObjectBudget(1);
 
     const doorId = `lockedDoor:${mission.id}`;
     mission.state.doorId = doorId;
@@ -1114,44 +1432,6 @@ export class MissionDirector {
     );
     this.interactableMeta.set(doorId, { missionId: mission.id, template: mission.template });
 
-    const keyRoomTypes = Array.isArray(mission.params.roomTypesKey)
-      ? mission.params.roomTypesKey
-      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
-
-    const spawnPos = ws.getSpawnPoint?.() || avoid[0] || null;
-    const reachable = new Set();
-    if (spawnPos && Number.isFinite(spawnPos.x) && Number.isFinite(spawnPos.y)) {
-      const q = [{ x: spawnPos.x, y: spawnPos.y }];
-      const dirs = [
-        { dx: 1, dy: 0 },
-        { dx: -1, dy: 0 },
-        { dx: 0, dy: 1 },
-        { dx: 0, dy: -1 }
-      ];
-      while (q.length > 0) {
-        const cur = q.pop();
-        const key = `${cur.x},${cur.y}`;
-        if (reachable.has(key)) continue;
-        if (!ws.isWalkable?.(cur.x, cur.y)) continue;
-        reachable.add(key);
-        for (const d of dirs) {
-          q.push({ x: cur.x + d.dx, y: cur.y + d.dy });
-        }
-      }
-    }
-
-    const keyTiles = pickDistinctTiles(ws, 12, {
-      allowedRoomTypes: keyRoomTypes,
-      minDistFrom: avoid.concat([doorPos]),
-      minDist,
-      margin: 1
-    });
-    if (keyTiles.length === 0) return;
-
-    const keyPos = (reachable.size > 0
-      ? keyTiles.find((t) => reachable.has(`${t.x},${t.y}`))
-      : null) || keyTiles[0];
-
     const keyObject = createKeycardObject();
     const keyWorld = gridToWorldCenter(keyPos);
     keyObject.position.set(keyWorld.x, 0, keyWorld.z);
@@ -1159,6 +1439,7 @@ export class MissionDirector {
 
     this.scene.add(keyObject);
     this.spawnedObjects.push(keyObject);
+    this.consumeMissionObjectBudget(1);
 
     const keyId = `key:${mission.id}`;
     mission.state.keyId = keyId;
@@ -1186,8 +1467,13 @@ export class MissionDirector {
     if (!ws) return;
 
     const itemId = String(mission.state.itemId || mission.params.itemId || 'relic').trim() || 'relic';
-    const itemsRequired = clamp(Math.round(mission.state.itemsRequired ?? 3), 1, 24);
-    const altarsTotal = clamp(Math.round(mission.state.altarsTotal ?? itemsRequired), 1, 24);
+    const desiredItems = clamp(Math.round(mission.state.itemsRequired ?? 3), 1, 24);
+    const desiredAltars = clamp(Math.round(mission.state.altarsTotal ?? desiredItems), 1, 24);
+    const desiredPairs = Math.min(desiredItems, desiredAltars);
+    const pairBudget = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.floor(this.objectBudgetRemaining / 2))
+      : desiredPairs;
+    const pairCount = Math.max(0, Math.min(desiredPairs, pairBudget));
     const minDist = mission.params.minDistFromSpawn ?? 7;
 
     const itemRoomTypes = Array.isArray(mission.params.roomTypesItems)
@@ -1197,15 +1483,46 @@ export class MissionDirector {
       ? mission.params.roomTypesAltars
       : (Array.isArray(mission.params.roomTypesTargets) ? mission.params.roomTypesTargets : null);
 
-    const itemTiles = pickDistinctRoomTiles(ws, itemsRequired, {
+    if (pairCount <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const itemTiles = pickDistinctRoomTiles(ws, pairCount, {
       allowedRoomTypes: itemRoomTypes,
       minDistFrom: avoid,
       minDist,
       margin: 1
     });
+    if (itemTiles.length === 0) {
+      this.failOpenMission(mission, 'no valid relic tiles');
+      return;
+    }
 
+    const avoidForAltars = avoid.concat(itemTiles);
+    const altarTiles = pickDistinctRoomTiles(ws, itemTiles.length, {
+      allowedRoomTypes: altarRoomTypes,
+      minDistFrom: avoidForAltars,
+      minDist,
+      margin: 1
+    });
+    if (altarTiles.length === 0) {
+      this.failOpenMission(mission, 'no valid altar tiles');
+      return;
+    }
+
+    const finalCount = Math.min(itemTiles.length, altarTiles.length);
+    if (finalCount <= 0 || !this.canSpawnMissionObject(finalCount * 2)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    mission.state.itemsRequired = finalCount;
+    mission.state.altarsTotal = finalCount;
     mission.state.items = [];
-    for (let i = 0; i < itemTiles.length; i++) {
+    mission.state.altars = [];
+
+    for (let i = 0; i < finalCount; i++) {
       const pos = itemTiles[i];
       const object3d = createEvidenceObject();
       const world = gridToWorldCenter(pos);
@@ -1214,6 +1531,7 @@ export class MissionDirector {
 
       this.scene.add(object3d);
       this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
 
       const interactableId = `relic:${mission.id}:${i + 1}`;
       const label = 'Collect Relic';
@@ -1233,16 +1551,7 @@ export class MissionDirector {
       mission.state.items.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, collected: false });
     }
 
-    const avoidForAltars = avoid.concat(itemTiles);
-    const altarTiles = pickDistinctRoomTiles(ws, altarsTotal, {
-      allowedRoomTypes: altarRoomTypes,
-      minDistFrom: avoidForAltars,
-      minDist,
-      margin: 1
-    });
-
-    mission.state.altars = [];
-    for (let i = 0; i < altarTiles.length; i++) {
+    for (let i = 0; i < finalCount; i++) {
       const pos = altarTiles[i];
       const object3d = createAltarObject({ filled: false });
       const world = gridToWorldCenter(pos);
@@ -1251,6 +1560,7 @@ export class MissionDirector {
 
       this.scene.add(object3d);
       this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
 
       const altarId = `altar:${mission.id}:${i + 1}`;
       const label = 'Place Relic';
@@ -1302,19 +1612,26 @@ export class MissionDirector {
       ? mission.params.roomTypesTargets
       : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
 
-    const required = clamp(Math.round(mission.state.required ?? mission.params.count ?? 3), 1, 24);
-    const tiles = pickDistinctRoomTiles(ws, required, {
+    const desired = clamp(Math.round(mission.state.required ?? mission.params.count ?? 3), 1, 24);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+    const tiles = pickDistinctRoomTiles(ws, want, {
       allowedRoomTypes: roomTypes,
       minDistFrom: avoid,
       minDist: mission.params.minDistFromSpawn ?? 7,
       margin: 1
     });
-    if (tiles.length === 0) return;
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, want <= 0 ? 'mission object budget exhausted' : 'no valid spawn tiles');
+      return;
+    }
 
     mission.state.required = tiles.length;
     mission.state.targets = [];
 
     for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
       const pos = tiles[i];
       const slot = toSlotLabel(i);
       const object3d = createClueNoteObject(slot);
@@ -1324,6 +1641,7 @@ export class MissionDirector {
 
       this.scene.add(object3d);
       this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
 
       const interactableId = `search:${mission.id}:${slot}`;
       const label = 'Inspect';
@@ -1342,6 +1660,11 @@ export class MissionDirector {
       this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i, slot });
       mission.state.targets.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, searched: false, slot });
     }
+
+    mission.state.required = mission.state.targets.length;
+    if ((mission.state.required || 0) <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+    }
   }
 
   spawnPhotographEvidence(mission, options = {}) {
@@ -1353,14 +1676,20 @@ export class MissionDirector {
       ? mission.params.roomTypesTargets
       : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
 
-    const required = clamp(Math.round(mission.state.required ?? mission.params.count ?? 3), 1, 24);
-    const tiles = pickDistinctRoomTiles(ws, required, {
+    const desired = clamp(Math.round(mission.state.required ?? mission.params.count ?? 3), 1, 24);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+    const tiles = pickDistinctRoomTiles(ws, want, {
       allowedRoomTypes: roomTypes,
       minDistFrom: avoid,
       minDist: mission.params.minDistFromSpawn ?? 7,
       margin: 1
     });
-    if (tiles.length === 0) return;
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, want <= 0 ? 'mission object budget exhausted' : 'no valid spawn tiles');
+      return;
+    }
 
     mission.state.required = tiles.length;
     mission.state.targets = [];
@@ -1368,6 +1697,7 @@ export class MissionDirector {
     const maxDistance = clamp(toFinite(mission.params.maxDistance, 3.2) ?? 3.2, 1.5, 8);
 
     for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
       const pos = tiles[i];
       const object3d = createPhotoTargetObject();
       const world = gridToWorldCenter(pos);
@@ -1376,6 +1706,7 @@ export class MissionDirector {
 
       this.scene.add(object3d);
       this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
 
       const interactableId = `photo:${mission.id}:${i + 1}`;
       const label = 'Photograph';
@@ -1394,6 +1725,11 @@ export class MissionDirector {
       );
       this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
       mission.state.targets.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, photographed: false });
+    }
+
+    mission.state.required = mission.state.targets.length;
+    if ((mission.state.required || 0) <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
     }
   }
 
