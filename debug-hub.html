@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Debug Hub</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: rgba(20, 24, 32, 0.92);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: rgba(255, 255, 255, 0.92);
+      --muted: rgba(255, 255, 255, 0.68);
+      --accent: #7aa2ff;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+
+    .wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 26px 16px 60px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    a.card {
+      display: block;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      text-decoration: none;
+      color: var(--text);
+      transition: background 0.12s ease, border-color 0.12s ease;
+    }
+
+    a.card:hover {
+      background: rgba(122, 162, 255, 0.08);
+      border-color: rgba(122, 162, 255, 0.35);
+    }
+
+    .title {
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .desc {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .note {
+      margin-top: 18px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px dashed rgba(255, 255, 255, 0.18);
+      color: var(--muted);
+      background: rgba(0, 0, 0, 0.25);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.88);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Debug Hub</h1>
+    <p>
+      Quick links for testing, tuning, and content iteration. Use the floating <strong>Tools</strong> nav to jump between pages and return to the game.
+    </p>
+
+    <div class="grid">
+      <a class="card" href="/">
+        <div class="title">Game</div>
+        <div class="desc">Main game loop (first-person).</div>
+      </a>
+      <a class="card" href="/enemy-lab.html">
+        <div class="title">Enemy Lab</div>
+        <div class="desc">Preview a model, tweak rotation/scale/offset, save meta.</div>
+      </a>
+      <a class="card" href="/test-ai.html">
+        <div class="title">AI Test</div>
+        <div class="desc">Sanity check: AI modules import and load without errors.</div>
+      </a>
+      <a class="card" href="/diagnostic.html">
+        <div class="title">Diagnostics</div>
+        <div class="desc">Boot checks and manual validation helpers.</div>
+      </a>
+      <a class="card" href="/test-enemy-meta.html">
+        <div class="title">Meta Preview</div>
+        <div class="desc">Generate a meta.json snippet for a model folder.</div>
+      </a>
+    </div>
+
+    <div class="note">
+      <div><strong>Tip:</strong> after adding models, run <code>npm run models:sync</code> to refresh <code>public/models/manifest.json</code> and meta stubs.</div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/ui/toolNav.js"></script>
+</body>
+</html>
+

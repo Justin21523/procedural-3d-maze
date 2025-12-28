@@ -1036,11 +1036,27 @@ async function initGame() {
   const recoilSlider = document.getElementById('weapon-recoil-slider');
   const recoilValue = document.getElementById('weapon-recoil-value');
 
-  const poolFxToggle = document.getElementById('pool-fx-toggle');
-  const hdrToggle = document.getElementById('hdr-toggle');
-  const crosshairEl = document.getElementById('crosshair');
+	  const poolFxToggle = document.getElementById('pool-fx-toggle');
+	  const hdrToggle = document.getElementById('hdr-toggle');
+	  const crosshairEl = document.getElementById('crosshair');
 
-	  let settingsVisible = false;
+	  const openDebugHubButton = document.getElementById('open-debug-hub');
+	  const openEnemyLabButton = document.getElementById('open-enemy-lab');
+	  const openAiTestButton = document.getElementById('open-ai-test');
+	  const openDiagnosticsButton = document.getElementById('open-diagnostics');
+
+		  let settingsVisible = false;
+
+	  function openToolPage(path) {
+	    const href = String(path || '').trim();
+	    if (!href) return;
+	    try {
+	      const w = window.open(href, '_blank', 'noopener,noreferrer');
+	      if (w) w.opener = null;
+	    } catch {
+	      // ignore
+	    }
+	  }
 
 	  function rebuildObstacles() {
 	    if (!worldState?.applyEnvironmentObstacles || !worldState?.applyPropObstacles) return;
@@ -1076,8 +1092,13 @@ async function initGame() {
     }
   });
 
-  // Click toggle button
-  toggleButton.addEventListener('click', toggleSettings);
+	  // Click toggle button
+	  toggleButton.addEventListener('click', toggleSettings);
+
+	  if (openDebugHubButton) openDebugHubButton.addEventListener('click', () => openToolPage('/debug-hub.html'));
+	  if (openEnemyLabButton) openEnemyLabButton.addEventListener('click', () => openToolPage('/enemy-lab.html'));
+	  if (openAiTestButton) openAiTestButton.addEventListener('click', () => openToolPage('/test-ai.html'));
+	  if (openDiagnosticsButton) openDiagnosticsButton.addEventListener('click', () => openToolPage('/diagnostic.html'));
 
   // Speed slider
   speedSlider.addEventListener('input', (e) => {
