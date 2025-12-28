@@ -64,13 +64,16 @@ async function initGame() {
   const levelJumpBtn = document.getElementById('level-jump-btn');
   const restartLevelBtn = document.getElementById('restart-level');
   const restartFirstBtn = document.getElementById('restart-first');
-  const levelDebugSourceEl = document.getElementById('level-debug-source');
-  const levelDebugObjectiveEl = document.getElementById('level-debug-objective');
-  const levelDebugNextEl = document.getElementById('level-debug-next');
-  const levelDebugExitEl = document.getElementById('level-debug-exit');
-  const levelDebugStealthEl = document.getElementById('level-debug-stealth');
-  const levelDebugInventoryEl = document.getElementById('level-debug-inventory');
-  const reloadLevelsBtn = document.getElementById('reload-levels');
+	  const levelDebugSourceEl = document.getElementById('level-debug-source');
+	  const levelDebugObjectiveEl = document.getElementById('level-debug-objective');
+	  const levelDebugNextEl = document.getElementById('level-debug-next');
+	  const levelDebugExitEl = document.getElementById('level-debug-exit');
+	  const levelDebugStealthEl = document.getElementById('level-debug-stealth');
+	  const levelDebugInventoryEl = document.getElementById('level-debug-inventory');
+	  const reloadLevelsBtn = document.getElementById('reload-levels');
+	  const hudNextInteractEl = document.getElementById('hud-next-interact');
+	  const hudExitUnlockedEl = document.getElementById('hud-exit-unlocked');
+	  const hudObjectiveTimerEl = document.getElementById('hud-objective-timer');
 
   // Debug: Check if elements exist
   console.log('DOM Elements check:');
@@ -183,34 +186,51 @@ async function initGame() {
     return parts.length > 0 ? parts[parts.length - 1] : s;
   }
 
-  function updateLevelDebugUI() {
-    if (levelDebugSourceEl) {
-      levelDebugSourceEl.textContent = formatLevelSource(levelConfig);
-    }
+	  function updateLevelDebugUI() {
+	    if (levelDebugSourceEl) {
+	      levelDebugSourceEl.textContent = formatLevelSource(levelConfig);
+	    }
 
-    const state = missionDirector?.getAutopilotState ? missionDirector.getAutopilotState() : null;
-    const objectiveText = state?.objective?.objectiveText || '';
-    const nextInteractId = state?.objective?.nextInteractId || '';
-    const exitUnlocked = state ? (state.exitUnlocked !== false) : (gameState?.exitUnlocked !== false);
+	    const state = missionDirector?.getAutopilotState ? missionDirector.getAutopilotState() : null;
+	    const objectiveText = state?.objective?.objectiveText || '';
+	    const nextInteractId = state?.objective?.nextInteractId || '';
+	    const exitUnlocked = state ? (state.exitUnlocked !== false) : (gameState?.exitUnlocked !== false);
+	    const remaining = Number(state?.objective?.progress?.remaining);
 
-    if (levelDebugObjectiveEl) {
-      levelDebugObjectiveEl.textContent = objectiveText || '—';
-    }
+	    if (levelDebugObjectiveEl) {
+	      levelDebugObjectiveEl.textContent = objectiveText || '—';
+	    }
     if (levelDebugNextEl) {
       levelDebugNextEl.textContent = nextInteractId ? String(nextInteractId) : '—';
     }
-    if (levelDebugExitEl) {
-      levelDebugExitEl.textContent = exitUnlocked ? 'Yes' : 'No';
-    }
+	    if (levelDebugExitEl) {
+	      levelDebugExitEl.textContent = exitUnlocked ? 'Yes' : 'No';
+	    }
 
-    let stealthText = '—';
-    if (state?.objective?.template === 'stealthNoise') {
-      const remaining = Number(state?.objective?.progress?.remaining);
-      stealthText = Number.isFinite(remaining) ? `${Math.ceil(remaining)}s` : '—';
-    }
-    if (levelDebugStealthEl) {
-      levelDebugStealthEl.textContent = stealthText;
-    }
+	    if (hudNextInteractEl) {
+	      hudNextInteractEl.textContent = nextInteractId ? String(nextInteractId) : '—';
+	    }
+	    if (hudExitUnlockedEl) {
+	      hudExitUnlockedEl.textContent = exitUnlocked ? 'Yes' : 'No';
+	      hudExitUnlockedEl.style.color = exitUnlocked ? '#66ff99' : '#ff6666';
+	    }
+	    if (hudObjectiveTimerEl) {
+	      if (Number.isFinite(remaining)) {
+	        hudObjectiveTimerEl.textContent = `${Math.ceil(Math.max(0, remaining))}s`;
+	        hudObjectiveTimerEl.style.color = remaining > 0 ? '#ffd700' : '#66ff99';
+	      } else {
+	        hudObjectiveTimerEl.textContent = '—';
+	        hudObjectiveTimerEl.style.color = '#cccccc';
+	      }
+	    }
+
+	    let stealthText = '—';
+	    if (state?.objective?.template === 'stealthNoise') {
+	      stealthText = Number.isFinite(remaining) ? `${Math.ceil(remaining)}s` : '—';
+	    }
+	    if (levelDebugStealthEl) {
+	      levelDebugStealthEl.textContent = stealthText;
+	    }
 
     if (levelDebugInventoryEl && gameState?.getInventorySnapshot) {
       const snap = gameState.getInventorySnapshot() || {};

@@ -1542,12 +1542,14 @@ export class MissionDirector {
       }
       if (mission.template === 'surviveTimer') {
         const remaining = Math.max(0, (mission.state.seconds || 0) - this.elapsedSec);
-        return remaining > 0 ? `Survive (${remaining}s)` : 'Survive (done)';
+        const remainingSec = Math.ceil(remaining);
+        return remaining > 0 ? `Survive (${remainingSec}s)` : 'Survive (done)';
       }
       if (mission.template === 'surviveNoDamage') {
         const start = Number.isFinite(mission.state.lastDamagedAtSec) ? mission.state.lastDamagedAtSec : 0;
         const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
-        return remaining > 0 ? `Avoid damage (${remaining}s)` : 'Avoid damage (done)';
+        const remainingSec = Math.ceil(remaining);
+        return remaining > 0 ? `Avoid damage (${remainingSec}s)` : 'Avoid damage (done)';
       }
       if (mission.template === 'enterRoomType') {
         const roomLabel = formatRoomTypeList(mission.state.roomTypes);
@@ -1589,7 +1591,8 @@ export class MissionDirector {
         if (mission.state.failed) return 'Stay quiet (failed)';
         const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
         const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
-        return remaining > 0 ? `Stay quiet (${remaining}s)` : 'Stay quiet (done)';
+        const remainingSec = Math.ceil(remaining);
+        return remaining > 0 ? `Stay quiet (${remainingSec}s)` : 'Stay quiet (done)';
       }
       return mission.id;
     };
