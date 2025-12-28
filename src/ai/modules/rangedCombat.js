@@ -52,10 +52,13 @@ export class RangedCombatModule {
     if (!this.playerRef) return;
     if (!(dt > 0)) return;
 
-    const playerPos =
-      this.playerRef?.position ||
-      (this.playerRef?.getPosition ? this.playerRef.getPosition() : null);
-    if (!playerPos || !Number.isFinite(playerPos.x) || !Number.isFinite(playerPos.z)) return;
+    const playerPos = this.playerRef?.getAIPerceivedWorldPosition
+      ? this.playerRef.getAIPerceivedWorldPosition()
+      : (this.playerRef?.position || (this.playerRef?.getPosition ? this.playerRef.getPosition() : null));
+    if (!playerPos || !Number.isFinite(playerPos.x) || !Number.isFinite(playerPos.z)) {
+      this.lastPlayerSample = null;
+      return;
+    }
 
     if (this.lastPlayerSample) {
       const vx = (playerPos.x - this.lastPlayerSample.x) / dt;
@@ -108,9 +111,9 @@ export class RangedCombatModule {
       }
     }
 
-    const playerPos =
-      this.playerRef?.position ||
-      (this.playerRef?.getPosition ? this.playerRef.getPosition() : null);
+    const playerPos = this.playerRef?.getAIPerceivedWorldPosition
+      ? this.playerRef.getAIPerceivedWorldPosition()
+      : (this.playerRef?.position || (this.playerRef?.getPosition ? this.playerRef.getPosition() : null));
     const monsterPos = this.monster?.getWorldPosition ? this.monster.getWorldPosition() : null;
     if (!playerPos || !monsterPos) return base;
 

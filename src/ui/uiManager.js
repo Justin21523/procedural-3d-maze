@@ -43,6 +43,12 @@ export class UIManager {
     this.lastFpsUpdate = 0;
     this.fps = 0;
 
+    // Noise meter (player noise feedback)
+    this.noiseFillElement = document.getElementById('noise-fill');
+    this.noiseLastAtMs = 0;
+    this.noiseLastStrength = 0;
+    this.noiseDecaySeconds = 1.35;
+
     // Game over overlay
     this.gameOverElement = document.getElementById('game-over');
     this.gameOverTitleElement = document.getElementById('game-over-title');
@@ -186,6 +192,17 @@ export class UIManager {
         }
       })
     );
+
+    this.unsubscribers.push(
+      this.eventBus.on(EVENTS.NOISE_EMITTED, (payload) => {
+        if (payload?.source !== 'player') return;
+        const strengthRaw = Number(payload?.strength);
+        if (!Number.isFinite(strengthRaw)) return;
+        const strength = Math.max(0, Math.min(1, strengthRaw));
+        this.noiseLastStrength = Math.max(this.noiseLastStrength || 0, strength);
+        this.noiseLastAtMs = performance.now();
+      })
+    );
   }
 
   setRefs({ player, worldState, gameState, gun, monsterManager, projectileManager } = {}) {
@@ -213,7 +230,26 @@ export class UIManager {
     this.updateFPS(now);
     this.updateCrosshairPulse(dt);
     this.updateInteractPrompt(dt);
+    this.updateNoiseMeter(dt, now);
     this.updateHud();
+  }
+
+  updateNoiseMeter(deltaTime, nowMs) {
+    if (!this.noiseFillElement) return;
+    const now = Number.isFinite(nowMs) ? nowMs : performance.now();
+    const lastAt = Number(this.noiseLastAtMs) || 0;
+    const lastStrength = Number(this.noiseLastStrength) || 0;
+
+    const ageSec = Math.max(0, (now - lastAt) / 1000);
+    const decay = Math.max(0.1, Number(this.noiseDecaySeconds) || 1.2);
+    const t = 1 - (ageSec / decay);
+    const level = Math.max(0, Math.min(1, lastStrength * t));
+    const pct = Math.round(level * 100);
+    this.noiseFillElement.style.width = `${pct}%`;
+    if (level <= 0.001 && ageSec > decay) {
+      this.noiseLastStrength = 0;
+    }
+    void deltaTime;
   }
 
   openKeypadInput({ keypadId, codeLength } = {}) {

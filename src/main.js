@@ -31,6 +31,7 @@ import { FeedbackSystem } from './core/feedbackSystem.js';
 import { InventorySystem } from './core/inventorySystem.js';
 import { UIManager } from './ui/uiManager.js';
 import { InteractableSystem } from './core/interactions/interactableSystem.js';
+import { HidingSpotSystem } from './core/interactions/hidingSpotSystem.js';
 import { MissionDirector } from './core/missions/missionDirector.js';
 import { WorldStateEffectsSystem } from './core/worldStateEffectsSystem.js';
 
@@ -94,6 +95,7 @@ async function initGame() {
   let levelConfig = levelDirector.getLevelConfig(currentLevelIndex);
   let missionDirector = null;
   let interactableSystem = null;
+  let hidingSpotSystem = null;
   let exitPoint = null;
   let autopilot = null;
   let pickupManager = null;
@@ -472,6 +474,16 @@ async function initGame() {
     interactableSystem
   });
   missionDirector.startLevel(levelConfig);
+
+  hidingSpotSystem = new HidingSpotSystem({
+    eventBus,
+    worldState,
+    scene: sceneManager.getScene(),
+    interactableSystem,
+    player
+  });
+  hidingSpotSystem.startLevel(levelConfig);
+
   worldStateEffectsSystem.startLevel(levelConfig);
   eventBus.on(EVENTS.MISSION_UPDATED, () => updateLevelDebugUI());
   eventBus.on(EVENTS.INVENTORY_UPDATED, () => updateLevelDebugUI());
@@ -675,6 +687,7 @@ async function initGame() {
 
       // Clear previous level objectives/interactables before rebuilding the scene
       missionDirector?.clear?.();
+      hidingSpotSystem?.clear?.();
       interactableSystem?.clear?.();
 
       // 更新血量上限
@@ -723,6 +736,17 @@ async function initGame() {
           eventBus
         });
         missionDirector.startLevel(levelConfig);
+      }
+
+      if (hidingSpotSystem) {
+        hidingSpotSystem.setRefs({
+          worldState,
+          scene: sceneManager.getScene(),
+          interactableSystem,
+          eventBus,
+          player
+        });
+        hidingSpotSystem.startLevel(levelConfig);
       }
       worldStateEffectsSystem?.startLevel?.(levelConfig);
       gameLoop.missionDirector = missionDirector;

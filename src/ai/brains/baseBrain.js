@@ -174,6 +174,9 @@ export class BaseMonsterBrain {
    */
   getPlayerGridPosition() {
     if (!this.playerRef) return null;
+    if (typeof this.playerRef.getAIPerceivedGridPosition === 'function') {
+      return this.playerRef.getAIPerceivedGridPosition();
+    }
     if (typeof this.playerRef.getGridPosition === 'function') {
       return this.playerRef.getGridPosition();
     }
@@ -212,6 +215,9 @@ export class BaseMonsterBrain {
    */
   getPlayerWorldPosition() {
     if (!this.playerRef) return null;
+    if (typeof this.playerRef.getAIPerceivedWorldPosition === 'function') {
+      return this.playerRef.getAIPerceivedWorldPosition();
+    }
     if (this.playerRef.position) {
       return {
         x: this.playerRef.position.x,

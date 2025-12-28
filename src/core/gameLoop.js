@@ -214,6 +214,7 @@ export class GameLoop {
       if (!this.player?.update) return;
       this.player.update(dt, !!ctx.autopilotActive, ctx.externalCommand || null);
       ctx.playerPos = this.player.getPosition ? this.player.getPosition() : null;
+      ctx.forcedInteractId = this.player.getForcedInteractId ? this.player.getForcedInteractId() : null;
     }, { order: 20 });
 
     systems.add('roomTracker', (dt, ctx) => {
