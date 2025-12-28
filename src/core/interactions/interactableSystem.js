@@ -347,9 +347,20 @@ export class InteractableSystem {
     const nowMs = options.nowMs ?? performance.now();
 
     if (isVec3(playerPos) && !this.hasLineOfSight(playerPos, entry)) {
+      const message = 'No line of sight.';
       if (actorKind === 'player') {
-        this.eventBus?.emit?.(EVENTS.INTERACTABLE_HOVER, { id: entry.id, text: 'Blocked by wall' });
+        this.eventBus?.emit?.(EVENTS.INTERACTABLE_HOVER, { id: entry.id, text: message });
       }
+      this.eventBus?.emit?.(EVENTS.INTERACT, {
+        actorKind,
+        id: entry.id,
+        kind: entry.kind,
+        gridPos: entry.gridPos || null,
+        ok: false,
+        message,
+        result: { ok: false, blocked: true, reason: 'no_los' },
+        nowMs
+      });
       return false;
     }
 
