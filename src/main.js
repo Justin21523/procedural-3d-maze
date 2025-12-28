@@ -1015,6 +1015,7 @@ async function initGame() {
 	  const missionCountValue = document.getElementById('mission-count-value');
 	  const lowPerfToggle = document.getElementById('low-perf-toggle');
 	  const obstacleMapToggle = document.getElementById('obstacle-map-toggle');
+	  const obstacleOverlayToggle = document.getElementById('obstacle-overlay-toggle');
 	  const propObstacleChanceSlider = document.getElementById('prop-obstacle-chance-slider');
 	  const propObstacleChanceValue = document.getElementById('prop-obstacle-chance-value');
 	  const propObstacleMarginSlider = document.getElementById('prop-obstacle-margin-slider');
@@ -1138,6 +1139,14 @@ async function initGame() {
 	      const enabled = e.target.checked;
 	      CONFIG.MINIMAP_SHOW_OBSTACLES = enabled;
 	      minimap?.setShowObstacles?.(enabled);
+	    });
+	  }
+
+	  if (obstacleOverlayToggle) {
+	    obstacleOverlayToggle.addEventListener('change', (e) => {
+	      const enabled = e.target.checked;
+	      CONFIG.WORLD_SHOW_OBSTACLE_OVERLAY = enabled;
+	      sceneManager?.setObstacleOverlayEnabled?.(enabled, worldState);
 	    });
 	  }
 
@@ -1300,6 +1309,10 @@ async function initGame() {
 	  if (obstacleMapToggle) {
 	    obstacleMapToggle.checked = CONFIG.MINIMAP_SHOW_OBSTACLES ?? false;
 	    minimap?.setShowObstacles?.(obstacleMapToggle.checked);
+	  }
+	  if (obstacleOverlayToggle) {
+	    obstacleOverlayToggle.checked = CONFIG.WORLD_SHOW_OBSTACLE_OVERLAY ?? false;
+	    sceneManager?.setObstacleOverlayEnabled?.(obstacleOverlayToggle.checked, worldState);
 	  }
 	  if (propObstacleChanceSlider && propObstacleChanceValue) {
 	    const value = Number.isFinite(CONFIG.PROP_OBSTACLE_ROOM_CHANCE) ? CONFIG.PROP_OBSTACLE_ROOM_CHANCE : 0.12;

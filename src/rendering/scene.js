@@ -16,6 +16,7 @@ import {
   createNormalMap
 } from './textures.js';
 import { createRoomPropsFromPlan } from './props.js';
+import { createObstacleOverlayMesh } from './obstacleOverlay.js';
 
 export class SceneManager {
   /**
@@ -101,6 +102,7 @@ export class SceneManager {
 
     // 方便存牆體做 raycast
     this.wallMeshes = [];
+    this.obstacleOverlay = null;
 
     // Resize handler
     window.addEventListener('resize', () => this.onWindowResize());
@@ -409,10 +411,52 @@ export class SceneManager {
 
     console.log(`Built world: ${this.worldMeshes.length} meshes created (including props)`);
 
+    // Debug overlay: visualize obstacleMap tiles in 3D (toggle in settings).
+    this.rebuildObstacleOverlay(worldState);
+
     // Async decorations (models/textures) that are placed per-room.
     this.spawnRoomModels(worldState, buildToken).catch((err) => {
       console.log('⚠️ Room model spawn failed', err?.message || err);
     });
+  }
+
+  rebuildObstacleOverlay(worldState) {
+    if (this.obstacleOverlay) {
+      const overlay = this.obstacleOverlay;
+      this.scene.remove(overlay);
+      const idx = this.worldMeshes.indexOf(overlay);
+      if (idx >= 0) this.worldMeshes.splice(idx, 1);
+      overlay.geometry?.dispose?.();
+      if (Array.isArray(overlay.material)) {
+        overlay.material.forEach((m) => m?.dispose?.());
+      } else {
+        overlay.material?.dispose?.();
+      }
+      this.obstacleOverlay = null;
+    }
+
+    if (!(CONFIG.WORLD_SHOW_OBSTACLE_OVERLAY ?? false)) return;
+    this.setObstacleOverlayEnabled(true, worldState);
+  }
+
+  setObstacleOverlayEnabled(enabled, worldState) {
+    const want = !!enabled;
+    if (!want) {
+      if (this.obstacleOverlay) {
+        this.obstacleOverlay.visible = false;
+      }
+      return;
+    }
+
+    if (!this.obstacleOverlay) {
+      const overlay = createObstacleOverlayMesh(worldState);
+      if (!overlay) return;
+      this.obstacleOverlay = overlay;
+      this.scene.add(overlay);
+      this.worldMeshes.push(overlay);
+    }
+
+    this.obstacleOverlay.visible = true;
   }
 
   async loadGltfPrototype(url) {
@@ -695,6 +739,8 @@ export class SceneManager {
       }
     });
     this.worldMeshes = [];
+    this.wallMeshes = [];
+    this.obstacleOverlay = null;
   }
 
   /**
