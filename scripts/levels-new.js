@@ -38,11 +38,16 @@ function parseArgs(argv) {
     slug: '',
     name: '',
     validate: true,
-    dryRun: false
+    dryRun: false,
+    help: false
   };
 
   for (let i = 0; i < argv.length; i++) {
     const cur = argv[i];
+    if (cur === '--help' || cur === '-h') {
+      args.help = true;
+      continue;
+    }
     if (cur === '--slug') {
       args.slug = String(argv[i + 1] || '');
       i += 1;
@@ -67,6 +72,22 @@ function parseArgs(argv) {
   }
 
   return args;
+}
+
+function printHelp() {
+  console.log('Usage: npm run levels:new -- <slug> [options]');
+  console.log('');
+  console.log('Creates a new level JSON using the template and updates public/levels/manifest.json.');
+  console.log('');
+  console.log('Options:');
+  console.log('  --slug <slug>        Filename slug (default: "new-level")');
+  console.log('  --name <name>        Human-readable level name');
+  console.log('  --no-validate        Skip running npm run levels:validate');
+  console.log('  --dry-run            Print what would be written');
+  console.log('  -h, --help           Show this help');
+  console.log('');
+  console.log('Example:');
+  console.log('  npm run levels:new -- stealth-lab --name "L12 - Stealth Lab"');
 }
 
 function loadManifest() {
@@ -206,6 +227,10 @@ function runLevelsValidate() {
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.help) {
+    printHelp();
+    return;
+  }
   const slug = slugify(args.slug) || 'new-level';
   const manifest = loadManifest();
   const maxId = findMaxLevelId(manifest);
@@ -255,4 +280,3 @@ function main() {
 }
 
 main();
-

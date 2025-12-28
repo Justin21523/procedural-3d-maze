@@ -94,6 +94,21 @@ npm run preview
 - 在本地預覽 `dist/` 的建置結果
 - 適合部署前檢查
 
+### 關卡資料（Levels JSON）
+
+本專案的關卡資料位於 `public/levels/*.json`，清單由 `public/levels/manifest.json` 管理。
+
+```bash
+# Validate all levels referenced by the manifest
+npm run levels:validate
+
+# Create a new level from the template (auto-updates the manifest, then validates)
+npm run levels:new -- <slug> --name "L12 - My Level"
+
+# Keep the manifest sorted / deduped (also reports missing/invalid files)
+npm run levels:sync
+```
+
 ---
 
 ## 開發工作流程（Development Workflow）
