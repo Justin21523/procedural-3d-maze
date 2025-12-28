@@ -136,6 +136,7 @@ export const CONFIG = {
   // Performance
   LOW_PERF_MODE: false,  // 勾選後關閉大部分裝飾/降低像素比提升 FPS
   MINIMAP_SHOW_OBSTACLES: false,         // debug overlay: show obstacleMap tiles on the minimap
+  WORLD_SHOW_OBSTACLE_OVERLAY: false,    // debug overlay: show obstacleMap tiles in 3D
   PROP_OBSTACLES_ENABLED: true,            // planned room props become collision obstacles
   PROP_OBSTACLE_ROOM_CHANCE: 0.12,        // per-floor-tile chance inside rooms
   PROP_OBSTACLE_MARGIN: 1,                // keep 1-tile margin around obstacles
