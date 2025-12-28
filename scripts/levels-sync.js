@@ -5,6 +5,13 @@ const rootDir = process.cwd();
 const levelsDir = path.resolve(rootDir, 'public/levels');
 const manifestPath = path.join(levelsDir, 'manifest.json');
 
+function printHelp() {
+  console.log('Usage: npm run levels:sync');
+  console.log('');
+  console.log('Dedupes + sorts public/levels/manifest.json by (level.id, filename).');
+  console.log('Also reports missing/invalid level JSON and exits non-zero if found.');
+}
+
 function isPlainObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
@@ -36,6 +43,11 @@ function loadManifest() {
 }
 
 function main() {
+  const argv = process.argv.slice(2);
+  if (argv.includes('--help') || argv.includes('-h')) {
+    printHelp();
+    return;
+  }
   const manifest = loadManifest();
   const seen = new Set();
   const entries = [];
@@ -93,4 +105,3 @@ function main() {
 }
 
 main();
-
