@@ -361,8 +361,25 @@ export class MissionDirector {
       return;
     }
 
+    if (template === 'placeKeysAtLocks') {
+      mission.state.required = 0;
+      mission.state.keysCollected = 0;
+      mission.state.locksFilled = 0;
+      mission.state.itemIds = [];
+      mission.state.keys = [];
+      mission.state.locks = [];
+      return;
+    }
+
     if (template === 'searchRoomTypeN') {
       mission.state.searched = 0;
+      mission.state.required = 0;
+      mission.state.targets = [];
+      return;
+    }
+
+    if (template === 'searchAndTagRoom') {
+      mission.state.tagged = 0;
       mission.state.required = 0;
       mission.state.targets = [];
       return;
@@ -408,6 +425,19 @@ export class MissionDirector {
       mission.state.delivered = true;
       mission.state.terminalId = null;
       mission.state.terminalGridPos = null;
+      return;
+    }
+
+    if (template === 'deliverFragile') {
+      mission.state.itemId = String(mission.state.itemId || mission.params?.itemId || 'fragile_package').trim() || 'fragile_package';
+      mission.state.carrying = false;
+      mission.state.delivered = true;
+      mission.state.packageId = null;
+      mission.state.packageGridPos = null;
+      mission.state.terminalId = null;
+      mission.state.terminalGridPos = null;
+      mission.state.breakOnGunfire = false;
+      mission.state.breakOnDamage = false;
       return;
     }
 
@@ -463,6 +493,24 @@ export class MissionDirector {
       mission.state.object3d = null;
       return;
     }
+
+    if (template === 'escortToSafeRoom') {
+      mission.state.started = true;
+      mission.state.completed = true;
+      mission.state.stage = 0;
+      mission.state.waitedSec = 0;
+      mission.state.checkpointWaitSeconds = 0;
+      mission.state.checkpointPlayerRadius = 0;
+      mission.state.escortId = null;
+      mission.state.escortGridPos = null;
+      mission.state.checkpointGridPos = null;
+      mission.state.safeGoalGridPos = null;
+      mission.state.goalGridPos = null;
+      mission.state.followDistance = 1;
+      mission.state.object3d = null;
+      mission.state.checkpointMarker = null;
+      return;
+    }
   }
 
   bindEvents() {
@@ -488,6 +536,9 @@ export class MissionDirector {
     );
     this.unsubs.push(
       bus.on(EVENTS.PLAYER_DAMAGED, (payload) => this.onPlayerDamaged(payload))
+    );
+    this.unsubs.push(
+      bus.on(EVENTS.WEAPON_FIRED, (payload) => this.onWeaponFired(payload))
     );
     this.unsubs.push(
       bus.on(EVENTS.NOISE_EMITTED, (payload) => this.onNoiseEmitted(payload))
@@ -592,6 +643,17 @@ export class MissionDirector {
           doorApproachGridPos: null
         };
         this.spawnLockedDoor(mission, { avoid: [spawn, exit] });
+      } else if (template === 'placeKeysAtLocks') {
+        const keys = clamp(Math.round(mission.params.keys ?? mission.params.items ?? mission.params.count ?? 3), 1, 24);
+        mission.state = {
+          required: keys,
+          keysCollected: 0,
+          locksFilled: 0,
+          itemIds: [],
+          keys: [],
+          locks: []
+        };
+        this.spawnPlaceKeysAtLocks(mission, { avoid: [spawn, exit] });
       } else if (template === 'placeItemsAtAltars') {
         const itemsRequired = clamp(Math.round(mission.params.items ?? mission.params.count ?? 3), 1, 24);
         const altarsTotal = clamp(Math.round(mission.params.altars ?? itemsRequired), 1, 24);
@@ -609,6 +671,10 @@ export class MissionDirector {
         const required = clamp(Math.round(mission.params.count ?? 3), 1, 24);
         mission.state = { searched: 0, required, targets: [] };
         this.spawnSearchRoomTypeN(mission, { avoid: [spawn, exit] });
+      } else if (template === 'searchAndTagRoom') {
+        const required = clamp(Math.round(mission.params.count ?? 3), 1, 24);
+        mission.state = { tagged: 0, required, targets: [] };
+        this.spawnSearchAndTagRoom(mission, { avoid: [spawn, exit] });
       } else if (template === 'photographEvidence') {
         const required = clamp(Math.round(mission.params.count ?? 3), 1, 24);
         mission.state = { photos: 0, required, targets: [] };
@@ -648,6 +714,19 @@ export class MissionDirector {
           terminalGridPos: null
         };
         this.spawnDeliverItemToTerminal(mission, { avoid: [spawn, exit] });
+      } else if (template === 'deliverFragile') {
+        mission.state = {
+          itemId: String(mission.params.itemId || 'fragile_package').trim() || 'fragile_package',
+          carrying: false,
+          delivered: false,
+          packageId: null,
+          packageGridPos: null,
+          terminalId: null,
+          terminalGridPos: null,
+          breakOnGunfire: mission.params.breakOnGunfire !== false,
+          breakOnDamage: mission.params.breakOnDamage !== false
+        };
+        this.spawnDeliverFragile(mission, { avoid: [spawn, exit] });
       } else if (template === 'switchSequence') {
         const switches = clamp(Math.round(mission.params.switches ?? mission.params.count ?? 3), 2, 10);
         mission.state = {
@@ -699,6 +778,24 @@ export class MissionDirector {
           object3d: null
         };
         this.spawnEscort(mission, { avoid: [spawn, exit] });
+      } else if (template === 'escortToSafeRoom') {
+        mission.state = {
+          started: false,
+          completed: false,
+          stage: 0,
+          waitedSec: 0,
+          checkpointWaitSeconds: clamp(Math.round(mission.params.checkpointWaitSeconds ?? mission.params.checkpointSeconds ?? mission.params.waitSeconds ?? 3), 0, 120),
+          checkpointPlayerRadius: clamp(Math.round(mission.params.checkpointPlayerRadius ?? mission.params.checkpointRadius ?? 2), 0, 10),
+          escortId: null,
+          escortGridPos: null,
+          checkpointGridPos: null,
+          safeGoalGridPos: null,
+          goalGridPos: null,
+          followDistance: clamp(Math.round(mission.params.followDistance ?? 1), 1, 4),
+          object3d: null,
+          checkpointMarker: null
+        };
+        this.spawnEscortToSafeRoom(mission, { avoid: [spawn, exit] });
       } else if (template === 'surviveTimer') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 60), 5, 3600);
         mission.state = { seconds, completed: false };
@@ -1875,6 +1972,171 @@ export class MissionDirector {
     this.interactableMeta.set(keyId, { missionId: mission.id, template: mission.template });
   }
 
+  spawnPlaceKeysAtLocks(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const desired = clamp(Math.round(mission.state.required ?? mission.params.keys ?? mission.params.items ?? mission.params.count ?? 3), 1, 24);
+    const pairBudget = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.floor(this.objectBudgetRemaining / 2))
+      : desired;
+    const pairCount = Math.max(0, Math.min(desired, pairBudget));
+    const minDist = mission.params.minDistFromSpawn ?? 7;
+
+    if (pairCount <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const keyRoomTypes = Array.isArray(mission.params.roomTypesKeys)
+      ? mission.params.roomTypesKeys
+      : (Array.isArray(mission.params.roomTypesItems)
+        ? mission.params.roomTypesItems
+        : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null));
+
+    const lockRoomTypes = Array.isArray(mission.params.roomTypesLocks)
+      ? mission.params.roomTypesLocks
+      : (Array.isArray(mission.params.roomTypesTargets)
+        ? mission.params.roomTypesTargets
+        : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null));
+
+    const keyTiles = pickDistinctRoomTiles(ws, pairCount, {
+      allowedRoomTypes: keyRoomTypes,
+      minDistFrom: avoid,
+      minDist,
+      margin: 1
+    });
+    if (keyTiles.length === 0) {
+      this.failOpenMission(mission, 'no valid key tiles');
+      return;
+    }
+
+    const lockTiles = pickDistinctRoomTiles(ws, keyTiles.length, {
+      allowedRoomTypes: lockRoomTypes,
+      minDistFrom: avoid.concat(keyTiles),
+      minDist,
+      margin: 1
+    });
+    if (lockTiles.length === 0) {
+      this.failOpenMission(mission, 'no valid lock tiles');
+      return;
+    }
+
+    const rawItemIds = Array.isArray(mission.params.itemIds) ? mission.params.itemIds : null;
+    const itemIds = [];
+    for (const entry of rawItemIds || []) {
+      const id = String(entry || '').trim();
+      if (!id) continue;
+      if (itemIds.includes(id)) continue;
+      itemIds.push(id);
+    }
+
+    const finalCount = Math.max(0, Math.min(keyTiles.length, lockTiles.length, pairCount, itemIds.length > 0 ? itemIds.length : pairCount));
+    if (finalCount <= 0 || !this.canSpawnMissionObject(finalCount * 2)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    // Generate stable per-mission ids if not provided.
+    while (itemIds.length < finalCount) {
+      const slot = toSlotLabel(itemIds.length);
+      itemIds.push(`${mission.id}_key_${slot.toLowerCase()}`);
+    }
+
+    mission.state.required = finalCount;
+    mission.state.keysCollected = 0;
+    mission.state.locksFilled = 0;
+    mission.state.itemIds = itemIds.slice(0, finalCount);
+    mission.state.keys = [];
+    mission.state.locks = [];
+
+    for (let i = 0; i < finalCount; i++) {
+      const pos = keyTiles[i];
+      const slot = toSlotLabel(i);
+      const itemId = mission.state.itemIds[i];
+
+      const object3d = createKeycardObject();
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const keyId = `lockKey:${mission.id}:${slot}`;
+      const label = `Pick Up Key ${slot}`;
+      this.registeredIds.push(
+        this.interactables.register({
+          id: keyId,
+          kind: 'keyItem',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: `Key ${slot} acquired` }),
+          meta: { missionId: mission.id, template: mission.template, index: i, slot, itemId }
+        })
+      );
+      this.interactableMeta.set(keyId, { missionId: mission.id, template: mission.template, index: i, slot, itemId });
+      mission.state.keys.push({ id: keyId, gridPos: { x: pos.x, y: pos.y }, collected: false, slot, itemId });
+    }
+
+    for (let i = 0; i < finalCount; i++) {
+      const pos = lockTiles[i];
+      const slot = toSlotLabel(i);
+      const itemId = mission.state.itemIds[i];
+
+      const object3d = createAltarObject({ filled: false });
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const lockId = `lockSocket:${mission.id}:${slot}`;
+      const label = `Insert Key ${slot}`;
+      this.registeredIds.push(
+        this.interactables.register({
+          id: lockId,
+          kind: 'lockSocket',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          maxDistance: 2.7,
+          requiresItem: { itemId, count: 1, message: `Need Key ${slot}.` },
+          consumeItem: true,
+          prompt: () => {
+            const lock = mission.state.locks?.[i] || null;
+            return lock?.filled ? `Lock ${slot} (Unlocked)` : `E: ${label}`;
+          },
+          interact: ({ entry }) => {
+            const lock = mission.state.locks?.[i] || null;
+            if (lock?.filled) {
+              if (entry) {
+                entry.requiresItem = [];
+                entry.consumeItem = [];
+              }
+              return { ok: true, message: 'Already unlocked', state: { filled: true } };
+            }
+            setAltarState(object3d, { filled: true });
+            if (entry) {
+              entry.requiresItem = [];
+              entry.consumeItem = [];
+            }
+            return { ok: true, message: `Key ${slot} inserted`, state: { filled: true } };
+          },
+          meta: { missionId: mission.id, template: mission.template, index: i, slot, itemId, filled: false }
+        })
+      );
+      this.interactableMeta.set(lockId, { missionId: mission.id, template: mission.template, index: i, slot, itemId });
+      mission.state.locks.push({ id: lockId, gridPos: { x: pos.x, y: pos.y }, filled: false, slot, itemId });
+    }
+  }
+
   spawnPlaceItemsAtAltars(mission, options = {}) {
     const ws = this.worldState;
     const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
@@ -2073,6 +2335,71 @@ export class MissionDirector {
       );
       this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i, slot });
       mission.state.targets.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, searched: false, slot });
+    }
+
+    mission.state.required = mission.state.targets.length;
+    if ((mission.state.required || 0) <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+    }
+  }
+
+  spawnSearchAndTagRoom(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const roomTypes = Array.isArray(mission.params.roomTypesTargets)
+      ? mission.params.roomTypesTargets
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const desired = clamp(Math.round(mission.state.required ?? mission.params.count ?? 3), 1, 24);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+
+    const tiles = pickDistinctRoomTiles(ws, want, {
+      allowedRoomTypes: roomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, want <= 0 ? 'mission object budget exhausted' : 'no valid tag tiles');
+      return;
+    }
+
+    mission.state.required = tiles.length;
+    mission.state.targets = [];
+
+    for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = tiles[i];
+      const slot = toSlotLabel(i);
+      const object3d = createClueNoteObject(slot);
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const interactableId = `tag:${mission.id}:${slot}`;
+      const label = 'Tag';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'tagTarget',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: `Tagged ${slot}` }),
+          meta: { missionId: mission.id, template: mission.template, index: i, slot }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i, slot });
+      mission.state.targets.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, tagged: false, slot });
     }
 
     mission.state.required = mission.state.targets.length;
@@ -2525,6 +2852,136 @@ export class MissionDirector {
     this.interactableMeta.set(terminalId, { missionId: mission.id, template: mission.template });
   }
 
+  spawnDeliverFragile(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const itemRoomTypes = Array.isArray(mission.params.roomTypesItems)
+      ? mission.params.roomTypesItems
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+    const terminalRoomTypes = Array.isArray(mission.params.roomTypesTerminal)
+      ? mission.params.roomTypesTerminal
+      : (Array.isArray(mission.params.terminalRoomTypes) ? mission.params.terminalRoomTypes : null);
+
+    if (!this.canSpawnMissionObject(2)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const terminalTiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: terminalRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    const terminalPos = terminalTiles[0] || null;
+    if (!terminalPos) {
+      this.failOpenMission(mission, 'no valid terminal tile');
+      return;
+    }
+
+    const itemTiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: itemRoomTypes,
+      minDistFrom: avoid.concat([terminalPos]),
+      minDist: mission.params.minDistFromSpawn ?? 6,
+      margin: 1
+    });
+    const itemPos = itemTiles[0] || null;
+    if (!itemPos) {
+      this.failOpenMission(mission, 'no valid package tile');
+      return;
+    }
+
+    const itemId = String(mission.state.itemId || mission.params.itemId || 'fragile_package').trim() || 'fragile_package';
+    mission.state.itemId = itemId;
+
+    const terminalObject = createTerminalObject({ uploaded: false });
+    const terminalWorld = gridToWorldCenter(terminalPos);
+    terminalObject.position.set(terminalWorld.x, 0, terminalWorld.z);
+    this.scene.add(terminalObject);
+    this.spawnedObjects.push(terminalObject);
+    this.consumeMissionObjectBudget(1);
+
+    const terminalId = `fragileTerminal:${mission.id}`;
+    mission.state.terminalId = terminalId;
+    mission.state.terminalGridPos = { x: terminalPos.x, y: terminalPos.y };
+
+    this.registeredIds.push(
+      this.interactables.register({
+        id: terminalId,
+        kind: 'terminal',
+        label: 'Fragile Delivery Terminal',
+        gridPos: { x: terminalPos.x, y: terminalPos.y },
+        object3d: terminalObject,
+        maxDistance: 2.6,
+        requiresItem: { itemId, count: 1, message: 'Need the fragile package.' },
+        consumeItem: true,
+        prompt: () => (mission.state.delivered ? 'E: Terminal (Delivered)' : 'E: Deliver Fragile Package'),
+        interact: ({ entry }) => {
+          if (mission.state.delivered) {
+            if (entry) {
+              entry.requiresItem = [];
+              entry.consumeItem = [];
+            }
+            return { ok: true, message: 'Already delivered', state: { delivered: true } };
+          }
+
+          mission.state.delivered = true;
+          mission.state.carrying = false;
+          if (entry) {
+            entry.requiresItem = [];
+            entry.consumeItem = [];
+          }
+          setTerminalState(terminalObject, { uploaded: true });
+
+          const pkgEntry = mission.state.packageId ? (this.interactables?.get?.(mission.state.packageId) || null) : null;
+          if (pkgEntry?.object3d) pkgEntry.object3d.visible = false;
+          if (pkgEntry) pkgEntry.enabled = false;
+
+          return { ok: true, message: 'Fragile package delivered', state: { delivered: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, delivered: false }
+      })
+    );
+    this.interactableMeta.set(terminalId, { missionId: mission.id, template: mission.template });
+
+    const packageObject = createDeliveryItemObject();
+    const itemWorld = gridToWorldCenter(itemPos);
+    packageObject.position.set(itemWorld.x, 0, itemWorld.z);
+    packageObject.rotation.y = Math.random() * Math.PI * 2;
+    this.scene.add(packageObject);
+    this.spawnedObjects.push(packageObject);
+    this.consumeMissionObjectBudget(1);
+
+    const packageId = `fragile:${mission.id}`;
+    mission.state.packageId = packageId;
+    mission.state.packageGridPos = { x: itemPos.x, y: itemPos.y };
+
+    this.registeredIds.push(
+      this.interactables.register({
+        id: packageId,
+        kind: 'fragilePackage',
+        label: 'Fragile Package',
+        gridPos: { x: itemPos.x, y: itemPos.y },
+        object3d: packageObject,
+        prompt: () => (mission.state.carrying ? 'Fragile package (carried)' : 'E: Pick Up Fragile Package'),
+        interact: ({ actorKind, entry }) => {
+          if (mission.state.delivered) return { ok: true, message: 'Already delivered', state: { carrying: false } };
+          if (mission.state.carrying) return { ok: true, message: 'Already carrying', state: { carrying: true } };
+
+          mission.state.carrying = true;
+          if (entry) entry.enabled = false;
+          packageObject.visible = false;
+          this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: actorKind || 'player', itemId, count: 1, sourceId: packageId });
+          return { ok: true, message: 'Fragile package acquired', state: { carrying: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, itemId }
+      })
+    );
+    this.interactableMeta.set(packageId, { missionId: mission.id, template: mission.template });
+  }
+
   spawnSwitchSequence(mission, options = {}) {
     const ws = this.worldState;
     const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
@@ -2777,6 +3234,106 @@ export class MissionDirector {
     this.interactableMeta.set(escortId, { missionId: mission.id, template: mission.template });
   }
 
+  spawnEscortToSafeRoom(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const escortRoomTypes = Array.isArray(mission.params.roomTypesEscort)
+      ? mission.params.roomTypesEscort
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const safeRoomTypes = Array.isArray(mission.params.safeRoomTypes)
+      ? mission.params.safeRoomTypes
+      : (Array.isArray(mission.params.roomTypesGoal)
+        ? mission.params.roomTypesGoal
+        : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null));
+
+    const tiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: escortRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 8,
+      margin: 1
+    });
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, 'no valid escort tile');
+      return;
+    }
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const pos = tiles[0];
+    const buddy = createEscortBuddyObject();
+    const world = gridToWorldCenter(pos);
+    buddy.position.set(world.x, 0, world.z);
+
+    this.scene.add(buddy);
+    this.spawnedObjects.push(buddy);
+    this.consumeMissionObjectBudget(1);
+
+    const escortId = `escortSafe:${mission.id}`;
+    mission.state.escortId = escortId;
+    mission.state.escortGridPos = { x: pos.x, y: pos.y };
+    mission.state.object3d = buddy;
+
+    const goalTiles = pickDistinctRoomTiles(ws, 1, {
+      allowedRoomTypes: safeRoomTypes,
+      minDistFrom: avoid.concat([pos]),
+      minDist: mission.params.minDistFromSpawn ?? 10,
+      margin: 1
+    });
+
+    const safeGoal = goalTiles[0] ? { x: goalTiles[0].x, y: goalTiles[0].y } : (ws.getExitPoint?.() || null);
+    mission.state.safeGoalGridPos = safeGoal;
+
+    // Compute a checkpoint roughly halfway (best effort).
+    let checkpoint = safeGoal;
+    if (safeGoal && this.pathfinder?.findPath) {
+      const path = this.pathfinder.findPath(pos, safeGoal, true, null) || [];
+      if (Array.isArray(path) && path.length >= 4) {
+        checkpoint = path[Math.floor(path.length / 2)] || safeGoal;
+      }
+    }
+
+    mission.state.checkpointGridPos = checkpoint;
+    mission.state.goalGridPos = checkpoint;
+
+    // Visual marker for the checkpoint (not interactable).
+    if (checkpoint && this.canSpawnMissionObject(1)) {
+      const marker = createSensorObject({ armed: true, active: true, success: false });
+      const mWorld = gridToWorldCenter(checkpoint);
+      marker.position.set(mWorld.x, 0, mWorld.z);
+      this.scene.add(marker);
+      this.spawnedObjects.push(marker);
+      this.consumeMissionObjectBudget(1);
+      mission.state.checkpointMarker = marker;
+    } else {
+      mission.state.checkpointMarker = null;
+    }
+
+    const label = 'Escort Survivor';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: escortId,
+        kind: 'escortBuddy',
+        label,
+        gridPos: { x: pos.x, y: pos.y },
+        object3d: buddy,
+        maxDistance: 2.6,
+        prompt: () => (mission.state.started ? 'Escort in progress' : 'E: Start Escort'),
+        interact: ({ entry }) => {
+          void entry;
+          if (mission.state.started) return { ok: true, message: 'Escort already started', state: { started: true } };
+          return { ok: true, message: 'Escort started', state: { started: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, started: false }
+      })
+    );
+    this.interactableMeta.set(escortId, { missionId: mission.id, template: mission.template });
+  }
+
   onKeypadCodeSubmitted(payload) {
     const keypadId = String(payload?.keypadId || '').trim();
     if (!keypadId) return;
@@ -2963,6 +3520,41 @@ export class MissionDirector {
       mission.state.itemsCollected = Math.min(mission.state.itemsRequired || collected, collected);
       if ((mission.state.itemsRequired || 0) > 0 && collected >= (mission.state.itemsRequired || 0)) {
         this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All relics collected. Find the altars.', seconds: 1.9 });
+      }
+    } else if (mission.template === 'placeKeysAtLocks') {
+      const keys = Array.isArray(mission.state.keys) ? mission.state.keys : [];
+      if (Number.isFinite(meta.index)) {
+        const key = keys[meta.index];
+        if (key && !key.collected) {
+          key.collected = true;
+          const itemId = String(key.itemId || meta.itemId || '').trim();
+          if (itemId) {
+            this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: payload?.actorKind || 'player', itemId, count: 1, sourceId: id });
+          }
+          if (payload?.actorKind === 'player' && key.slot) {
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Key ${key.slot} acquired.`, seconds: 1.5 });
+          }
+        }
+      }
+
+      const collected = keys.filter((k) => k?.collected).length;
+      const required = Number(mission.state.required) || keys.length || 0;
+      mission.state.required = required;
+      mission.state.keysCollected = Math.min(required || collected, collected);
+
+      if (payload?.actorKind === 'player' && required > 0 && collected >= required) {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All keys collected. Find the locks.', seconds: 1.9 });
+      }
+    } else if (mission.template === 'searchAndTagRoom') {
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      if (Number.isFinite(meta.index)) {
+        const t = targets[meta.index];
+        if (t && !t.tagged) t.tagged = true;
+      }
+      const tagged = targets.filter((t) => t?.tagged).length;
+      mission.state.tagged = Math.min(mission.state.required || tagged, tagged);
+      if ((mission.state.required || 0) > 0 && tagged >= (mission.state.required || 0)) {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All targets tagged.', seconds: 1.6 });
       }
     } else if (mission.template === 'searchRoomTypeN') {
       const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
@@ -3219,6 +3811,30 @@ export class MissionDirector {
           this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Escort started. Lead them to the exit.', seconds: 2.0 });
         }
       }
+    } else if (mission.template === 'escortToSafeRoom') {
+      if (payload?.kind === 'escortBuddy') {
+        const started = !!payload?.result?.state?.started;
+        if (started && !mission.state.started) {
+          mission.state.started = true;
+          mission.state.stage = 1;
+          mission.state.waitedSec = 0;
+
+          const entry = this.interactables?.get?.(id) || null;
+          if (entry) entry.enabled = false;
+
+          const checkpoint = mission.state.checkpointGridPos || null;
+          const safeGoal = mission.state.safeGoalGridPos || null;
+
+          if (checkpoint && Number.isFinite(checkpoint.x) && Number.isFinite(checkpoint.y)) {
+            mission.state.goalGridPos = { x: checkpoint.x, y: checkpoint.y };
+          } else if (safeGoal && Number.isFinite(safeGoal.x) && Number.isFinite(safeGoal.y)) {
+            mission.state.goalGridPos = { x: safeGoal.x, y: safeGoal.y };
+            mission.state.stage = 3;
+          }
+
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Escort started. Lead them to the checkpoint.', seconds: 2.0 });
+        }
+      }
     } else if (mission.template === 'codeLock') {
       if (payload?.kind === 'keypad') {
         const unlocked = !!payload?.result?.state?.unlocked;
@@ -3231,6 +3847,21 @@ export class MissionDirector {
         const unlocked = !!payload?.result?.state?.unlocked;
         if (unlocked) {
           mission.state.unlocked = true;
+        }
+      }
+    } else if (mission.template === 'placeKeysAtLocks') {
+      if (payload?.kind === 'lockSocket') {
+        const filled = !!payload?.result?.state?.filled;
+        if (filled && Array.isArray(mission.state.locks) && Number.isFinite(meta.index)) {
+          const lock = mission.state.locks[meta.index];
+          if (lock) lock.filled = true;
+          const filledCount = mission.state.locks.filter((l) => l?.filled).length;
+          const required = Number(mission.state.required) || mission.state.locks.length || 0;
+          mission.state.required = required;
+          mission.state.locksFilled = Math.min(required || filledCount, filledCount);
+          if (payload?.actorKind === 'player' && required > 0 && filledCount >= required) {
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All locks unlocked.', seconds: 1.8 });
+          }
         }
       }
     } else if (mission.template === 'placeItemsAtAltars') {
@@ -3318,8 +3949,6 @@ export class MissionDirector {
   }
 
   onPlayerDamaged(payload) {
-    void payload;
-
     const nowSec = this.gameState?.getElapsedTime
       ? this.gameState.getElapsedTime()
       : this.elapsedSec;
@@ -3331,6 +3960,58 @@ export class MissionDirector {
 
       mission.state.lastDamagedAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
       mission.state.hits = (mission.state.hits || 0) + 1;
+    }
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'deliverFragile') continue;
+      if (this.isMissionComplete(mission)) continue;
+      if (!mission.state.carrying) continue;
+      if (mission.state.breakOnDamage === false) continue;
+      this.dropFragilePackage(mission, { reason: 'damage', actorKind: 'player' });
+    }
+
+    this.syncStatus();
+  }
+
+  dropFragilePackage(mission, { reason = 'damage', actorKind = 'player' } = {}) {
+    if (!mission || mission.template !== 'deliverFragile') return;
+    if (!mission.state || !mission.state.carrying || mission.state.delivered) return;
+
+    const itemId = String(mission.state.itemId || mission.params?.itemId || 'fragile_package').trim() || 'fragile_package';
+    mission.state.carrying = false;
+
+    const bus = this.eventBus;
+    if (bus?.emit) {
+      bus.emit(EVENTS.INVENTORY_CONSUME_ITEM, { actorKind, itemId, count: 1, result: null });
+    }
+
+    const pkgId = String(mission.state.packageId || '').trim();
+    const entry = pkgId ? (this.interactables?.get?.(pkgId) || null) : null;
+    if (entry) {
+      entry.enabled = true;
+      entry.collected = false;
+      if (entry.object3d) entry.object3d.visible = true;
+    }
+
+    if (actorKind === 'player') {
+      const msg = reason === 'gunfire'
+        ? 'Fragile package dropped (weapon fired).'
+        : 'Fragile package dropped (took damage).';
+      bus?.emit?.(EVENTS.UI_TOAST, { text: msg, seconds: 1.7 });
+    }
+  }
+
+  onWeaponFired(payload) {
+    void payload;
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'deliverFragile') continue;
+      if (this.isMissionComplete(mission)) continue;
+      if (!mission.state.carrying) continue;
+      if (mission.state.breakOnGunfire === false) continue;
+      this.dropFragilePackage(mission, { reason: 'gunfire', actorKind: 'player' });
     }
 
     this.syncStatus();
@@ -3854,6 +4535,113 @@ export class MissionDirector {
           this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Escort complete.', seconds: 1.8 });
         }
       }
+
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'escortToSafeRoom') continue;
+        if (mission.state.completed) continue;
+        if (!mission.state.started) continue;
+
+        const checkpoint = mission.state.checkpointGridPos || null;
+        const safeGoal = mission.state.safeGoalGridPos || null;
+        const waitSeconds = clamp(Math.round(mission.state.checkpointWaitSeconds ?? mission.params?.checkpointWaitSeconds ?? 3), 0, 120);
+        const playerRadius = clamp(Math.round(mission.state.checkpointPlayerRadius ?? mission.params?.checkpointPlayerRadius ?? 2), 0, 10);
+
+        const stage = clamp(Math.round(mission.state.stage ?? 1), 0, 10);
+        if (stage <= 2 && checkpoint) {
+          mission.state.goalGridPos = { x: checkpoint.x, y: checkpoint.y };
+        } else if (safeGoal) {
+          mission.state.goalGridPos = { x: safeGoal.x, y: safeGoal.y };
+        }
+
+        const escortGridPos = mission.state.escortGridPos || null;
+        if (!escortGridPos) continue;
+
+        if (mission.state.checkpointMarker) {
+          const markerStage = clamp(Math.round(mission.state.stage ?? stage), 0, 10);
+          const active = markerStage <= 2;
+          const success = markerStage >= 3;
+          setSensorState(mission.state.checkpointMarker, { armed: true, active, success });
+        }
+
+        const followDistance = Number(mission.state.followDistance) || 1;
+        const distToPlayer = manhattan(escortGridPos, playerGridPos);
+
+        if (stage === 2 && checkpoint) {
+          const distToCheckpoint = manhattan(escortGridPos, checkpoint);
+          if (distToCheckpoint > 0) {
+            const path = this.pathfinder?.findPath?.(escortGridPos, checkpoint, true, null) || [];
+            const next = Array.isArray(path) && path.length >= 2 ? path[1] : null;
+            if (next && Number.isFinite(next.x) && Number.isFinite(next.y)) {
+              mission.state.escortGridPos = { x: next.x, y: next.y };
+              const obj = mission.state.object3d || null;
+              if (obj) {
+                const world = gridToWorldCenter(next);
+                obj.position.set(world.x, 0, world.z);
+              }
+              const entry = this.interactables?.get?.(mission.state.escortId) || null;
+              if (entry) entry.gridPos = { x: next.x, y: next.y };
+            }
+          }
+        } else if (distToPlayer > followDistance) {
+          const path = this.pathfinder?.findPath?.(escortGridPos, playerGridPos, true, null) || [];
+          const next = Array.isArray(path) && path.length >= 2 ? path[1] : null;
+          if (next && Number.isFinite(next.x) && Number.isFinite(next.y)) {
+            mission.state.escortGridPos = { x: next.x, y: next.y };
+            const obj = mission.state.object3d || null;
+            if (obj) {
+              const world = gridToWorldCenter(next);
+              obj.position.set(world.x, 0, world.z);
+            }
+            const entry = this.interactables?.get?.(mission.state.escortId) || null;
+            if (entry) entry.gridPos = { x: next.x, y: next.y };
+          }
+        }
+
+        const eg = mission.state.escortGridPos || null;
+        if (!eg) continue;
+
+        if (stage <= 1 && checkpoint && eg.x === checkpoint.x && eg.y === checkpoint.y) {
+          mission.state.stage = 2;
+          mission.state.waitedSec = 0;
+          if (waitSeconds > 0) {
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Checkpoint reached. Hold position.', seconds: 1.8 });
+          } else {
+            mission.state.stage = 3;
+            mission.state.goalGridPos = safeGoal ? { x: safeGoal.x, y: safeGoal.y } : mission.state.goalGridPos;
+          }
+        }
+
+        if (mission.state.stage === 2 && checkpoint) {
+          const near = playerRadius <= 0
+            ? (playerGridPos.x === checkpoint.x && playerGridPos.y === checkpoint.y)
+            : (manhattan(playerGridPos, checkpoint) <= playerRadius);
+          if (near) {
+            mission.state.waitedSec = Math.min(waitSeconds, (Number(mission.state.waitedSec) || 0) + 1);
+          } else {
+            mission.state.waitedSec = 0;
+          }
+          if (waitSeconds <= 0 || (mission.state.waitedSec || 0) >= waitSeconds) {
+            mission.state.stage = 3;
+            if (safeGoal) {
+              mission.state.goalGridPos = { x: safeGoal.x, y: safeGoal.y };
+            }
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Checkpoint cleared. Continue to the safe room.', seconds: 2.0 });
+          }
+        }
+
+        if (mission.state.stage >= 3) {
+          const goal = mission.state.goalGridPos || safeGoal || null;
+          if (goal && eg.x === goal.x && eg.y === goal.y) {
+            mission.state.completed = true;
+            mission.state.stage = 4;
+            if (mission.state.checkpointMarker) {
+              setSensorState(mission.state.checkpointMarker, { armed: true, active: false, success: true });
+            }
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Escort complete.', seconds: 1.8 });
+          }
+        }
+      }
     }
 
     this.syncStatus();
@@ -3911,8 +4699,14 @@ export class MissionDirector {
     if (mission.template === 'placeItemsAtAltars') {
       return (mission.state.altarsFilled || 0) >= (mission.state.altarsTotal || 0);
     }
+    if (mission.template === 'placeKeysAtLocks') {
+      return (mission.state.locksFilled || 0) >= (mission.state.required || 0);
+    }
     if (mission.template === 'searchRoomTypeN') {
       return (mission.state.searched || 0) >= (mission.state.required || 0);
+    }
+    if (mission.template === 'searchAndTagRoom') {
+      return (mission.state.tagged || 0) >= (mission.state.required || 0);
     }
     if (mission.template === 'photographEvidence') {
       return (mission.state.photos || 0) >= (mission.state.required || 0);
@@ -3924,6 +4718,9 @@ export class MissionDirector {
       return (mission.state.scanned || 0) >= required;
     }
     if (mission.template === 'deliverItemToTerminal') {
+      return !!mission.state.delivered;
+    }
+    if (mission.template === 'deliverFragile') {
       return !!mission.state.delivered;
     }
     if (mission.template === 'switchSequence' || mission.template === 'switchSequenceWithClues') {
@@ -3939,6 +4736,9 @@ export class MissionDirector {
       return !!mission.state.completed;
     }
     if (mission.template === 'escort') {
+      return !!mission.state.completed;
+    }
+    if (mission.template === 'escortToSafeRoom') {
       return !!mission.state.completed;
     }
     if (mission.template === 'stealthNoise') {
@@ -4089,8 +4889,20 @@ export class MissionDirector {
         }
         return `Place relics (${altarsFilled}/${altarsTotal})`;
       }
+      if (mission.template === 'placeKeysAtLocks') {
+        const required = Number(mission.state.required) || 0;
+        const keysCollected = Number(mission.state.keysCollected) || 0;
+        const locksFilled = Number(mission.state.locksFilled) || 0;
+        if (required > 0 && keysCollected < required) {
+          return `Collect keys (${keysCollected}/${required})`;
+        }
+        return `Unlock locks (${locksFilled}/${required})`;
+      }
       if (mission.template === 'searchRoomTypeN') {
         return `Search rooms (${mission.state.searched || 0}/${mission.state.required || 0})`;
+      }
+      if (mission.template === 'searchAndTagRoom') {
+        return `Tag targets (${mission.state.tagged || 0}/${mission.state.required || 0})`;
       }
       if (mission.template === 'photographEvidence') {
         return `Photograph evidence (${mission.state.photos || 0}/${mission.state.required || 0})`;
@@ -4117,6 +4929,12 @@ export class MissionDirector {
           return 'Deliver packages at the terminal (E)';
         }
         return 'Delivery complete. Reach the exit.';
+      }
+      if (mission.template === 'deliverFragile') {
+        if (mission.state.delivered) return 'Fragile delivery complete. Reach the exit.';
+        return mission.state.carrying
+          ? 'Deliver the fragile package at the terminal (E)'
+          : 'Pick up the fragile package (E)';
       }
       if (mission.template === 'switchSequenceWithClues') {
         const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
@@ -4168,6 +4986,19 @@ export class MissionDirector {
       if (mission.template === 'escort') {
         if (mission.state.completed) return 'Escort complete. Reach the exit.';
         return mission.state.started ? 'Escort the survivor to the exit.' : 'Find the survivor and start the escort (E)';
+      }
+      if (mission.template === 'escortToSafeRoom') {
+        if (mission.state.completed) return 'Escort complete. Reach the exit.';
+        if (!mission.state.started) return 'Find the survivor and start the escort (E)';
+        const stage = clamp(Math.round(mission.state.stage ?? 1), 0, 10);
+        if (stage === 2) {
+          const waitSeconds = clamp(Math.round(mission.state.checkpointWaitSeconds ?? mission.params?.checkpointWaitSeconds ?? 3), 0, 120);
+          const waited = clamp(Math.round(mission.state.waitedSec ?? 0), 0, waitSeconds);
+          const remaining = Math.max(0, waitSeconds - waited);
+          return waitSeconds > 0 ? `Hold position at the checkpoint (${remaining}s)` : 'Checkpoint cleared. Continue.';
+        }
+        if (stage >= 3) return 'Escort the survivor to the safe room.';
+        return 'Escort the survivor to the checkpoint.';
       }
       if (mission.template === 'stealthNoise') {
         if (mission.state.failed) return 'Stay quiet (failed)';
@@ -4321,9 +5152,26 @@ export class MissionDirector {
         altarsTotal: mission.state.altarsTotal || 0
       };
     }
+    if (mission.template === 'placeKeysAtLocks') {
+      return {
+        required: mission.state.required || 0,
+        keysCollected: mission.state.keysCollected || 0,
+        locksFilled: mission.state.locksFilled || 0,
+        itemIds: Array.isArray(mission.state.itemIds) ? mission.state.itemIds.slice() : [],
+        keysTotal: Array.isArray(mission.state.keys) ? mission.state.keys.length : 0,
+        locksTotal: Array.isArray(mission.state.locks) ? mission.state.locks.length : 0
+      };
+    }
     if (mission.template === 'searchRoomTypeN') {
       return {
         searched: mission.state.searched || 0,
+        required: mission.state.required || 0,
+        targetsTotal: Array.isArray(mission.state.targets) ? mission.state.targets.length : 0
+      };
+    }
+    if (mission.template === 'searchAndTagRoom') {
+      return {
+        tagged: mission.state.tagged || 0,
         required: mission.state.required || 0,
         targetsTotal: Array.isArray(mission.state.targets) ? mission.state.targets.length : 0
       };
@@ -4363,6 +5211,19 @@ export class MissionDirector {
         delivered: !!mission.state.delivered,
         terminalId: mission.state.terminalId || null,
         terminalGridPos: mission.state.terminalGridPos || null
+      };
+    }
+    if (mission.template === 'deliverFragile') {
+      return {
+        itemId: mission.state.itemId || null,
+        carrying: !!mission.state.carrying,
+        delivered: !!mission.state.delivered,
+        packageId: mission.state.packageId || null,
+        packageGridPos: mission.state.packageGridPos || null,
+        terminalId: mission.state.terminalId || null,
+        terminalGridPos: mission.state.terminalGridPos || null,
+        breakOnGunfire: mission.state.breakOnGunfire !== false,
+        breakOnDamage: mission.state.breakOnDamage !== false
       };
     }
     if (mission.template === 'switchSequence' || mission.template === 'switchSequenceWithClues') {
@@ -4420,6 +5281,23 @@ export class MissionDirector {
         completed: !!mission.state.completed,
         escortGridPos: mission.state.escortGridPos || null,
         goalGridPos: mission.state.goalGridPos || null,
+        followDistance: mission.state.followDistance || 1
+      };
+    }
+    if (mission.template === 'escortToSafeRoom') {
+      const waitSeconds = clamp(Math.round(mission.state.checkpointWaitSeconds ?? mission.params?.checkpointWaitSeconds ?? 3), 0, 120);
+      const waitedSec = clamp(Math.round(mission.state.waitedSec ?? 0), 0, waitSeconds);
+      return {
+        started: !!mission.state.started,
+        completed: !!mission.state.completed,
+        stage: clamp(Math.round(mission.state.stage ?? 0), 0, 10),
+        waitedSec,
+        checkpointWaitSeconds: waitSeconds,
+        checkpointPlayerRadius: clamp(Math.round(mission.state.checkpointPlayerRadius ?? mission.params?.checkpointPlayerRadius ?? 2), 0, 10),
+        escortGridPos: mission.state.escortGridPos || null,
+        goalGridPos: mission.state.goalGridPos || null,
+        checkpointGridPos: mission.state.checkpointGridPos || null,
+        safeGoalGridPos: mission.state.safeGoalGridPos || null,
         followDistance: mission.state.followDistance || 1
       };
     }
@@ -4679,9 +5557,33 @@ export class MissionDirector {
       return nextAltar ? { id: nextAltar.id || null, gridPos: nextAltar.gridPos } : null;
     }
 
+    if (mission.template === 'placeKeysAtLocks') {
+      const required = Number(mission.state.required) || 0;
+      const keysCollected = Number(mission.state.keysCollected) || 0;
+      const locksFilled = Number(mission.state.locksFilled) || 0;
+      if (required <= 0 || locksFilled >= required) return null;
+
+      const keys = Array.isArray(mission.state.keys) ? mission.state.keys : [];
+      const locks = Array.isArray(mission.state.locks) ? mission.state.locks : [];
+
+      if (keysCollected < required) {
+        const nextKey = keys.find((k) => k && !k.collected && k.gridPos);
+        return nextKey ? { id: nextKey.id || null, gridPos: nextKey.gridPos } : null;
+      }
+
+      const nextLock = locks.find((l) => l && !l.filled && l.gridPos);
+      return nextLock ? { id: nextLock.id || null, gridPos: nextLock.gridPos } : null;
+    }
+
     if (mission.template === 'searchRoomTypeN') {
       const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
       const next = targets.find((t) => t && !t.searched && t.gridPos);
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+    }
+
+    if (mission.template === 'searchAndTagRoom') {
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      const next = targets.find((t) => t && !t.tagged && t.gridPos);
       return next ? { id: next.id || null, gridPos: next.gridPos } : null;
     }
 
@@ -4732,6 +5634,17 @@ export class MissionDirector {
       return null;
     }
 
+    if (mission.template === 'deliverFragile') {
+      if (mission.state.delivered) return null;
+      if (mission.state.carrying && mission.state.terminalId && mission.state.terminalGridPos) {
+        return { id: mission.state.terminalId, gridPos: mission.state.terminalGridPos };
+      }
+      if (!mission.state.carrying && mission.state.packageId && mission.state.packageGridPos) {
+        return { id: mission.state.packageId, gridPos: mission.state.packageGridPos };
+      }
+      return null;
+    }
+
     if (mission.template === 'switchSequenceWithClues') {
       if (Array.isArray(mission.state.clues) && !mission.state.sequenceKnown) {
         const pending = mission.state.clues.filter((c) => c && !c.collected && c.gridPos);
@@ -4774,6 +5687,14 @@ export class MissionDirector {
     }
 
     if (mission.template === 'escort') {
+      if (mission.state.completed) return null;
+      if (!mission.state.started && mission.state.escortId && mission.state.escortGridPos) {
+        return { id: mission.state.escortId, gridPos: mission.state.escortGridPos };
+      }
+      return null;
+    }
+
+    if (mission.template === 'escortToSafeRoom') {
       if (mission.state.completed) return null;
       if (!mission.state.started && mission.state.escortId && mission.state.escortGridPos) {
         return { id: mission.state.escortId, gridPos: mission.state.escortGridPos };
@@ -4907,11 +5828,41 @@ export class MissionDirector {
             targets.push({ collected: false, id: altar.id || null, gridPos: altar.gridPos, missionId: mission.id, template: mission.template });
           }
         }
+      } else if (mission.template === 'placeKeysAtLocks') {
+        const required = Number(mission.state.required) || 0;
+        const keysCollected = Number(mission.state.keysCollected) || 0;
+        const locksFilled = Number(mission.state.locksFilled) || 0;
+        if (required <= 0 || locksFilled >= required) continue;
+
+        const keys = Array.isArray(mission.state.keys) ? mission.state.keys : [];
+        const locks = Array.isArray(mission.state.locks) ? mission.state.locks : [];
+
+        if (keysCollected < required) {
+          for (const key of keys) {
+            if (key?.collected) continue;
+            if (!key?.gridPos) continue;
+            targets.push({ collected: false, id: key.id || null, gridPos: key.gridPos, missionId: mission.id, template: mission.template });
+          }
+        } else {
+          for (const lock of locks) {
+            if (lock?.filled) continue;
+            if (!lock?.gridPos) continue;
+            targets.push({ collected: false, id: lock.id || null, gridPos: lock.gridPos, missionId: mission.id, template: mission.template });
+          }
+        }
       } else if (mission.template === 'searchRoomTypeN') {
         if ((mission.state.searched || 0) >= (mission.state.required || 0)) continue;
         const points = Array.isArray(mission.state.targets) ? mission.state.targets : [];
         for (const point of points) {
           if (point?.searched) continue;
+          if (!point?.gridPos) continue;
+          targets.push({ collected: false, id: point.id || null, gridPos: point.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'searchAndTagRoom') {
+        if ((mission.state.tagged || 0) >= (mission.state.required || 0)) continue;
+        const points = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+        for (const point of points) {
+          if (point?.tagged) continue;
           if (!point?.gridPos) continue;
           targets.push({ collected: false, id: point.id || null, gridPos: point.gridPos, missionId: mission.id, template: mission.template });
         }
@@ -4945,6 +5896,15 @@ export class MissionDirector {
           }
         } else if (mission.state.terminalGridPos && mission.state.terminalId) {
           targets.push({ collected: false, id: mission.state.terminalId, gridPos: mission.state.terminalGridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'deliverFragile') {
+        if (mission.state.delivered) continue;
+        if (mission.state.carrying) {
+          if (mission.state.terminalGridPos && mission.state.terminalId) {
+            targets.push({ collected: false, id: mission.state.terminalId, gridPos: mission.state.terminalGridPos, missionId: mission.id, template: mission.template });
+          }
+        } else if (mission.state.packageGridPos && mission.state.packageId) {
+          targets.push({ collected: false, id: mission.state.packageId, gridPos: mission.state.packageGridPos, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'switchSequence') {
         const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
@@ -5010,6 +5970,12 @@ export class MissionDirector {
           targets.push({ collected: false, id: entry.id || null, gridPos: entry.gridPos, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'escort') {
+        if (mission.state.completed) continue;
+        if (mission.state.started) continue;
+        if (mission.state.escortId && mission.state.escortGridPos) {
+          targets.push({ collected: false, id: mission.state.escortId, gridPos: mission.state.escortGridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'escortToSafeRoom') {
         if (mission.state.completed) continue;
         if (mission.state.started) continue;
         if (mission.state.escortId && mission.state.escortGridPos) {
