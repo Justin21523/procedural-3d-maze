@@ -9,6 +9,8 @@ export class UIManager {
     this.worldState = options.worldState || null;
     this.gameState = options.gameState || null;
     this.gun = options.gun || null;
+    this.monsterManager = options.monsterManager || null;
+    this.projectileManager = options.projectileManager || null;
 
     // Crosshair pulses
     this.crosshairEl = document.getElementById('crosshair');
@@ -36,6 +38,7 @@ export class UIManager {
 
     // FPS
     this.fpsElement = document.getElementById('fps');
+    this.debugCountsElement = document.getElementById('debug-counts');
     this.frameCount = 0;
     this.lastFpsUpdate = 0;
     this.fps = 0;
@@ -185,11 +188,13 @@ export class UIManager {
     );
   }
 
-  setRefs({ player, worldState, gameState, gun } = {}) {
+  setRefs({ player, worldState, gameState, gun, monsterManager, projectileManager } = {}) {
     if (player) this.player = player;
     if (worldState) this.worldState = worldState;
     if (gameState) this.gameState = gameState;
     if (gun) this.gun = gun;
+    if (monsterManager) this.monsterManager = monsterManager;
+    if (projectileManager) this.projectileManager = projectileManager;
   }
 
   setEventBus(eventBus) {
@@ -384,6 +389,39 @@ export class UIManager {
     if (this.fpsElement) {
       this.fpsElement.textContent = this.fps;
     }
+
+    this.updateDebugCounts();
+  }
+
+  updateDebugCounts() {
+    const el = this.debugCountsElement;
+    if (!el) return;
+
+    const monsters = this.monsterManager?.getMonsters?.() || [];
+    let alive = 0;
+    for (const m of monsters) {
+      if (!m) continue;
+      if (m.isDead || m.isDying) continue;
+      alive += 1;
+    }
+
+    const proj = this.projectileManager?.projectiles?.length ?? 0;
+    const impacts = this.projectileManager?.impacts?.length ?? 0;
+    const explosions = this.projectileManager?.explosions?.length ?? 0;
+    const muzzle = this.gun?.muzzleFlashes?.length ?? 0;
+
+    const fmt = (count, cap) => {
+      const c = Math.max(0, Math.round(Number(count) || 0));
+      if (Number.isFinite(cap) && cap >= 0) return `${c}/${cap}`;
+      return String(c);
+    };
+
+    el.textContent =
+      `M ${alive}/${monsters.length} ` +
+      `P ${fmt(proj, CONFIG.MAX_ACTIVE_PROJECTILES)} ` +
+      `I ${fmt(impacts, CONFIG.MAX_ACTIVE_IMPACTS)} ` +
+      `E ${fmt(explosions, CONFIG.MAX_ACTIVE_EXPLOSIONS)} ` +
+      `MF ${fmt(muzzle, CONFIG.MAX_ACTIVE_MUZZLE_FLASHES)}`;
   }
 
   updateCrosshairPulse(dt) {
