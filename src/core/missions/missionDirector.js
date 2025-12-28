@@ -2402,12 +2402,17 @@ export class MissionDirector {
   getCurrentRequiredMission() {
     const requires = this.missionsConfig?.exit?.requires || [];
     const requiredIds = Array.isArray(requires) ? requires : [];
+    let unlockExitMission = null;
     for (const id of requiredIds) {
       const mission = this.missions.get(id);
       if (!mission) continue;
+      if (mission.template === 'unlockExit') {
+        if (!this.isMissionComplete(mission)) unlockExitMission = mission;
+        continue;
+      }
       if (!this.isMissionComplete(mission)) return mission;
     }
-    return null;
+    return unlockExitMission;
   }
 
   getObjectiveText() {
@@ -2529,13 +2534,8 @@ export class MissionDirector {
       return mission.id;
     };
 
-    for (const id of requiredIds) {
-      const mission = this.missions.get(id);
-      if (!mission) continue;
-      if (!this.isMissionComplete(mission)) {
-        return formatMission(mission);
-      }
-    }
+    const current = this.getCurrentRequiredMission();
+    if (current && !this.isMissionComplete(current)) return formatMission(current);
 
     if (requiredIds.length > 0) {
       return this.isExitUnlocked() ? 'Exit unlocked. Reach the exit.' : 'Complete objectives to unlock the exit.';
