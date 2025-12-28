@@ -122,7 +122,11 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     'lockedDoor',
     'placeItemsAtAltars',
     'searchRoomTypeN',
-    'photographEvidence'
+    'photographEvidence',
+    'deliverItemToTerminal',
+    'switchSequence',
+    'hideForSeconds',
+    'escort'
   ]);
   if (template && !allowedTemplates.has(template)) {
     pushIssue(warnings, filePath, ['missions', 'list', String(index), 'template'], `Unknown mission template "${template}"`);
@@ -302,7 +306,89 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
         pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'maxDistance'], 'maxDistance should be a positive number');
       }
     }
+    if (params.aimMinDot !== undefined) {
+      const d = Number(params.aimMinDot);
+      if (!Number.isFinite(d) || d <= 0 || d >= 1) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'aimMinDot'], 'aimMinDot should be a number in (0, 1)');
+      }
+    }
+    if (params.aimAngleDeg !== undefined) {
+      const deg = Number(params.aimAngleDeg);
+      if (!Number.isFinite(deg) || deg <= 0) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'aimAngleDeg'], 'aimAngleDeg should be a positive number');
+      }
+    }
+    if (params.aimOffsetY !== undefined) {
+      const v = Number(params.aimOffsetY);
+      if (!Number.isFinite(v)) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'aimOffsetY'], 'aimOffsetY should be a number');
+      }
+    }
     validateRoomTypesParam('roomTypesTargets');
+    validateRoomTypesParam('roomTypes');
+  } else if (template === 'deliverItemToTerminal') {
+    const count = Number(params.count);
+    const required = Number(params.required);
+    if (!Number.isFinite(count) || count <= 0) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'count'], 'count should be a positive number');
+    }
+    if (params.required !== undefined && (!Number.isFinite(required) || required <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'required'], 'required should be a positive number');
+    }
+    if (params.itemId !== undefined) {
+      const itemId = String(params.itemId || '').trim();
+      if (!itemId) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'itemId'], 'itemId should be a non-empty string');
+      }
+    }
+    if (params.requiresPower !== undefined && typeof params.requiresPower !== 'boolean') {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'requiresPower'], 'requiresPower should be a boolean');
+    }
+    if (params.powerItemId !== undefined) {
+      const id = String(params.powerItemId || '').trim();
+      if (!id) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'powerItemId'], 'powerItemId should be a non-empty string');
+      }
+    }
+    validateRoomTypesParam('roomTypesItems');
+    validateRoomTypesParam('roomTypesTerminal');
+    validateRoomTypesParam('terminalRoomTypes');
+    validateRoomTypesParam('roomTypes');
+  } else if (template === 'switchSequence') {
+    const switches = Number(params.switches ?? params.count);
+    if (params.switches !== undefined || params.count !== undefined) {
+      if (!Number.isFinite(switches) || switches < 2) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'switches'], 'switches should be a number ≥ 2');
+      }
+    }
+    if (params.length !== undefined) {
+      const len = Number(params.length);
+      if (!Number.isFinite(len) || len < 2) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'length'], 'length should be a number ≥ 2');
+      }
+    }
+    if (params.resetOnWrong !== undefined && typeof params.resetOnWrong !== 'boolean') {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'resetOnWrong'], 'resetOnWrong should be a boolean');
+    }
+    if (params.sequence !== undefined && !Array.isArray(params.sequence)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'sequence'], 'sequence should be an array');
+    }
+    validateRoomTypesParam('roomTypesSwitches');
+    validateRoomTypesParam('roomTypesTargets');
+    validateRoomTypesParam('roomTypes');
+  } else if (template === 'hideForSeconds') {
+    const seconds = Number(params.seconds);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'seconds'], 'seconds should be a positive number');
+    }
+  } else if (template === 'escort') {
+    if (params.followDistance !== undefined) {
+      const d = Number(params.followDistance);
+      if (!Number.isFinite(d) || d <= 0) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'followDistance'], 'followDistance should be a positive number');
+      }
+    }
+    validateRoomTypesParam('roomTypesEscort');
     validateRoomTypesParam('roomTypes');
   } else if (template === 'unlockExit') {
     // no required params
