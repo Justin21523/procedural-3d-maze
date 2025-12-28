@@ -293,6 +293,19 @@ export class MissionDirector {
       return;
     }
 
+    if (template === 'reroutePower') {
+      mission.state.total = 0;
+      mission.state.requiredOn = 0;
+      mission.state.breakers = [];
+      mission.state.solutionSlots = [];
+      mission.state.clueRead = true;
+      mission.state.clueId = null;
+      mission.state.clueGridPos = null;
+      mission.state.powered = true;
+      mission.state.failures = 0;
+      return;
+    }
+
     if (template === 'activateShrines') {
       mission.state.total = 0;
       mission.state.shrines = [];
@@ -469,6 +482,22 @@ export class MissionDirector {
         const switches = clamp(Math.round(mission.params.switches ?? 3), 1, 12);
         mission.state = { activated: new Set(), total: switches };
         this.spawnPowerSwitches(mission, { avoid: [spawn, exit] });
+      } else if (template === 'reroutePower') {
+        const breakers = clamp(Math.round(mission.params.breakers ?? mission.params.switches ?? mission.params.count ?? 4), 2, 10);
+        const onCount = clamp(Math.round(mission.params.onCount ?? mission.params.requiredOn ?? 3), 1, breakers);
+        const requireClue = mission.params.requireClue !== false;
+        mission.state = {
+          total: breakers,
+          requiredOn: onCount,
+          breakers: [],
+          solutionSlots: [],
+          clueRead: requireClue ? false : true,
+          clueId: null,
+          clueGridPos: null,
+          powered: false,
+          failures: 0
+        };
+        this.spawnReroutePower(mission, { avoid: [spawn, exit] });
       } else if (template === 'activateShrines') {
         const shrines = clamp(Math.round(mission.params.shrines ?? mission.params.count ?? 3), 1, 12);
         mission.state = { activated: new Set(), total: shrines };
@@ -854,6 +883,200 @@ export class MissionDirector {
     }
 
     mission.state.total = mission.state.switches.length;
+  }
+
+  spawnReroutePower(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const breakerRoomTypes = Array.isArray(mission.params.roomTypesBreakers)
+      ? mission.params.roomTypesBreakers
+      : (Array.isArray(mission.params.roomTypesTargets)
+        ? mission.params.roomTypesTargets
+        : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null));
+
+    const requireClue = mission.params.requireClue !== false;
+    const reservedClue = requireClue ? 1 : 0;
+    const availableForBreakers = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, this.objectBudgetRemaining - reservedClue)
+      : Infinity;
+
+    const desired = clamp(Math.round(mission.state.total ?? mission.params.breakers ?? mission.params.switches ?? mission.params.count ?? 4), 2, 10);
+    const want = Number.isFinite(availableForBreakers)
+      ? Math.max(0, Math.min(desired, availableForBreakers))
+      : desired;
+
+    if (want < 2) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const tiles = pickDistinctTiles(ws, want, {
+      allowedRoomTypes: breakerRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (tiles.length < 2) {
+      this.failOpenMission(mission, 'no valid breaker tiles');
+      return;
+    }
+
+    mission.state.breakers = [];
+
+    for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = tiles[i];
+      const slot = toSlotLabel(i);
+      const object3d = createPowerSwitchObject(false);
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const interactableId = `reroute:${mission.id}:${slot}`;
+      const label = `Breaker ${slot}`;
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'rerouteBreaker',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          maxDistance: 2.6,
+          prompt: ({ entry }) => {
+            const on = !!entry?.meta?.on;
+            return on ? `E: ${label} (On)` : `E: ${label} (Off)`;
+          },
+          interact: ({ entry }) => {
+            const meta = entry?.meta || {};
+            if (meta.on) return { ok: true, message: 'Breaker already on', state: { on: true, slot } };
+            meta.on = true;
+            setPowerSwitchState(object3d, true);
+            return { ok: true, message: `Breaker ${slot} engaged`, state: { on: true, slot } };
+          },
+          meta: { missionId: mission.id, template: mission.template, index: i, slot, on: false }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i, slot });
+      mission.state.breakers.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, slot, on: false, object3d });
+    }
+
+    if (mission.state.breakers.length < 2) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    mission.state.total = mission.state.breakers.length;
+
+    const slots = mission.state.breakers.map((b) => String(b?.slot || '').trim()).filter(Boolean);
+
+    const normalizeSlotsList = (raw) => {
+      const values = [];
+      const add = (v) => {
+        const s = String(v || '').trim().toUpperCase();
+        if (!s) return;
+        if (!slots.includes(s)) return;
+        if (values.includes(s)) return;
+        values.push(s);
+      };
+
+      if (Array.isArray(raw)) {
+        for (const v of raw) add(v);
+      } else if (typeof raw === 'string') {
+        for (const part of raw.split(/[,\s]+/)) add(part);
+      }
+
+      return values;
+    };
+
+    const rawSolution = mission.params.solutionSlots ?? mission.params.solution ?? null;
+    let solutionSlots = normalizeSlotsList(rawSolution);
+
+    if (solutionSlots.length < 1) {
+      const desiredOn = clamp(Math.round(mission.state.requiredOn ?? mission.params.onCount ?? 3), 1, slots.length);
+      solutionSlots = shuffleInPlace(slots.slice()).slice(0, desiredOn);
+    }
+
+    mission.state.solutionSlots = solutionSlots.slice();
+    mission.state.requiredOn = solutionSlots.length;
+    mission.state.powered = false;
+    mission.state.failures = Math.max(0, Math.round(Number(mission.state.failures) || 0));
+
+    if (!requireClue) {
+      mission.state.clueRead = true;
+      return;
+    }
+
+    if (!this.canSpawnMissionObject(1)) {
+      mission.state.clueRead = true;
+      return;
+    }
+
+    const clueRoomTypes = Array.isArray(mission.params.roomTypesClue)
+      ? mission.params.roomTypesClue
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const clueTiles = pickDistinctRoomTiles(ws, 1, {
+      allowedRoomTypes: clueRoomTypes,
+      minDistFrom: avoid.concat(tiles),
+      minDist: mission.params.minDistFromSpawn ?? 6,
+      margin: 1
+    });
+
+    const cluePos = clueTiles[0] || null;
+    if (!cluePos) {
+      mission.state.clueRead = true;
+      return;
+    }
+
+    const clueObject = createClueNoteObject('A');
+    const clueWorld = gridToWorldCenter(cluePos);
+    clueObject.position.set(clueWorld.x, 0, clueWorld.z);
+    clueObject.rotation.y = Math.random() * Math.PI * 2;
+
+    this.scene.add(clueObject);
+    this.spawnedObjects.push(clueObject);
+    this.consumeMissionObjectBudget(1);
+
+    const clueId = `rerouteClue:${mission.id}`;
+    mission.state.clueId = clueId;
+    mission.state.clueGridPos = { x: cluePos.x, y: cluePos.y };
+
+    const label = 'Read Routing Note';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: clueId,
+        kind: 'clueNote',
+        label,
+        gridPos: { x: cluePos.x, y: cluePos.y },
+        object3d: clueObject,
+        prompt: () => `E: ${label}`,
+        interact: () => ({ ok: true, picked: true, message: 'Routing note read' }),
+        meta: { missionId: mission.id, template: mission.template, clue: true }
+      })
+    );
+    this.interactableMeta.set(clueId, { missionId: mission.id, template: mission.template, clue: true });
+  }
+
+  resetRerouteBreakers(mission) {
+    if (!mission || mission.template !== 'reroutePower') return;
+    const breakers = Array.isArray(mission.state.breakers) ? mission.state.breakers : [];
+    for (const br of breakers) {
+      if (!br?.id) continue;
+      br.on = false;
+      const entry = this.interactables?.get?.(br.id) || null;
+      if (entry?.meta) {
+        entry.meta.on = false;
+      }
+      const obj = entry?.object3d || br.object3d || null;
+      if (obj) {
+        setPowerSwitchState(obj, false);
+      }
+    }
   }
 
   spawnShrines(mission, options = {}) {
@@ -2266,6 +2489,16 @@ export class MissionDirector {
       if (!mission.state.delivered && (mission.state.collected || 0) >= (mission.state.required || 0)) {
         this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Packages collected. Find the delivery terminal.', seconds: 2.0 });
       }
+    } else if (mission.template === 'reroutePower') {
+      if (id === String(mission.state.clueId || '').trim()) {
+        mission.state.clueRead = true;
+        const slots = Array.isArray(mission.state.solutionSlots) ? mission.state.solutionSlots : [];
+        const list = slots.length > 0 ? slots.join(', ') : '';
+        const text = list ? `Routing note: enable breakers ${list}.` : 'Routing note read.';
+        if (payload?.actorKind === 'player') {
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text, seconds: 2.2 });
+        }
+      }
     } else if (mission.template === 'codeLock') {
       const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
       const clue = clues.find((c) => c && c.id === id);
@@ -2401,6 +2634,48 @@ export class MissionDirector {
         if (Array.isArray(mission.state.switches)) {
           const sw = mission.state.switches.find((s) => s.id === id);
           if (sw) sw.on = true;
+        }
+      }
+    } else if (mission.template === 'reroutePower') {
+      if (mission.state.powered) {
+        // No-op.
+      } else if (payload?.kind === 'rerouteBreaker') {
+        const turnedOn = !!payload?.result?.state?.on;
+        if (!turnedOn) {
+          // Only one-way toggles are expected.
+        } else {
+          const slot = String(payload?.result?.state?.slot || meta.slot || '').trim().toUpperCase();
+          const breakers = Array.isArray(mission.state.breakers) ? mission.state.breakers : [];
+          const breaker = breakers.find((b) => b && b.id === id);
+          if (breaker) breaker.on = true;
+
+          if (!mission.state.clueRead) {
+            mission.state.failures = (Number(mission.state.failures) || 0) + 1;
+            this.resetRerouteBreakers(mission);
+            if (payload?.actorKind === 'player') {
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Find the routing note first.', seconds: 1.6 });
+            }
+          } else {
+            const solutionSlots = Array.isArray(mission.state.solutionSlots) ? mission.state.solutionSlots : [];
+            const requiredOn = solutionSlots.length;
+            if (!solutionSlots.includes(slot)) {
+              mission.state.failures = (Number(mission.state.failures) || 0) + 1;
+              this.resetRerouteBreakers(mission);
+              if (payload?.actorKind === 'player') {
+                this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Wrong breaker. Routing reset.', seconds: 1.6 });
+              }
+            } else {
+              const onCount = breakers.filter((b) => b?.on).length;
+              if (requiredOn > 0 && onCount >= requiredOn) {
+                mission.state.powered = true;
+                if (payload?.actorKind === 'player') {
+                  this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Power rerouted.', seconds: 1.8 });
+                }
+              } else if (payload?.actorKind === 'player') {
+                this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Correct breaker (${onCount}/${requiredOn})`, seconds: 1.2 });
+              }
+            }
+          }
         }
       }
     } else if (mission.template === 'activateShrines') {
@@ -2937,6 +3212,9 @@ export class MissionDirector {
     if (mission.template === 'restorePower') {
       return (mission.state.activated?.size || 0) >= (mission.state.total || 0);
     }
+    if (mission.template === 'reroutePower') {
+      return !!mission.state.powered;
+    }
     if (mission.template === 'activateShrines') {
       return (mission.state.activated?.size || 0) >= (mission.state.total || 0);
     }
@@ -3044,6 +3322,14 @@ export class MissionDirector {
       }
       if (mission.template === 'restorePower') {
         return `Restore power (${mission.state.activated?.size || 0}/${mission.state.total || 0})`;
+      }
+      if (mission.template === 'reroutePower') {
+        if (mission.state.powered) return 'Power rerouted. Reach the exit.';
+        if (!mission.state.clueRead) return 'Find the routing note';
+        const breakers = Array.isArray(mission.state.breakers) ? mission.state.breakers : [];
+        const onCount = breakers.filter((b) => b?.on).length;
+        const requiredOn = Number(mission.state.requiredOn) || 0;
+        return `Reroute power (${onCount}/${requiredOn})`;
       }
       if (mission.template === 'activateShrines') {
         return `Activate shrines (${mission.state.activated?.size || 0}/${mission.state.total || 0})`;
@@ -3206,6 +3492,18 @@ export class MissionDirector {
       return {
         activated: mission.state.activated?.size || 0,
         total: mission.state.total || 0
+      };
+    }
+    if (mission.template === 'reroutePower') {
+      const breakers = Array.isArray(mission.state.breakers) ? mission.state.breakers : [];
+      const onCount = breakers.filter((b) => b?.on).length;
+      const requiredOn = Number(mission.state.requiredOn) || 0;
+      return {
+        clueRead: !!mission.state.clueRead,
+        powered: !!mission.state.powered,
+        onCount,
+        requiredOn,
+        failures: Number(mission.state.failures) || 0
       };
     }
     if (mission.template === 'activateShrines') {
@@ -3484,6 +3782,22 @@ export class MissionDirector {
       return next ? { id: next.id || null, gridPos: next.gridPos } : null;
     }
 
+    if (mission.template === 'reroutePower') {
+      if (mission.state.powered) return null;
+      if (!mission.state.clueRead && mission.state.clueId && mission.state.clueGridPos) {
+        return { id: mission.state.clueId, gridPos: mission.state.clueGridPos };
+      }
+
+      const breakers = Array.isArray(mission.state.breakers) ? mission.state.breakers : [];
+      const solutionSlots = Array.isArray(mission.state.solutionSlots) ? mission.state.solutionSlots : [];
+      for (const slot of solutionSlots) {
+        const br = breakers.find((b) => b && b.slot === slot && !b.on && b.gridPos);
+        if (br) return { id: br.id || null, gridPos: br.gridPos };
+      }
+      const next = breakers.find((b) => b && !b.on && b.gridPos);
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+    }
+
     if (mission.template === 'activateShrines') {
       const shrines = Array.isArray(mission.state.shrines) ? mission.state.shrines : [];
       const next = shrines.find((s) => s && !s.on && s.gridPos);
@@ -3668,6 +3982,17 @@ export class MissionDirector {
           if (sw?.on) continue;
           if (!sw?.gridPos) continue;
           targets.push({ collected: false, id: sw.id || null, gridPos: sw.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'reroutePower') {
+        if (mission.state.powered) continue;
+        if (!mission.state.clueRead && mission.state.clueId && mission.state.clueGridPos) {
+          targets.push({ collected: false, id: mission.state.clueId, gridPos: mission.state.clueGridPos, missionId: mission.id, template: mission.template });
+        }
+        const breakers = Array.isArray(mission.state.breakers) ? mission.state.breakers : [];
+        for (const br of breakers) {
+          if (br?.on) continue;
+          if (!br?.gridPos) continue;
+          targets.push({ collected: false, id: br.id || null, gridPos: br.gridPos, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'activateShrines') {
         const shrines = Array.isArray(mission.state.shrines) ? mission.state.shrines : [];
