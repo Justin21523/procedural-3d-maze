@@ -396,6 +396,7 @@ export class MissionDirector {
     if (template === 'photographEvidence') {
       mission.state.photos = 0;
       mission.state.required = 0;
+      mission.state.seconds = 0;
       mission.state.targets = [];
       return;
     }
@@ -693,7 +694,8 @@ export class MissionDirector {
         this.spawnSearchAndTagRoom(mission, { avoid: [spawn, exit] });
       } else if (template === 'photographEvidence') {
         const required = clamp(Math.round(mission.params.count ?? 3), 1, 24);
-        mission.state = { photos: 0, required, targets: [] };
+        const seconds = clamp(Math.round(mission.params.seconds ?? mission.params.holdSeconds ?? 2), 1, 30);
+        mission.state = { photos: 0, required, seconds, targets: [] };
         this.spawnPhotographEvidence(mission, { avoid: [spawn, exit] });
       } else if (template === 'holdToScan') {
         const count = clamp(Math.round(mission.params.count ?? 1), 1, 24);
@@ -2553,6 +2555,7 @@ export class MissionDirector {
     }
 
     mission.state.required = tiles.length;
+    mission.state.photos = 0;
     mission.state.targets = [];
 
     for (let i = 0; i < tiles.length; i++) {
@@ -2691,6 +2694,8 @@ export class MissionDirector {
       ? clamp(aimMinDotParam, 0.2, 0.9999)
       : Math.cos((aimAngleDeg * Math.PI) / 180);
     const aimOffsetY = clamp(toFinite(mission.params.aimOffsetY, 0.7) ?? 0.7, 0, 2.5);
+    const seconds = clamp(Math.round(mission.state.seconds ?? mission.params.seconds ?? mission.params.holdSeconds ?? 2), 1, 30);
+    mission.state.seconds = seconds;
 
     for (let i = 0; i < tiles.length; i++) {
       if (!this.canSpawnMissionObject(1)) break;
@@ -2714,20 +2719,23 @@ export class MissionDirector {
           gridPos: { x: pos.x, y: pos.y },
           object3d,
           maxDistance,
-          prompt: () => `E: ${label}`,
-          interact: () => ({ ok: true, picked: true, message: 'Photo captured' }),
+          prompt: () => `Hold C to photograph (${seconds}s)`,
+          interact: () => ({ ok: true, message: `Hold C to photograph (${seconds}s)` }),
           meta: {
             missionId: mission.id,
             template: mission.template,
             index: i,
             aimMinDot,
             aimOffsetY,
-            aimHint: 'Keep the target centered'
+            aimHint: 'Keep the target centered',
+            seconds,
+            maxDistance,
+            requiresCamera: true
           }
         })
       );
       this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
-      mission.state.targets.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, photographed: false });
+      mission.state.targets.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, heldForSec: 0, completed: false });
     }
 
     mission.state.required = mission.state.targets.length;
@@ -3820,9 +3828,9 @@ export class MissionDirector {
       const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
       if (Number.isFinite(meta.index)) {
         const t = targets[meta.index];
-        if (t && !t.photographed) t.photographed = true;
+        if (t && !t.completed && !t.photographed) t.completed = true;
       }
-      const photos = targets.filter((t) => t?.photographed).length;
+      const photos = targets.filter((t) => t?.completed || t?.photographed).length;
       mission.state.photos = Math.min(mission.state.required || photos, photos);
       if ((mission.state.required || 0) > 0 && photos >= (mission.state.required || 0)) {
         this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All photos captured.', seconds: 1.6 });
@@ -4436,10 +4444,10 @@ export class MissionDirector {
             : 'Use the minimap: focus on large themed rooms to cover ground faster.';
       } else if (m.template === 'photographEvidence') {
         hintText = tier === 1
-          ? 'Aim at the target and press E to take a photo.'
+          ? 'Hold C to use the camera and keep the target centered.'
           : tier === 2
-            ? 'Get close enough and keep the target centered.'
-            : 'If you cannot interact, try stepping closer or clearing line of sight.';
+            ? 'Stay within range and keep line of sight while holding C until the capture completes.'
+            : 'If progress resets, re-center the target and keep holding C for the full duration.';
       } else if (m.template === 'deliverItemToTerminal') {
         hintText = tier === 1
           ? 'Collect all packages first.'
@@ -4560,10 +4568,141 @@ export class MissionDirector {
     if (playerGridPos && Number.isFinite(playerGridPos.x) && Number.isFinite(playerGridPos.y)) {
       const ws = this.worldState;
       const cam = this.interactables?.getCameraObject?.() || null;
+      const cameraToolActive = payload?.cameraToolActive === true;
       const tileSize = CONFIG.TILE_SIZE || 1;
       const camDir = new THREE.Vector3();
       const targetWorld = new THREE.Vector3();
       const toTarget = new THREE.Vector3();
+
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'photographEvidence') continue;
+        if (this.isMissionComplete(mission)) continue;
+
+        const seconds = clamp(Math.round(mission.state.seconds ?? mission.params?.seconds ?? mission.params?.holdSeconds ?? 2), 1, 30);
+        mission.state.seconds = seconds;
+
+        const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+        const required = Number(mission.state.required) || targets.length || 0;
+        mission.state.required = required;
+
+        const done = targets.filter((t) => t?.completed || t?.photographed).length;
+        mission.state.photos = Math.min(required, done);
+        if (required > 0 && done >= required) continue;
+
+        if (!cameraToolActive || !cam || typeof cam.getWorldDirection !== 'function' || !cam.position) {
+          for (const t of targets) {
+            if (!t || t.completed || t.photographed) continue;
+            t.heldForSec = 0;
+          }
+          continue;
+        }
+
+        cam.getWorldDirection(camDir);
+        if (camDir.lengthSq() > 1e-8) camDir.normalize();
+
+        let best = null;
+        let bestEntry = null;
+        let bestDot = -1;
+        let bestAimMinDot = 0;
+        let bestAimOffsetY = 0.7;
+        let bestMaxDistance = 3.2;
+
+        for (const t of targets) {
+          if (!t || t.completed || t.photographed) continue;
+          const gp = t.gridPos;
+          if (!gp || !Number.isFinite(gp.x) || !Number.isFinite(gp.y)) continue;
+
+          const entry = t.id ? (this.interactables?.get?.(t.id) || null) : null;
+          const aimMinDotRaw = Number(entry?.meta?.aimMinDot ?? mission.params?.aimMinDot);
+          const aimAngleDeg = clamp(toFinite(mission.params?.aimAngleDeg, 18) ?? 18, 5, 60);
+          const aimMinDot = Number.isFinite(aimMinDotRaw)
+            ? clamp(aimMinDotRaw, 0.2, 0.9999)
+            : Math.cos((aimAngleDeg * Math.PI) / 180);
+          const aimOffsetY = clamp(toFinite(entry?.meta?.aimOffsetY ?? mission.params?.aimOffsetY, 0.7) ?? 0.7, 0, 2.5);
+          const maxDistance = clamp(toFinite(entry?.meta?.maxDistance ?? mission.params?.maxDistance, 3.2) ?? 3.2, 1.5, 10);
+
+          const losOk = ws?.hasLineOfSight ? !!ws.hasLineOfSight(playerGridPos, gp) : true;
+          if (!losOk) continue;
+
+          const distTiles = manhattan(playerGridPos, gp);
+          if (distTiles > Math.ceil(maxDistance)) continue;
+
+          const targetWorldX = gp.x * tileSize + tileSize / 2;
+          const targetWorldZ = gp.y * tileSize + tileSize / 2;
+          targetWorld.set(targetWorldX, aimOffsetY, targetWorldZ);
+          toTarget.subVectors(targetWorld, cam.position);
+          if (toTarget.lengthSq() <= 1e-8) continue;
+          toTarget.normalize();
+
+          const dot = camDir.dot(toTarget);
+          if (dot < aimMinDot) continue;
+
+          if (dot > bestDot) {
+            bestDot = dot;
+            best = t;
+            bestEntry = entry;
+            bestAimMinDot = aimMinDot;
+            bestAimOffsetY = aimOffsetY;
+            bestMaxDistance = maxDistance;
+          }
+        }
+
+        for (const t of targets) {
+          if (!t || t.completed || t.photographed) continue;
+
+          if (t !== best) {
+            t.heldForSec = 0;
+            continue;
+          }
+
+          const gp = t.gridPos;
+          const losOk = ws?.hasLineOfSight ? !!ws.hasLineOfSight(playerGridPos, gp) : true;
+          const distTiles = manhattan(playerGridPos, gp);
+          const distOk = distTiles <= Math.ceil(bestMaxDistance);
+
+          let aimedOk = false;
+          if (losOk && distOk) {
+            cam.getWorldDirection(camDir);
+            if (camDir.lengthSq() > 1e-8) camDir.normalize();
+
+            const targetWorldX = gp.x * tileSize + tileSize / 2;
+            const targetWorldZ = gp.y * tileSize + tileSize / 2;
+            targetWorld.set(targetWorldX, bestAimOffsetY, targetWorldZ);
+            toTarget.subVectors(targetWorld, cam.position);
+            if (toTarget.lengthSq() > 1e-8) {
+              toTarget.normalize();
+              const dot = camDir.dot(toTarget);
+              aimedOk = dot >= bestAimMinDot;
+            }
+          }
+
+          if (aimedOk) {
+            t.heldForSec = Math.min(seconds, (Number(t.heldForSec) || 0) + 1);
+          } else {
+            t.heldForSec = 0;
+          }
+
+          if ((Number(t.heldForSec) || 0) >= seconds) {
+            t.completed = true;
+            t.heldForSec = seconds;
+
+            if (bestEntry) {
+              bestEntry.enabled = false;
+              if (bestEntry.object3d) bestEntry.object3d.visible = false;
+            }
+
+            const nextDone = targets.filter((x) => x?.completed || x?.photographed).length;
+            mission.state.photos = Math.min(required, nextDone);
+
+            if (required > 0 && nextDone >= required) {
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All photos captured.', seconds: 1.8 });
+            } else {
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Photo captured (${nextDone}/${required})`, seconds: 1.4 });
+            }
+          }
+        }
+      }
 
       for (const mission of this.missions.values()) {
         if (!mission) continue;
@@ -4981,7 +5120,13 @@ export class MissionDirector {
       return (mission.state.tagged || 0) >= (mission.state.required || 0);
     }
     if (mission.template === 'photographEvidence') {
-      return (mission.state.photos || 0) >= (mission.state.required || 0);
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      const required = Number(mission.state.required) || targets.length || 0;
+      if (required <= 0) return true;
+      const photos = targets.filter((t) => t?.completed || t?.photographed).length;
+      mission.state.photos = Math.min(required, photos);
+      mission.state.required = required;
+      return photos >= required;
     }
     if (mission.template === 'holdToScan') {
       if (mission.state.completed) return true;
@@ -5197,7 +5342,9 @@ export class MissionDirector {
         return `Tag targets (${mission.state.tagged || 0}/${mission.state.required || 0})`;
       }
       if (mission.template === 'photographEvidence') {
-        return `Photograph evidence (${mission.state.photos || 0}/${mission.state.required || 0})`;
+        const seconds = clamp(Math.round(mission.state.seconds ?? mission.params?.seconds ?? mission.params?.holdSeconds ?? 2), 1, 30);
+        const suffix = seconds > 0 ? ` — hold C (${seconds}s)` : '';
+        return `Photograph evidence (${mission.state.photos || 0}/${mission.state.required || 0})${suffix}`;
       }
       if (mission.template === 'holdToScan') {
         if (mission.state.completed) return 'Scanning complete. Reach the exit.';
@@ -5483,10 +5630,23 @@ export class MissionDirector {
       };
     }
     if (mission.template === 'photographEvidence') {
+      const seconds = clamp(Math.round(mission.state.seconds ?? mission.params?.seconds ?? mission.params?.holdSeconds ?? 2), 1, 30);
+      mission.state.seconds = seconds;
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      const required = Number(mission.state.required) || targets.length || 0;
+      const photos = targets.filter((t) => t?.completed || t?.photographed).length;
+      const next = targets.find((t) => t && !(t.completed || t.photographed)) || null;
+      const heldForSec = Number(next?.heldForSec) || 0;
+      const remaining = Math.max(0, seconds - heldForSec);
       return {
-        photos: mission.state.photos || 0,
-        required: mission.state.required || 0,
-        targetsTotal: Array.isArray(mission.state.targets) ? mission.state.targets.length : 0
+        photos: Math.min(required, photos),
+        required,
+        seconds,
+        heldForSec,
+        remaining,
+        nextTargetId: next?.id || null,
+        nextTargetGridPos: next?.gridPos || null,
+        targetsTotal: targets.length
       };
     }
     if (mission.template === 'holdToScan') {
@@ -5922,7 +6082,7 @@ export class MissionDirector {
 
     if (mission.template === 'photographEvidence') {
       const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
-      const next = targets.find((t) => t && !t.photographed && t.gridPos);
+      const next = targets.find((t) => t && !(t.completed || t.photographed) && t.gridPos);
       return next ? { id: next.id || null, gridPos: next.gridPos } : null;
     }
 
@@ -6217,7 +6377,7 @@ export class MissionDirector {
         if ((mission.state.photos || 0) >= (mission.state.required || 0)) continue;
         const points = Array.isArray(mission.state.targets) ? mission.state.targets : [];
         for (const point of points) {
-          if (point?.photographed) continue;
+          if (point?.completed || point?.photographed) continue;
           if (!point?.gridPos) continue;
           targets.push({ collected: false, id: point.id || null, gridPos: point.gridPos, missionId: mission.id, template: mission.template });
         }
