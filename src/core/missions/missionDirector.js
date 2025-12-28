@@ -350,6 +350,14 @@ export class MissionDirector {
       return;
     }
 
+    if (template === 'doorLockNetwork') {
+      mission.state.total = 0;
+      mission.state.unlocked = 0;
+      mission.state.doors = [];
+      mission.state.lastBlockedDoor = null;
+      return;
+    }
+
     if (template === 'placeItemsAtAltars') {
       mission.state.itemId = String(mission.state.itemId || mission.params?.itemId || 'relic').trim() || 'relic';
       mission.state.itemsCollected = 0;
@@ -643,6 +651,14 @@ export class MissionDirector {
           doorApproachGridPos: null
         };
         this.spawnLockedDoor(mission, { avoid: [spawn, exit] });
+      } else if (template === 'doorLockNetwork') {
+        mission.state = {
+          total: 0,
+          unlocked: 0,
+          doors: [],
+          lastBlockedDoor: null
+        };
+        this.spawnDoorLockNetwork(mission, { avoid: [spawn, exit] });
       } else if (template === 'placeKeysAtLocks') {
         const keys = clamp(Math.round(mission.params.keys ?? mission.params.items ?? mission.params.count ?? 3), 1, 24);
         mission.state = {
@@ -1970,6 +1986,239 @@ export class MissionDirector {
       })
     );
     this.interactableMeta.set(keyId, { missionId: mission.id, template: mission.template });
+  }
+
+  spawnDoorLockNetwork(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws?.grid || !ws?.setObstacle) return;
+
+    const rawDoors = Array.isArray(mission.params.doors) ? mission.params.doors : null;
+    if (!rawDoors || rawDoors.length === 0) {
+      this.failOpenMission(mission, 'no doors configured');
+      return;
+    }
+
+    const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+    const defs = [];
+    for (let i = 0; i < rawDoors.length; i++) {
+      const raw = rawDoors[i];
+      if (!isPlainObject(raw)) continue;
+
+      const slotRaw = String(raw.slot || raw.id || '').trim();
+      const slot = (slotRaw || toSlotLabel(i)).trim().toUpperCase();
+      const labelRaw = String(raw.label || '').trim();
+      const label = labelRaw || `Unlock Door ${slot}`;
+
+      const requiresMissionId = String(raw.requiresMissionId || raw.missionId || raw.requiresMission || '').trim() || null;
+      const hintMissionId = String(raw.hintMissionId || raw.prereqMissionId || requiresMissionId || '').trim() || null;
+
+      const requiresItem = raw.requiresItem ?? null;
+      const consumeItem = raw.consumeItem === true ? true : (raw.consumeItem ? raw.consumeItem : null);
+
+      const lockedMessage = String(raw.lockedMessage || raw.messageLocked || '').trim();
+
+      defs.push({
+        slot,
+        label,
+        requiresMissionId,
+        hintMissionId,
+        requiresItem,
+        consumeItem,
+        lockedMessage
+      });
+    }
+
+    if (defs.length === 0) {
+      this.failOpenMission(mission, 'no valid door entries');
+      return;
+    }
+
+    const doorBudget = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(defs.length, this.objectBudgetRemaining))
+      : defs.length;
+    const doorCount = Math.max(0, Math.min(defs.length, doorBudget));
+
+    if (doorCount <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const minDist = mission.params.minDistFromSpawn ?? 7;
+    const minDoorDist = mission.params.minDoorDist ?? 6;
+
+    const candidates = [];
+    for (let y = 0; y < ws.height; y++) {
+      for (let x = 0; x < ws.width; x++) {
+        if (ws.grid?.[y]?.[x] !== TILE_TYPES.DOOR) continue;
+        if (!ws.isWalkable?.(x, y)) continue;
+        const pos = { x, y };
+        if (avoid.some((p) => p && manhattan(p, pos) < minDist)) continue;
+        candidates.push(pos);
+      }
+    }
+
+    shuffleInPlace(candidates);
+
+    const picked = [];
+    const farEnough = (pos) => picked.every((p) => manhattan(p, pos) >= minDoorDist);
+    for (const pos of candidates) {
+      if (picked.length >= doorCount) break;
+      if (!farEnough(pos)) continue;
+      picked.push(pos);
+    }
+
+    if (picked.length < doorCount) {
+      const fallback = pickDistinctTiles(ws, doorCount - picked.length, {
+        allowedRoomTypes: Array.isArray(mission.params.roomTypesDoor)
+          ? mission.params.roomTypesDoor
+          : [ROOM_TYPES.CORRIDOR],
+        minDistFrom: avoid.concat(picked),
+        minDist,
+        margin: 0
+      });
+      for (const pos of fallback) {
+        if (picked.length >= doorCount) break;
+        if (!pos) continue;
+        if (!farEnough(pos)) continue;
+        picked.push({ x: pos.x, y: pos.y });
+      }
+    }
+
+    if (picked.length === 0) {
+      this.failOpenMission(mission, 'no valid door tiles');
+      return;
+    }
+
+    const findApproachFor = (doorPos) => {
+      const dirs = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 }
+      ];
+      for (const d of dirs) {
+        const nx = doorPos.x + d.dx;
+        const ny = doorPos.y + d.dy;
+        if (ws.isWalkable?.(nx, ny)) return { x: nx, y: ny };
+      }
+      return doorPos;
+    };
+
+    mission.state.total = picked.length;
+    mission.state.unlocked = 0;
+    mission.state.doors = [];
+    mission.state.lastBlockedDoor = null;
+
+    for (let i = 0; i < picked.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const doorPos = picked[i];
+      const def = defs[i] || { slot: toSlotLabel(i), label: `Unlock Door ${toSlotLabel(i)}` };
+      const approachPos = findApproachFor(doorPos);
+
+      // Block the tile until unlocked (affects pathing + movement).
+      ws.setObstacle(doorPos.x, doorPos.y, true);
+
+      const doorObject = createLockedDoorObject({ unlocked: false });
+      const doorWorld = gridToWorldCenter(doorPos);
+      doorObject.position.set(doorWorld.x, 0, doorWorld.z);
+
+      // Align door plane with corridor axis (best-effort).
+      const ew = (ws.isWalkable?.(doorPos.x - 1, doorPos.y) ? 1 : 0) + (ws.isWalkable?.(doorPos.x + 1, doorPos.y) ? 1 : 0);
+      const ns = (ws.isWalkable?.(doorPos.x, doorPos.y - 1) ? 1 : 0) + (ws.isWalkable?.(doorPos.x, doorPos.y + 1) ? 1 : 0);
+      doorObject.rotation.y = ew > ns ? Math.PI / 2 : 0;
+
+      this.scene.add(doorObject);
+      this.spawnedObjects.push(doorObject);
+      this.consumeMissionObjectBudget(1);
+
+      const slot = String(def.slot || toSlotLabel(i)).trim().toUpperCase() || toSlotLabel(i);
+      const doorId = `networkDoor:${mission.id}:${slot}`;
+
+      const doorState = {
+        id: doorId,
+        slot,
+        unlocked: false,
+        doorGridPos: { x: doorPos.x, y: doorPos.y },
+        doorApproachGridPos: { x: approachPos.x, y: approachPos.y },
+        requiresMissionId: def.requiresMissionId || null,
+        hintMissionId: def.hintMissionId || null,
+        object3d: doorObject
+      };
+      mission.state.doors.push(doorState);
+
+      const lockedMessage = def.lockedMessage || 'Door is locked.';
+      const requiresMissionId = def.requiresMissionId || null;
+
+      this.registeredIds.push(
+        this.interactables.register({
+          id: doorId,
+          kind: 'networkDoor',
+          label: def.label || `Unlock Door ${slot}`,
+          gridPos: { x: doorPos.x, y: doorPos.y },
+          object3d: doorObject,
+          maxDistance: 2.7,
+          requiresItem: def.requiresItem || null,
+          consumeItem: def.consumeItem || null,
+          prompt: () => {
+            const door = mission.state.doors?.[i] || null;
+            if (door?.unlocked) return `E: Door ${slot} (Unlocked)`;
+            return `E: ${def.label || `Unlock Door ${slot}`}`;
+          },
+          interact: ({ entry }) => {
+            const door = mission.state.doors?.[i] || null;
+            if (!door) return { ok: false, message: 'Door error' };
+
+            if (door.unlocked) {
+              if (entry) {
+                entry.requiresItem = [];
+                entry.consumeItem = [];
+              }
+              return { ok: true, message: 'Door already unlocked', state: { unlocked: true } };
+            }
+
+            if (requiresMissionId) {
+              const prereq = this.missions.get(requiresMissionId) || null;
+              if (prereq && !this.isMissionComplete(prereq)) {
+                mission.state.lastBlockedDoor = { doorId, slot, reason: 'mission', missionId: requiresMissionId };
+                return { ok: false, message: lockedMessage, state: { unlocked: false, blocked: true, reason: 'mission', missionId: requiresMissionId } };
+              }
+            }
+
+            door.unlocked = true;
+            ws.setObstacle(doorPos.x, doorPos.y, false);
+            setLockedDoorState(doorObject, { unlocked: true });
+
+            if (entry) {
+              entry.requiresItem = [];
+              entry.consumeItem = [];
+            }
+
+            const unlockedCount = mission.state.doors.filter((d) => d?.unlocked).length;
+            mission.state.unlocked = unlockedCount;
+            mission.state.lastBlockedDoor = null;
+
+            return { ok: true, message: `Door ${slot} unlocked`, state: { unlocked: true } };
+          },
+          meta: {
+            missionId: mission.id,
+            template: mission.template,
+            index: i,
+            slot,
+            requiresMissionId: def.requiresMissionId || null,
+            hintMissionId: def.hintMissionId || null
+          }
+        })
+      );
+      this.interactableMeta.set(doorId, { missionId: mission.id, template: mission.template, index: i, slot });
+    }
+
+    mission.state.total = mission.state.doors.length;
+    mission.state.unlocked = mission.state.doors.filter((d) => d?.unlocked).length;
+
+    if (mission.state.total <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+    }
   }
 
   spawnPlaceKeysAtLocks(mission, options = {}) {
@@ -3849,6 +4098,23 @@ export class MissionDirector {
           mission.state.unlocked = true;
         }
       }
+    } else if (mission.template === 'doorLockNetwork') {
+      if (payload?.kind === 'networkDoor') {
+        if (Array.isArray(mission.state.doors) && Number.isFinite(meta.index)) {
+          const door = mission.state.doors[meta.index] || null;
+          const unlocked = !!payload?.result?.state?.unlocked;
+          if (door && unlocked) {
+            door.unlocked = true;
+            mission.state.unlocked = mission.state.doors.filter((d) => d?.unlocked).length;
+            mission.state.lastBlockedDoor = null;
+          } else if (!unlocked && door && payload?.ok === false) {
+            const reason = payload?.result?.reason || payload?.result?.state?.reason || 'unknown';
+            const itemId = payload?.result?.itemId || null;
+            const missionId = payload?.result?.state?.missionId || door.requiresMissionId || door.hintMissionId || null;
+            mission.state.lastBlockedDoor = { doorId: id, slot: door.slot || meta.slot || null, reason, itemId, missionId };
+          }
+        }
+      }
     } else if (mission.template === 'placeKeysAtLocks') {
       if (payload?.kind === 'lockSocket') {
         const filled = !!payload?.result?.state?.filled;
@@ -4696,6 +4962,12 @@ export class MissionDirector {
     if (mission.template === 'lockedDoor') {
       return !!mission.state.unlocked;
     }
+    if (mission.template === 'doorLockNetwork') {
+      const total = Number(mission.state.total) || (Array.isArray(mission.state.doors) ? mission.state.doors.length : 0);
+      if (total <= 0) return true;
+      const unlocked = Number(mission.state.unlocked) || (Array.isArray(mission.state.doors) ? mission.state.doors.filter((d) => d?.unlocked).length : 0);
+      return unlocked >= total;
+    }
     if (mission.template === 'placeItemsAtAltars') {
       return (mission.state.altarsFilled || 0) >= (mission.state.altarsTotal || 0);
     }
@@ -4878,6 +5150,26 @@ export class MissionDirector {
       }
       if (mission.template === 'lockedDoor') {
         return mission.state.unlocked ? 'Door unlocked.' : 'Find a key and unlock the door';
+      }
+      if (mission.template === 'doorLockNetwork') {
+        const doors = Array.isArray(mission.state.doors) ? mission.state.doors : [];
+        const total = Number(mission.state.total) || doors.length || 0;
+        const unlocked = Number(mission.state.unlocked) || doors.filter((d) => d?.unlocked).length;
+        const nextDoor = doors.find((d) => d && !d.unlocked) || null;
+        const slot = String(nextDoor?.slot || '').trim() || '?';
+
+        const blocked = mission.state.lastBlockedDoor || null;
+        if (blocked && blocked.doorId && nextDoor?.id && blocked.doorId === nextDoor.id) {
+          if (blocked.reason === 'requires_item' || blocked.reason === 'consume_failed') {
+            const itemLabel = blocked.itemId ? String(blocked.itemId).replaceAll('_', ' ') : 'item';
+            return `Unlock doors (${unlocked}/${total}) — Door ${slot}: Need ${itemLabel}`;
+          }
+          if (blocked.reason === 'mission') {
+            return `Unlock doors (${unlocked}/${total}) — Door ${slot}: Complete objective`;
+          }
+        }
+
+        return nextDoor ? `Unlock doors (${unlocked}/${total}) — Next: Door ${slot}` : `Unlock doors (${unlocked}/${total})`;
       }
       if (mission.template === 'placeItemsAtAltars') {
         const itemsRequired = Number(mission.state.itemsRequired) || 0;
@@ -5141,6 +5433,20 @@ export class MissionDirector {
         doorId: mission.state.doorId || null,
         doorGridPos: mission.state.doorGridPos || null,
         doorApproachGridPos: mission.state.doorApproachGridPos || null
+      };
+    }
+    if (mission.template === 'doorLockNetwork') {
+      const doors = Array.isArray(mission.state.doors) ? mission.state.doors : [];
+      const total = Number(mission.state.total) || doors.length || 0;
+      const unlocked = Number(mission.state.unlocked) || doors.filter((d) => d?.unlocked).length;
+      const nextDoor = doors.find((d) => d && !d.unlocked) || null;
+      return {
+        total,
+        unlocked,
+        lastBlockedDoor: mission.state.lastBlockedDoor || null,
+        nextDoorId: nextDoor?.id || null,
+        nextDoorSlot: nextDoor?.slot || null,
+        nextDoorApproachGridPos: nextDoor?.doorApproachGridPos || null
       };
     }
     if (mission.template === 'placeItemsAtAltars') {
@@ -5543,6 +5849,33 @@ export class MissionDirector {
       return null;
     }
 
+    if (mission.template === 'doorLockNetwork') {
+      const doors = Array.isArray(mission.state.doors) ? mission.state.doors : [];
+      const total = Number(mission.state.total) || doors.length || 0;
+      const unlocked = Number(mission.state.unlocked) || doors.filter((d) => d?.unlocked).length;
+      mission.state.total = total;
+      mission.state.unlocked = unlocked;
+
+      if (total <= 0 || unlocked >= total) return null;
+
+      const nextDoor = doors.find((d) => d && !d.unlocked && d.doorApproachGridPos) || doors.find((d) => d && !d.unlocked) || null;
+      if (!nextDoor) return null;
+
+      const prereqId = String(nextDoor.requiresMissionId || nextDoor.hintMissionId || '').trim();
+      if (prereqId && prereqId !== mission.id) {
+        const prereq = this.missions.get(prereqId) || null;
+        if (prereq && !this.isMissionComplete(prereq)) {
+          const next = this.getNextInteractableForMission(prereq);
+          if (next) return next;
+        }
+      }
+
+      if (nextDoor.id && nextDoor.doorApproachGridPos) {
+        return { id: nextDoor.id, gridPos: nextDoor.doorApproachGridPos };
+      }
+      return null;
+    }
+
     if (mission.template === 'placeItemsAtAltars') {
       if ((mission.state.altarsFilled || 0) >= (mission.state.altarsTotal || 0)) return null;
       const items = Array.isArray(mission.state.items) ? mission.state.items : [];
@@ -5809,6 +6142,20 @@ export class MissionDirector {
         }
         if (mission.state.keyPicked && mission.state.doorId && mission.state.doorApproachGridPos) {
           targets.push({ collected: false, id: mission.state.doorId, gridPos: mission.state.doorApproachGridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'doorLockNetwork') {
+        const doors = Array.isArray(mission.state.doors) ? mission.state.doors : [];
+        const total = Number(mission.state.total) || doors.length || 0;
+        const unlocked = Number(mission.state.unlocked) || doors.filter((d) => d?.unlocked).length;
+        mission.state.total = total;
+        mission.state.unlocked = unlocked;
+        if (total <= 0 || unlocked >= total) continue;
+
+        for (const door of doors) {
+          if (!door || door.unlocked) continue;
+          const gp = door.doorApproachGridPos || null;
+          if (!gp) continue;
+          targets.push({ collected: false, id: door.id || null, gridPos: gp, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'placeItemsAtAltars') {
         if ((mission.state.altarsFilled || 0) >= (mission.state.altarsTotal || 0)) continue;

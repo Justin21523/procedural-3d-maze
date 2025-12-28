@@ -121,6 +121,7 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     'codeLock',
     'unlockExit',
     'lockedDoor',
+    'doorLockNetwork',
     'placeKeysAtLocks',
     'placeItemsAtAltars',
     'searchRoomTypeN',
@@ -297,6 +298,56 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     validateRoomTypesParam('roomTypesKey');
     validateRoomTypesParam('roomTypesDoor');
     validateRoomTypesParam('roomTypes');
+  } else if (template === 'doorLockNetwork') {
+    if (!Array.isArray(params.doors) || params.doors.length === 0) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'doors'], 'doors should be a non-empty array');
+    } else {
+      for (let j = 0; j < params.doors.length; j++) {
+        const door = params.doors[j];
+        if (!isPlainObject(door)) {
+          pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'doors', String(j)], 'Door entry should be an object');
+          continue;
+        }
+
+        if (door.slot !== undefined) {
+          const slot = String(door.slot || '').trim();
+          if (!slot) {
+            pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'doors', String(j), 'slot'], 'slot should be a non-empty string');
+          }
+        }
+        if (door.label !== undefined) {
+          const label = String(door.label || '').trim();
+          if (!label) {
+            pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'doors', String(j), 'label'], 'label should be a non-empty string');
+          }
+        }
+        if (door.requiresMissionId !== undefined) {
+          const id = String(door.requiresMissionId || '').trim();
+          if (!id) {
+            pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'doors', String(j), 'requiresMissionId'], 'requiresMissionId should be a non-empty string');
+          }
+        }
+        if (door.hintMissionId !== undefined) {
+          const id = String(door.hintMissionId || '').trim();
+          if (!id) {
+            pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'doors', String(j), 'hintMissionId'], 'hintMissionId should be a non-empty string');
+          }
+        }
+        if (door.requiresItem !== undefined) {
+          const t = typeof door.requiresItem;
+          if (!(t === 'string' || isPlainObject(door.requiresItem) || Array.isArray(door.requiresItem))) {
+            pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'doors', String(j), 'requiresItem'], 'requiresItem should be a string, object, or array');
+          }
+        }
+        if (door.consumeItem !== undefined) {
+          const t = typeof door.consumeItem;
+          if (!(t === 'boolean' || t === 'string' || isPlainObject(door.consumeItem) || Array.isArray(door.consumeItem))) {
+            pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'doors', String(j), 'consumeItem'], 'consumeItem should be a boolean, string, object, or array');
+          }
+        }
+      }
+    }
+    validateRoomTypesParam('roomTypesDoor');
   } else if (template === 'placeKeysAtLocks') {
     const keys = Number(params.keys ?? params.items ?? params.count);
     if (!Number.isFinite(keys) || keys <= 0) {

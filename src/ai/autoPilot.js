@@ -250,6 +250,7 @@ export class AutoPilot {
       objectiveTemplate === 'uploadEvidence' ||
       objectiveTemplate === 'codeLock' ||
       objectiveTemplate === 'lockedDoor' ||
+      objectiveTemplate === 'doorLockNetwork' ||
       objectiveTemplate === 'placeKeysAtLocks' ||
       objectiveTemplate === 'placeItemsAtAltars' ||
       objectiveTemplate === 'searchRoomTypeN' ||
