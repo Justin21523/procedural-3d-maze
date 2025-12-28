@@ -3,6 +3,7 @@ import { Pathfinding } from './pathfinding.js';
 import { CONFIG } from '../core/config.js';
 import { TaskRunner } from './tasks/taskRunner.js';
 import { InteractTask } from './tasks/interactTask.js';
+import { MoveToTask } from './tasks/moveToTask.js';
 import { SearchTask } from './tasks/searchTask.js';
 
 /**
@@ -163,7 +164,13 @@ export class AutoPilot {
       ? `${String(objective.id || '')}:${String(objective.template || '')}`
       : '';
 
-    return `${exitUnlocked === false ? '0' : '1'}:${objectiveKey}:${pending}`;
+    const template = String(objective?.template || '').trim();
+    const extra =
+      template === 'hideForSeconds'
+        ? `:H${objective?.progress?.hidden ? '1' : '0'}`
+        : (template === 'escort' ? `:S${objective?.progress?.started ? '1' : '0'}` : '');
+
+    return `${exitUnlocked === false ? '0' : '1'}:${objectiveKey}${extra}:${pending}`;
   }
 
   ensureTaskQueue(playerGrid, missionState) {
@@ -189,6 +196,19 @@ export class AutoPilot {
     const objectiveId = String(objective?.id || '').trim();
     const objectiveTemplate = String(objective?.template || '').trim();
     const objectiveNextId = String(objective?.nextInteractId || '').trim();
+    const objectiveGoalGrid = objective?.progress?.goalGridPos || null;
+
+    if (objectiveTemplate === 'escort') {
+      const started = !!objective?.progress?.started;
+      const completed = !!objective?.progress?.completed;
+      if (!completed && started && objectiveGoalGrid && Number.isFinite(objectiveGoalGrid.x) && Number.isFinite(objectiveGoalGrid.y)) {
+        this.taskTargetType = 'exit';
+        this.taskRunner.setTasks([
+          new MoveToTask(objectiveGoalGrid, { threshold: 0 })
+        ]);
+        return;
+      }
+    }
 
     // Interactable objectives: go to the closest target and interact.
     const wantsInteractTargets =
@@ -202,7 +222,11 @@ export class AutoPilot {
       objectiveTemplate === 'lockedDoor' ||
       objectiveTemplate === 'placeItemsAtAltars' ||
       objectiveTemplate === 'searchRoomTypeN' ||
-      objectiveTemplate === 'photographEvidence';
+      objectiveTemplate === 'photographEvidence' ||
+      objectiveTemplate === 'deliverItemToTerminal' ||
+      objectiveTemplate === 'switchSequence' ||
+      objectiveTemplate === 'hideForSeconds' ||
+      objectiveTemplate === 'escort';
 
     if (wantsInteractTargets) {
       const objectiveTargets = (objectiveId && objectiveTemplate !== 'exit')
@@ -524,6 +548,55 @@ export class AutoPilot {
       }
     }
 
+    if (objective?.template === 'hideForSeconds') {
+      const completed = !!objective?.progress?.completed;
+      const remaining = Number(objective?.progress?.remaining);
+      const hidden = !!objective?.progress?.hidden;
+      if (!completed && hidden && Number.isFinite(remaining) && remaining > 0) {
+        return {
+          move: { x: 0, y: 0 },
+          lookYaw: Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0,
+          lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
+          sprint: false,
+          block,
+          interact: false,
+          fire: false
+        };
+      }
+
+      if (completed && hidden) {
+        const forcedId = this.playerController?.getForcedInteractId?.() || null;
+        if (forcedId) {
+          return {
+            move: { x: 0, y: 0 },
+            lookYaw: Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0,
+            lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
+            sprint: false,
+            block,
+            interact: forcedId,
+            fire: false
+          };
+        }
+      }
+    }
+
+    if (objective?.template === 'escort') {
+      const started = !!objective?.progress?.started;
+      const completed = !!objective?.progress?.completed;
+      const goal = objective?.progress?.goalGridPos || null;
+      if (!completed && started && goal && goal.x === playerPos.x && goal.y === playerPos.y) {
+        return {
+          move: { x: 0, y: 0 },
+          lookYaw: Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0,
+          lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
+          sprint: false,
+          block,
+          interact: false,
+          fire: false
+        };
+      }
+    }
+
     // Track oscillation
     this.recordRecentTile(playerPos);
     this.handleNudgeTimer(deltaTime);
@@ -564,23 +637,77 @@ export class AutoPilot {
       (this.taskWantsInteract || (this.targetType === 'mission' && distToGoal <= 0)) &&
       (this.interactCooldown || 0) <= 0;
 
+    let interact = false;
     if (wantsInteract) {
-      this.interactCooldown = 0.65;
+      interact = typeof this.taskInteractId === 'string' && this.taskInteractId.trim()
+        ? this.taskInteractId.trim()
+        : true;
     }
 
-    const interact = wantsInteract
-      ? (typeof this.taskInteractId === 'string' && this.taskInteractId.trim() ? this.taskInteractId.trim() : true)
-      : false;
+    let interactLook = null;
+    if (objective?.template === 'photographEvidence' && (this.taskWantsInteract || wantsInteract)) {
+      const wantsId =
+        (typeof this.taskInteractId === 'string' && this.taskInteractId.trim())
+          ? this.taskInteractId.trim()
+          : (typeof interact === 'string' ? interact.trim() : String(objective?.nextInteractId || '').trim());
+      const nextId = String(objective?.nextInteractId || '').trim();
+      const nextGridPos = objective?.nextInteractGridPos || null;
+      let targetGridPos = wantsId && wantsId === nextId ? nextGridPos : null;
+
+      if (!targetGridPos && wantsId) {
+        const targets = Array.isArray(this._missionState?.targets) ? this._missionState.targets : [];
+        const hit = targets.find((t) => String(t?.id || '').trim() === wantsId);
+        targetGridPos = hit?.gridPos || null;
+      }
+
+      if (targetGridPos && Number.isFinite(targetGridPos.x) && Number.isFinite(targetGridPos.y)) {
+        const cam = this.playerController?.camera || null;
+        const camObj = cam?.getCamera ? cam.getCamera() : null;
+        const playerWorld = camObj?.position || this.playerController?.position || null;
+        if (playerWorld) {
+          const tileSize = CONFIG.TILE_SIZE || 1;
+          const targetWorldX = targetGridPos.x * tileSize + tileSize / 2;
+          const targetWorldZ = targetGridPos.y * tileSize + tileSize / 2;
+          const aimOffsetYRaw = Number(objective?.params?.aimOffsetY);
+          const targetWorldY = Number.isFinite(aimOffsetYRaw) ? aimOffsetYRaw : 0.7;
+
+          const dx = targetWorldX - playerWorld.x;
+          const dy = targetWorldY - playerWorld.y;
+          const dz = targetWorldZ - playerWorld.z;
+
+          const aimYaw = Math.atan2(-dx, -dz);
+          const aimPitch = Math.atan2(dy, Math.hypot(dx, dz));
+
+          const currentYaw = this.getCurrentYaw();
+          const deltaYaw = this.wrapAngle(aimYaw - currentYaw);
+          const currentPitch = this.getCurrentPitch();
+          const deltaPitch = aimPitch - currentPitch;
+
+          const alignYawRad = (12 * Math.PI) / 180;
+          const alignPitchRad = (14 * Math.PI) / 180;
+          const aligned = Math.abs(deltaYaw) <= alignYawRad && Math.abs(deltaPitch) <= alignPitchRad;
+
+          interactLook = { lookYaw: aimYaw, lookPitch: aimPitch, aligned };
+          if (interact && !aligned) {
+            interact = false;
+          }
+        }
+      }
+    }
+
+    if (interact) {
+      this.interactCooldown = 0.65;
+    }
 
     if (!this.currentPath || this.currentPath.length === 0) {
       return {
         move: { x: 0, y: 0 },
-        lookYaw: Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0,
-        lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
+        lookYaw: Number.isFinite(interactLook?.lookYaw) ? interactLook.lookYaw : (Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0),
+        lookPitch: Number.isFinite(interactLook?.lookPitch) ? interactLook.lookPitch : (Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null),
         sprint: false,
         block,
         interact,
-        fire: !!combat?.fire
+        fire: objective?.template === 'photographEvidence' && wantsInteract ? false : !!combat?.fire
       };
     }
 
@@ -614,8 +741,12 @@ export class AutoPilot {
     
     // Look towards target (absolute yaw, aligned with FirstPersonCamera where yaw=0 faces -Z)
     const yaw = Math.atan2(-dx, -dz);
-    const lookYaw = Number.isFinite(combat?.lookYaw) ? combat.lookYaw : yaw;
-    const lookPitch = Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null;
+    const lookYaw = Number.isFinite(interactLook?.lookYaw)
+      ? interactLook.lookYaw
+      : (Number.isFinite(combat?.lookYaw) ? combat.lookYaw : yaw);
+    const lookPitch = Number.isFinite(interactLook?.lookPitch)
+      ? interactLook.lookPitch
+      : (Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null);
 
     // 依距離與目標類型調整是否衝刺，避免在房間內狂暴衝刺貼牆
     let sprint = false;
@@ -669,7 +800,8 @@ export class AutoPilot {
       this.plan(playerPos);
     }
 
-    return { moveWorld, lookYaw, lookPitch, sprint, block, interact, fire: !!combat?.fire };
+    const fire = objective?.template === 'photographEvidence' && wantsInteract ? false : !!combat?.fire;
+    return { moveWorld, lookYaw, lookPitch, sprint, block, interact, fire };
   }
 
   computeCombatDirective(playerGrid, deltaTime, options = {}) {
