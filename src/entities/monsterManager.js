@@ -895,10 +895,15 @@ export class MonsterManager {
 
       command = command || { move: { x: 0, y: 0 }, lookYaw: 0, sprint: false };
       const moveDt = isFar ? (shouldTick ? tickDt : 0) : dt;
-      this.applyBrainCommand(monster, command, moveDt, {
-        allowSteering: !isFar,
-        allowLook: shouldTick
-      });
+      if (moveDt > 0) {
+        this.applyBrainCommand(monster, command, moveDt, {
+          allowSteering: !isFar,
+          allowLook: shouldTick
+        });
+      } else {
+        monster.isMoving = false;
+        monster.isSprinting = false;
+      }
 
       if (monster.updateAnimation) {
         if (!isFar || shouldTick) {
