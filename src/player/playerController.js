@@ -51,6 +51,9 @@ export class PlayerController {
     this.hidden = false;
     this.hiddenSpotId = null;
 
+    // Camera tool (used by photo missions)
+    this.cameraToolActive = false;
+
     // Spawn at a safe tile center
     const spawnPoint = worldState.getSpawnPoint();
     const worldSpawn = gridToWorld(spawnPoint.x, spawnPoint.y, CONFIG.TILE_SIZE);
@@ -69,6 +72,8 @@ export class PlayerController {
    * @param {Object|null} externalCommand
    */
   update(deltaTime, autopilotActive = false, externalCommand = null) {
+    this.updateCameraToolState(autopilotActive, externalCommand);
+
     // Allow autopilot movement even without pointer lock
     if (!this.input.isPointerLocked() && !autopilotActive) {
       return;
@@ -135,6 +140,17 @@ export class PlayerController {
 
     // Clear one-frame external move
     this.externalMove = null;
+  }
+
+  updateCameraToolState(autopilotActive, externalCommand = null) {
+    const wantsExternal = !!(externalCommand && externalCommand.camera);
+    const wantsManual = !!(this.input?.isPointerLocked?.() && this.input?.isKeyPressed?.('KeyC'));
+    void autopilotActive;
+    this.cameraToolActive = wantsExternal || wantsManual;
+  }
+
+  isCameraToolActive() {
+    return !!this.cameraToolActive;
   }
 
   /**

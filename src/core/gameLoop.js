@@ -137,10 +137,11 @@ export class GameLoop {
         if (bus?.emit && Number.isFinite(elapsedSec) && elapsedSec !== this.lastTimerTickSec) {
           this.lastTimerTickSec = elapsedSec;
           const playerGridPos = this.player?.getGridPosition ? this.player.getGridPosition() : null;
-          bus.emit(EVENTS.TIMER_TICK, { elapsedSec, playerGridPos });
+          const cameraToolActive = !!this.player?.isCameraToolActive?.();
+          bus.emit(EVENTS.TIMER_TICK, { elapsedSec, playerGridPos, cameraToolActive });
         }
       }
-    }, { order: 5 });
+    }, { order: 24 });
 
     systems.add('autopilot', (dt, ctx) => {
       ctx.hasPlayerMove = false;
@@ -169,6 +170,7 @@ export class GameLoop {
           this.player.input.isKeyPressed('KeyA') ||
           this.player.input.isKeyPressed('KeyS') ||
           this.player.input.isKeyPressed('KeyD') ||
+          this.player.input.isKeyPressed('KeyC') ||
           this.player.input.isKeyPressed('ShiftLeft') ||
           this.player.input.isKeyPressed('ShiftRight');
 
