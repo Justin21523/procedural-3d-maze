@@ -108,6 +108,7 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     'findKeycard',
     'collectEvidence',
     'restorePower',
+    'reroutePower',
     'activateShrines',
     'restorePowerFuses',
     'uploadEvidence',
@@ -165,6 +166,25 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     if (params.switches !== undefined && (!Number.isFinite(switches) || switches <= 0)) {
       pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'switches'], 'switches should be a positive number');
     }
+    validateRoomTypesParam('roomTypes');
+  } else if (template === 'reroutePower') {
+    const breakers = Number(params.breakers ?? params.switches ?? params.count);
+    if ((params.breakers !== undefined || params.switches !== undefined || params.count !== undefined) && (!Number.isFinite(breakers) || breakers <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'breakers'], 'breakers should be a positive number');
+    }
+    const onCount = Number(params.onCount ?? params.requiredOn);
+    if ((params.onCount !== undefined || params.requiredOn !== undefined) && (!Number.isFinite(onCount) || onCount <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'onCount'], 'onCount should be a positive number');
+    }
+    if (params.requireClue !== undefined && typeof params.requireClue !== 'boolean') {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'requireClue'], 'requireClue should be a boolean');
+    }
+    if (params.solutionSlots !== undefined && !Array.isArray(params.solutionSlots) && typeof params.solutionSlots !== 'string') {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'solutionSlots'], 'solutionSlots should be an array of slots or a string like \"A,C\"');
+    }
+    validateRoomTypesParam('roomTypesBreakers');
+    validateRoomTypesParam('roomTypesClue');
+    validateRoomTypesParam('roomTypesTargets');
     validateRoomTypesParam('roomTypes');
   } else if (template === 'activateShrines') {
     const shrines = Number(params.shrines ?? params.count);
