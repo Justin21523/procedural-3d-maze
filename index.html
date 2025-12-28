@@ -671,14 +671,52 @@
       <input type="checkbox" id="monster-models-toggle" checked>
     </div>
 
-    <div class="setting-item">
-      <button id="respawn-enemies">🔁 Respawn Enemies</button>
-    </div>
+	    <div class="setting-item">
+	      <button id="respawn-enemies">🔁 Respawn Enemies</button>
+	    </div>
 
-    <div style="margin-top: 10px; color: #ffd700; font-weight: bold;">Weapon</div>
+	    <div style="margin-top: 10px; color: #ffd700; font-weight: bold;">Squad</div>
 
-    <div class="setting-item">
-      <label>Show Weapon:</label>
+	    <div class="setting-item">
+	      <label>Max Squad Shooters:</label>
+	      <input type="range" id="squad-max-shooters" min="1" max="4" step="1" value="2">
+	      <span class="value" id="squad-max-shooters-value">2</span>
+	    </div>
+
+	    <div class="setting-item">
+	      <label>Fire Grant (s):</label>
+	      <input type="range" id="squad-fire-grant" min="0.2" max="2.0" step="0.1" value="0.9">
+	      <span class="value" id="squad-fire-grant-value">0.9</span>
+	    </div>
+
+	    <div class="setting-item">
+	      <label>Flank Hold (s):</label>
+	      <input type="range" id="squad-flank-hold" min="2" max="14" step="1" value="8">
+	      <span class="value" id="squad-flank-hold-value">8</span>
+	    </div>
+
+	    <div class="setting-item">
+	      <label>Memory (s):</label>
+	      <input type="range" id="squad-memory" min="2" max="15" step="0.5" value="6.5">
+	      <span class="value" id="squad-memory-value">6.5</span>
+	    </div>
+
+	    <div class="setting-item">
+	      <label>Noise Share (s):</label>
+	      <input type="range" id="squad-noise-share" min="0" max="5" step="0.1" value="2.0">
+	      <span class="value" id="squad-noise-share-value">2.0</span>
+	    </div>
+
+	    <div class="setting-item">
+	      <label>Cover Radius (tiles):</label>
+	      <input type="range" id="squad-cover-radius" min="5" max="14" step="1" value="9">
+	      <span class="value" id="squad-cover-radius-value">9</span>
+	    </div>
+
+	    <div style="margin-top: 10px; color: #ffd700; font-weight: bold;">Weapon</div>
+
+	    <div class="setting-item">
+	      <label>Show Weapon:</label>
       <input type="checkbox" id="weapon-view-toggle" checked>
     </div>
 
