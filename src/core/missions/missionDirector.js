@@ -15,9 +15,14 @@ import {
   createFusePanelObject,
   setFusePanelState,
   createTerminalObject,
-  setTerminalState
+  setTerminalState,
+  createLockedDoorObject,
+  setLockedDoorState,
+  createAltarObject,
+  setAltarState,
+  createPhotoTargetObject
 } from './missionObjects.js';
-import { ROOM_CONFIGS, ROOM_TYPES } from '../../world/tileTypes.js';
+import { ROOM_CONFIGS, ROOM_TYPES, TILE_TYPES } from '../../world/tileTypes.js';
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -69,6 +74,61 @@ function shuffleInPlace(list) {
     list[j] = tmp;
   }
   return list;
+}
+
+function pickDistinctRoomTiles(worldState, count, options = {}) {
+  const ws = worldState;
+  const desired = clamp(Math.round(count || 0), 0, 999);
+  if (!ws?.getRooms || !ws?.isWalkableWithMargin || desired <= 0) return [];
+
+  const allowedRoomTypes = Array.isArray(options.allowedRoomTypes) ? options.allowedRoomTypes : null;
+  const allowedSet = allowedRoomTypes && allowedRoomTypes.length > 0 ? new Set(allowedRoomTypes) : null;
+  const avoid = Array.isArray(options.minDistFrom) ? options.minDistFrom.filter(Boolean) : [];
+  const minDist = Number.isFinite(options.minDist) ? options.minDist : 6;
+  const margin = Number.isFinite(options.margin) ? options.margin : 1;
+
+  const rooms = ws.getRooms().filter((r) => {
+    if (!r || !Array.isArray(r.tiles) || r.tiles.length === 0) return false;
+    if (allowedSet && !allowedSet.has(r.type)) return false;
+    return true;
+  });
+  if (rooms.length === 0) return [];
+
+  shuffleInPlace(rooms);
+
+  const picked = [];
+  for (const room of rooms) {
+    if (picked.length >= desired) break;
+
+    const tiles = Array.isArray(room.tiles) ? room.tiles.slice() : [];
+    if (tiles.length === 0) continue;
+    shuffleInPlace(tiles);
+
+    let chosen = null;
+    for (const t of tiles) {
+      if (!t) continue;
+      const x = Math.round(Number(t.x));
+      const y = Math.round(Number(t.y));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      if (!ws.isWalkableWithMargin(x, y, margin)) continue;
+
+      let ok = true;
+      for (const a of avoid) {
+        if (manhattan({ x, y }, a) < minDist) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+
+      chosen = { x, y, roomType: room.type };
+      break;
+    }
+
+    if (chosen) picked.push(chosen);
+  }
+
+  return picked.slice(0, desired);
 }
 
 export class MissionDirector {
@@ -262,6 +322,39 @@ export class MissionDirector {
           terminalGridPos: null
         };
         this.spawnUploadEvidence(mission, { avoid: [spawn, exit] });
+      } else if (template === 'lockedDoor') {
+        mission.state = {
+          unlocked: false,
+          keyItemId: String(mission.params.keyItemId || mission.params.itemId || 'door_key').trim() || 'door_key',
+          keyId: null,
+          keyGridPos: null,
+          keyPicked: false,
+          doorId: null,
+          doorGridPos: null,
+          doorApproachGridPos: null
+        };
+        this.spawnLockedDoor(mission, { avoid: [spawn, exit] });
+      } else if (template === 'placeItemsAtAltars') {
+        const itemsRequired = clamp(Math.round(mission.params.items ?? mission.params.count ?? 3), 1, 24);
+        const altarsTotal = clamp(Math.round(mission.params.altars ?? itemsRequired), 1, 24);
+        mission.state = {
+          itemId: String(mission.params.itemId || 'relic').trim() || 'relic',
+          itemsRequired,
+          itemsCollected: 0,
+          altarsTotal,
+          altarsFilled: 0,
+          items: [],
+          altars: []
+        };
+        this.spawnPlaceItemsAtAltars(mission, { avoid: [spawn, exit] });
+      } else if (template === 'searchRoomTypeN') {
+        const required = clamp(Math.round(mission.params.count ?? 3), 1, 24);
+        mission.state = { searched: 0, required, targets: [] };
+        this.spawnSearchRoomTypeN(mission, { avoid: [spawn, exit] });
+      } else if (template === 'photographEvidence') {
+        const required = clamp(Math.round(mission.params.count ?? 3), 1, 24);
+        mission.state = { photos: 0, required, targets: [] };
+        this.spawnPhotographEvidence(mission, { avoid: [spawn, exit] });
       } else if (template === 'surviveTimer') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 60), 5, 3600);
         mission.state = { seconds, completed: false };
@@ -917,6 +1010,393 @@ export class MissionDirector {
     this.interactableMeta.set(keypadId, { missionId: mission.id, template: mission.template });
   }
 
+  spawnLockedDoor(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws?.grid || !ws?.setObstacle) return;
+
+    const minDist = mission.params.minDistFromSpawn ?? 7;
+    const candidates = [];
+    for (let y = 0; y < ws.height; y++) {
+      for (let x = 0; x < ws.width; x++) {
+        if (ws.grid?.[y]?.[x] !== TILE_TYPES.DOOR) continue;
+        if (!ws.isWalkable?.(x, y)) continue;
+        const pos = { x, y };
+        if (avoid.some((p) => p && manhattan(p, pos) < minDist)) continue;
+        candidates.push(pos);
+      }
+    }
+
+    const fallbackDoor = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes: Array.isArray(mission.params.roomTypesDoor) ? mission.params.roomTypesDoor : null,
+      minDistFrom: avoid,
+      minDist,
+      margin: 0
+    });
+
+    const doorPos = candidates.length > 0
+      ? candidates[Math.floor(Math.random() * candidates.length)]
+      : (fallbackDoor[0] || null);
+    if (!doorPos) return;
+
+    const findApproach = () => {
+      const dirs = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 }
+      ];
+      for (const d of dirs) {
+        const nx = doorPos.x + d.dx;
+        const ny = doorPos.y + d.dy;
+        if (ws.isWalkable?.(nx, ny)) return { x: nx, y: ny };
+      }
+      return doorPos;
+    };
+
+    const approachPos = findApproach();
+
+    // Block the tile until unlocked (affects pathing + movement).
+    ws.setObstacle(doorPos.x, doorPos.y, true);
+
+    const doorObject = createLockedDoorObject({ unlocked: false });
+    const doorWorld = gridToWorldCenter(doorPos);
+    doorObject.position.set(doorWorld.x, 0, doorWorld.z);
+
+    // Align door plane with corridor axis (best-effort).
+    const ew = (ws.isWalkable?.(doorPos.x - 1, doorPos.y) ? 1 : 0) + (ws.isWalkable?.(doorPos.x + 1, doorPos.y) ? 1 : 0);
+    const ns = (ws.isWalkable?.(doorPos.x, doorPos.y - 1) ? 1 : 0) + (ws.isWalkable?.(doorPos.x, doorPos.y + 1) ? 1 : 0);
+    doorObject.rotation.y = ew > ns ? Math.PI / 2 : 0;
+
+    this.scene.add(doorObject);
+    this.spawnedObjects.push(doorObject);
+
+    const keyItemId = String(mission.state.keyItemId || 'door_key').trim() || 'door_key';
+    const consumeKey = mission.params.consumeKey !== false;
+
+    const doorId = `lockedDoor:${mission.id}`;
+    mission.state.doorId = doorId;
+    mission.state.doorGridPos = { x: doorPos.x, y: doorPos.y };
+    mission.state.doorApproachGridPos = { x: approachPos.x, y: approachPos.y };
+
+    const label = 'Unlock Door';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: doorId,
+        kind: 'lockedDoor',
+        label,
+        gridPos: { x: doorPos.x, y: doorPos.y },
+        object3d: doorObject,
+        maxDistance: 2.7,
+        requiresItem: { itemId: keyItemId, count: 1, message: 'Need a key.' },
+        consumeItem: consumeKey ? true : null,
+        prompt: () => mission.state.unlocked ? 'E: Door (Unlocked)' : `E: ${label}`,
+        interact: ({ entry }) => {
+          if (mission.state.unlocked) {
+            if (entry) {
+              entry.requiresItem = [];
+              entry.consumeItem = [];
+            }
+            return { ok: true, message: 'Door is already unlocked', state: { unlocked: true } };
+          }
+
+          mission.state.unlocked = true;
+          ws.setObstacle(doorPos.x, doorPos.y, false);
+          setLockedDoorState(doorObject, { unlocked: true });
+          if (entry) {
+            entry.requiresItem = [];
+            entry.consumeItem = [];
+          }
+          return { ok: true, message: 'Door unlocked', state: { unlocked: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, unlocked: false }
+      })
+    );
+    this.interactableMeta.set(doorId, { missionId: mission.id, template: mission.template });
+
+    const keyRoomTypes = Array.isArray(mission.params.roomTypesKey)
+      ? mission.params.roomTypesKey
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const spawnPos = ws.getSpawnPoint?.() || avoid[0] || null;
+    const reachable = new Set();
+    if (spawnPos && Number.isFinite(spawnPos.x) && Number.isFinite(spawnPos.y)) {
+      const q = [{ x: spawnPos.x, y: spawnPos.y }];
+      const dirs = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 }
+      ];
+      while (q.length > 0) {
+        const cur = q.pop();
+        const key = `${cur.x},${cur.y}`;
+        if (reachable.has(key)) continue;
+        if (!ws.isWalkable?.(cur.x, cur.y)) continue;
+        reachable.add(key);
+        for (const d of dirs) {
+          q.push({ x: cur.x + d.dx, y: cur.y + d.dy });
+        }
+      }
+    }
+
+    const keyTiles = pickDistinctTiles(ws, 12, {
+      allowedRoomTypes: keyRoomTypes,
+      minDistFrom: avoid.concat([doorPos]),
+      minDist,
+      margin: 1
+    });
+    if (keyTiles.length === 0) return;
+
+    const keyPos = (reachable.size > 0
+      ? keyTiles.find((t) => reachable.has(`${t.x},${t.y}`))
+      : null) || keyTiles[0];
+
+    const keyObject = createKeycardObject();
+    const keyWorld = gridToWorldCenter(keyPos);
+    keyObject.position.set(keyWorld.x, 0, keyWorld.z);
+    keyObject.rotation.y = Math.random() * Math.PI * 2;
+
+    this.scene.add(keyObject);
+    this.spawnedObjects.push(keyObject);
+
+    const keyId = `key:${mission.id}`;
+    mission.state.keyId = keyId;
+    mission.state.keyGridPos = { x: keyPos.x, y: keyPos.y };
+
+    const keyLabel = 'Pick Up Key';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: keyId,
+        kind: 'key',
+        label: keyLabel,
+        gridPos: { x: keyPos.x, y: keyPos.y },
+        object3d: keyObject,
+        prompt: () => `E: ${keyLabel}`,
+        interact: () => ({ ok: true, picked: true, message: 'Key acquired' }),
+        meta: { missionId: mission.id, template: mission.template, itemId: keyItemId }
+      })
+    );
+    this.interactableMeta.set(keyId, { missionId: mission.id, template: mission.template });
+  }
+
+  spawnPlaceItemsAtAltars(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const itemId = String(mission.state.itemId || mission.params.itemId || 'relic').trim() || 'relic';
+    const itemsRequired = clamp(Math.round(mission.state.itemsRequired ?? 3), 1, 24);
+    const altarsTotal = clamp(Math.round(mission.state.altarsTotal ?? itemsRequired), 1, 24);
+    const minDist = mission.params.minDistFromSpawn ?? 7;
+
+    const itemRoomTypes = Array.isArray(mission.params.roomTypesItems)
+      ? mission.params.roomTypesItems
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+    const altarRoomTypes = Array.isArray(mission.params.roomTypesAltars)
+      ? mission.params.roomTypesAltars
+      : (Array.isArray(mission.params.roomTypesTargets) ? mission.params.roomTypesTargets : null);
+
+    const itemTiles = pickDistinctRoomTiles(ws, itemsRequired, {
+      allowedRoomTypes: itemRoomTypes,
+      minDistFrom: avoid,
+      minDist,
+      margin: 1
+    });
+
+    mission.state.items = [];
+    for (let i = 0; i < itemTiles.length; i++) {
+      const pos = itemTiles[i];
+      const object3d = createEvidenceObject();
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+
+      const interactableId = `relic:${mission.id}:${i + 1}`;
+      const label = 'Collect Relic';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'relic',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: 'Relic collected' }),
+          meta: { missionId: mission.id, template: mission.template, index: i, itemId }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.items.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, collected: false });
+    }
+
+    const avoidForAltars = avoid.concat(itemTiles);
+    const altarTiles = pickDistinctRoomTiles(ws, altarsTotal, {
+      allowedRoomTypes: altarRoomTypes,
+      minDistFrom: avoidForAltars,
+      minDist,
+      margin: 1
+    });
+
+    mission.state.altars = [];
+    for (let i = 0; i < altarTiles.length; i++) {
+      const pos = altarTiles[i];
+      const object3d = createAltarObject({ filled: false });
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+
+      const altarId = `altar:${mission.id}:${i + 1}`;
+      const label = 'Place Relic';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: altarId,
+          kind: 'altar',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          maxDistance: 2.7,
+          requiresItem: { itemId, count: 1, message: 'Need a relic.' },
+          consumeItem: true,
+          prompt: () => {
+            const altar = mission.state.altars?.[i] || null;
+            return altar?.filled ? 'E: Altar (Filled)' : `E: ${label}`;
+          },
+          interact: ({ entry }) => {
+            const altar = mission.state.altars?.[i] || null;
+            if (altar?.filled) {
+              if (entry) {
+                entry.requiresItem = [];
+                entry.consumeItem = [];
+              }
+              return { ok: true, message: 'Already placed', state: { filled: true } };
+            }
+
+            setAltarState(object3d, { filled: true });
+            if (entry) {
+              entry.requiresItem = [];
+              entry.consumeItem = [];
+            }
+            return { ok: true, message: 'Relic placed', state: { filled: true } };
+          },
+          meta: { missionId: mission.id, template: mission.template, index: i, itemId, filled: false }
+        })
+      );
+      this.interactableMeta.set(altarId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.altars.push({ id: altarId, gridPos: { x: pos.x, y: pos.y }, filled: false });
+    }
+  }
+
+  spawnSearchRoomTypeN(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const roomTypes = Array.isArray(mission.params.roomTypesTargets)
+      ? mission.params.roomTypesTargets
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const required = clamp(Math.round(mission.state.required ?? mission.params.count ?? 3), 1, 24);
+    const tiles = pickDistinctRoomTiles(ws, required, {
+      allowedRoomTypes: roomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (tiles.length === 0) return;
+
+    mission.state.required = tiles.length;
+    mission.state.targets = [];
+
+    for (let i = 0; i < tiles.length; i++) {
+      const pos = tiles[i];
+      const slot = toSlotLabel(i);
+      const object3d = createClueNoteObject(slot);
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+
+      const interactableId = `search:${mission.id}:${slot}`;
+      const label = 'Inspect';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'inspect',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: `Inspected ${slot}` }),
+          meta: { missionId: mission.id, template: mission.template, index: i, slot }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i, slot });
+      mission.state.targets.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, searched: false, slot });
+    }
+  }
+
+  spawnPhotographEvidence(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const roomTypes = Array.isArray(mission.params.roomTypesTargets)
+      ? mission.params.roomTypesTargets
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const required = clamp(Math.round(mission.state.required ?? mission.params.count ?? 3), 1, 24);
+    const tiles = pickDistinctRoomTiles(ws, required, {
+      allowedRoomTypes: roomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (tiles.length === 0) return;
+
+    mission.state.required = tiles.length;
+    mission.state.targets = [];
+
+    const maxDistance = clamp(toFinite(mission.params.maxDistance, 3.2) ?? 3.2, 1.5, 8);
+
+    for (let i = 0; i < tiles.length; i++) {
+      const pos = tiles[i];
+      const object3d = createPhotoTargetObject();
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+
+      const interactableId = `photo:${mission.id}:${i + 1}`;
+      const label = 'Photograph';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'photoTarget',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          maxDistance,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: 'Photo captured' }),
+          meta: { missionId: mission.id, template: mission.template, index: i }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.targets.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, photographed: false });
+    }
+  }
+
   onKeypadCodeSubmitted(payload) {
     const keypadId = String(payload?.keypadId || '').trim();
     if (!keypadId) return;
@@ -1034,6 +1514,50 @@ export class MissionDirector {
         mission.state.codeReady = true;
         this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All clues found. Find the keypad.', seconds: 2.2 });
       }
+    } else if (mission.template === 'lockedDoor') {
+      if (payload?.kind === 'key') {
+        mission.state.keyPicked = true;
+        const itemId = String(mission.state.keyItemId || mission.params.keyItemId || mission.params.itemId || 'door_key').trim() || 'door_key';
+        this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: payload?.actorKind || 'player', itemId, count: 1, sourceId: id });
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Key acquired. Find the locked door.', seconds: 1.8 });
+      }
+    } else if (mission.template === 'placeItemsAtAltars') {
+      const items = Array.isArray(mission.state.items) ? mission.state.items : [];
+      if (Number.isFinite(meta.index)) {
+        const item = items[meta.index];
+        if (item && !item.collected) {
+          item.collected = true;
+          const itemId = String(mission.state.itemId || mission.params.itemId || 'relic').trim() || 'relic';
+          this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: payload?.actorKind || 'player', itemId, count: 1, sourceId: id });
+        }
+      }
+      const collected = items.filter((i) => i?.collected).length;
+      mission.state.itemsCollected = Math.min(mission.state.itemsRequired || collected, collected);
+      if ((mission.state.itemsRequired || 0) > 0 && collected >= (mission.state.itemsRequired || 0)) {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All relics collected. Find the altars.', seconds: 1.9 });
+      }
+    } else if (mission.template === 'searchRoomTypeN') {
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      if (Number.isFinite(meta.index)) {
+        const t = targets[meta.index];
+        if (t && !t.searched) t.searched = true;
+      }
+      const searched = targets.filter((t) => t?.searched).length;
+      mission.state.searched = Math.min(mission.state.required || searched, searched);
+      if ((mission.state.required || 0) > 0 && searched >= (mission.state.required || 0)) {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Search complete.', seconds: 1.6 });
+      }
+    } else if (mission.template === 'photographEvidence') {
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      if (Number.isFinite(meta.index)) {
+        const t = targets[meta.index];
+        if (t && !t.photographed) t.photographed = true;
+      }
+      const photos = targets.filter((t) => t?.photographed).length;
+      mission.state.photos = Math.min(mission.state.required || photos, photos);
+      if ((mission.state.required || 0) > 0 && photos >= (mission.state.required || 0)) {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All photos captured.', seconds: 1.6 });
+      }
     }
 
     this.syncStatus();
@@ -1133,6 +1657,23 @@ export class MissionDirector {
         const unlocked = !!payload?.result?.state?.unlocked;
         if (unlocked) {
           mission.state.unlocked = true;
+        }
+      }
+    } else if (mission.template === 'lockedDoor') {
+      if (payload?.kind === 'lockedDoor') {
+        const unlocked = !!payload?.result?.state?.unlocked;
+        if (unlocked) {
+          mission.state.unlocked = true;
+        }
+      }
+    } else if (mission.template === 'placeItemsAtAltars') {
+      if (payload?.kind === 'altar') {
+        const filled = !!payload?.result?.state?.filled;
+        if (filled && Array.isArray(mission.state.altars) && Number.isFinite(meta.index)) {
+          const altar = mission.state.altars[meta.index];
+          if (altar) altar.filled = true;
+          const filledCount = mission.state.altars.filter((a) => a?.filled).length;
+          mission.state.altarsFilled = Math.min(mission.state.altarsTotal || filledCount, filledCount);
         }
       }
     }
@@ -1353,6 +1894,30 @@ export class MissionDirector {
           : tier === 2
             ? 'After unlocking, press E again to finish the level.'
             : 'If it stays locked, you missed a required objective.';
+      } else if (m.template === 'lockedDoor') {
+        hintText = tier === 1
+          ? 'Find the key.'
+          : tier === 2
+            ? 'After picking up the key, return to the locked door and press E.'
+            : 'The door icon is a glowing frame; you only need to get close enough to interact.';
+      } else if (m.template === 'placeItemsAtAltars') {
+        hintText = tier === 1
+          ? 'Collect the relics.'
+          : tier === 2
+            ? 'After collecting relics, place them at the altars (press E).'
+            : 'If an altar says you need a relic, you missed a pickup.';
+      } else if (m.template === 'searchRoomTypeN') {
+        hintText = tier === 1
+          ? 'Inspect the marked clues (press E).'
+          : tier === 2
+            ? 'Each clue spawns in a different room; explore new rooms to find them.'
+            : 'Use the minimap: focus on large themed rooms to cover ground faster.';
+      } else if (m.template === 'photographEvidence') {
+        hintText = tier === 1
+          ? 'Aim at the target and press E to take a photo.'
+          : tier === 2
+            ? 'Get close enough and keep the target centered.'
+            : 'If you cannot interact, try stepping closer or clearing line of sight.';
       } else {
         hintText = tier === 1
           ? 'Follow the current objective.'
@@ -1467,6 +2032,18 @@ export class MissionDirector {
     }
     if (mission.template === 'unlockExit') {
       return !!mission.state.unlocked;
+    }
+    if (mission.template === 'lockedDoor') {
+      return !!mission.state.unlocked;
+    }
+    if (mission.template === 'placeItemsAtAltars') {
+      return (mission.state.altarsFilled || 0) >= (mission.state.altarsTotal || 0);
+    }
+    if (mission.template === 'searchRoomTypeN') {
+      return (mission.state.searched || 0) >= (mission.state.required || 0);
+    }
+    if (mission.template === 'photographEvidence') {
+      return (mission.state.photos || 0) >= (mission.state.required || 0);
     }
     if (mission.template === 'stealthNoise') {
       return !!mission.state.completed;
@@ -1587,6 +2164,25 @@ export class MissionDirector {
       if (mission.template === 'unlockExit') {
         return mission.state.unlocked ? 'Exit unlocked. Reach the exit.' : 'Unlock the exit (press E at the exit)';
       }
+      if (mission.template === 'lockedDoor') {
+        return mission.state.unlocked ? 'Door unlocked.' : 'Find a key and unlock the door';
+      }
+      if (mission.template === 'placeItemsAtAltars') {
+        const itemsRequired = Number(mission.state.itemsRequired) || 0;
+        const itemsCollected = Number(mission.state.itemsCollected) || 0;
+        const altarsTotal = Number(mission.state.altarsTotal) || 0;
+        const altarsFilled = Number(mission.state.altarsFilled) || 0;
+        if (itemsRequired > 0 && itemsCollected < itemsRequired) {
+          return `Collect relics (${itemsCollected}/${itemsRequired})`;
+        }
+        return `Place relics (${altarsFilled}/${altarsTotal})`;
+      }
+      if (mission.template === 'searchRoomTypeN') {
+        return `Search rooms (${mission.state.searched || 0}/${mission.state.required || 0})`;
+      }
+      if (mission.template === 'photographEvidence') {
+        return `Photograph evidence (${mission.state.photos || 0}/${mission.state.required || 0})`;
+      }
       if (mission.template === 'stealthNoise') {
         if (mission.state.failed) return 'Stay quiet (failed)';
         const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
@@ -1702,6 +2298,40 @@ export class MissionDirector {
     }
     if (mission.template === 'unlockExit') {
       return { unlocked: !!mission.state.unlocked };
+    }
+    if (mission.template === 'lockedDoor') {
+      return {
+        unlocked: !!mission.state.unlocked,
+        keyItemId: mission.state.keyItemId || null,
+        keyPicked: !!mission.state.keyPicked,
+        keyGridPos: mission.state.keyGridPos || null,
+        doorId: mission.state.doorId || null,
+        doorGridPos: mission.state.doorGridPos || null,
+        doorApproachGridPos: mission.state.doorApproachGridPos || null
+      };
+    }
+    if (mission.template === 'placeItemsAtAltars') {
+      return {
+        itemId: mission.state.itemId || null,
+        itemsCollected: mission.state.itemsCollected || 0,
+        itemsRequired: mission.state.itemsRequired || 0,
+        altarsFilled: mission.state.altarsFilled || 0,
+        altarsTotal: mission.state.altarsTotal || 0
+      };
+    }
+    if (mission.template === 'searchRoomTypeN') {
+      return {
+        searched: mission.state.searched || 0,
+        required: mission.state.required || 0,
+        targetsTotal: Array.isArray(mission.state.targets) ? mission.state.targets.length : 0
+      };
+    }
+    if (mission.template === 'photographEvidence') {
+      return {
+        photos: mission.state.photos || 0,
+        required: mission.state.required || 0,
+        targetsTotal: Array.isArray(mission.state.targets) ? mission.state.targets.length : 0
+      };
     }
     if (mission.template === 'stealthNoise') {
       const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
@@ -1891,6 +2521,46 @@ export class MissionDirector {
       return null;
     }
 
+    if (mission.template === 'lockedDoor') {
+      if (mission.state.unlocked) return null;
+      if (!mission.state.keyPicked && mission.state.keyId && mission.state.keyGridPos) {
+        return { id: mission.state.keyId, gridPos: mission.state.keyGridPos };
+      }
+      if (mission.state.doorId && mission.state.doorApproachGridPos) {
+        return { id: mission.state.doorId, gridPos: mission.state.doorApproachGridPos };
+      }
+      if (mission.state.doorId && mission.state.doorGridPos) {
+        return { id: mission.state.doorId, gridPos: mission.state.doorGridPos };
+      }
+      return null;
+    }
+
+    if (mission.template === 'placeItemsAtAltars') {
+      if ((mission.state.altarsFilled || 0) >= (mission.state.altarsTotal || 0)) return null;
+      const items = Array.isArray(mission.state.items) ? mission.state.items : [];
+      const altars = Array.isArray(mission.state.altars) ? mission.state.altars : [];
+
+      if ((mission.state.itemsCollected || 0) < (mission.state.itemsRequired || 0)) {
+        const nextItem = items.find((i) => i && !i.collected && i.gridPos);
+        return nextItem ? { id: nextItem.id || null, gridPos: nextItem.gridPos } : null;
+      }
+
+      const nextAltar = altars.find((a) => a && !a.filled && a.gridPos);
+      return nextAltar ? { id: nextAltar.id || null, gridPos: nextAltar.gridPos } : null;
+    }
+
+    if (mission.template === 'searchRoomTypeN') {
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      const next = targets.find((t) => t && !t.searched && t.gridPos);
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+    }
+
+    if (mission.template === 'photographEvidence') {
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      const next = targets.find((t) => t && !t.photographed && t.gridPos);
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+    }
+
     if (mission.template === 'unlockExit') {
       const gp = this.exitPoint?.getGridPosition?.() || this.worldState?.getExitPoint?.() || null;
       return { id: 'exit', gridPos: gp };
@@ -1979,6 +2649,48 @@ export class MissionDirector {
         }
         if (mission.state.codeReady && !mission.state.unlocked && mission.state.keypadGridPos && mission.state.keypadId) {
           targets.push({ collected: false, id: mission.state.keypadId, gridPos: mission.state.keypadGridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'lockedDoor') {
+        if (mission.state.unlocked) continue;
+        if (!mission.state.keyPicked && mission.state.keyId && mission.state.keyGridPos) {
+          targets.push({ collected: false, id: mission.state.keyId, gridPos: mission.state.keyGridPos, missionId: mission.id, template: mission.template });
+        }
+        if (mission.state.keyPicked && mission.state.doorId && mission.state.doorApproachGridPos) {
+          targets.push({ collected: false, id: mission.state.doorId, gridPos: mission.state.doorApproachGridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'placeItemsAtAltars') {
+        if ((mission.state.altarsFilled || 0) >= (mission.state.altarsTotal || 0)) continue;
+        const items = Array.isArray(mission.state.items) ? mission.state.items : [];
+        const altars = Array.isArray(mission.state.altars) ? mission.state.altars : [];
+
+        if ((mission.state.itemsCollected || 0) < (mission.state.itemsRequired || 0)) {
+          for (const item of items) {
+            if (item?.collected) continue;
+            if (!item?.gridPos) continue;
+            targets.push({ collected: false, id: item.id || null, gridPos: item.gridPos, missionId: mission.id, template: mission.template });
+          }
+        } else {
+          for (const altar of altars) {
+            if (altar?.filled) continue;
+            if (!altar?.gridPos) continue;
+            targets.push({ collected: false, id: altar.id || null, gridPos: altar.gridPos, missionId: mission.id, template: mission.template });
+          }
+        }
+      } else if (mission.template === 'searchRoomTypeN') {
+        if ((mission.state.searched || 0) >= (mission.state.required || 0)) continue;
+        const points = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+        for (const point of points) {
+          if (point?.searched) continue;
+          if (!point?.gridPos) continue;
+          targets.push({ collected: false, id: point.id || null, gridPos: point.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'photographEvidence') {
+        if ((mission.state.photos || 0) >= (mission.state.required || 0)) continue;
+        const points = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+        for (const point of points) {
+          if (point?.photographed) continue;
+          if (!point?.gridPos) continue;
+          targets.push({ collected: false, id: point.id || null, gridPos: point.gridPos, missionId: mission.id, template: mission.template });
         }
       }
     }

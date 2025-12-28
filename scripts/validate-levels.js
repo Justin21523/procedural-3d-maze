@@ -118,7 +118,11 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     'killCount',
     'stealthNoise',
     'codeLock',
-    'unlockExit'
+    'unlockExit',
+    'lockedDoor',
+    'placeItemsAtAltars',
+    'searchRoomTypeN',
+    'photographEvidence'
   ]);
   if (template && !allowedTemplates.has(template)) {
     pushIssue(warnings, filePath, ['missions', 'list', String(index), 'template'], `Unknown mission template "${template}"`);
@@ -248,6 +252,58 @@ function validateMissionEntry(entry, filePath, index, missionIds, errors, warnin
     validateRoomTypesParam('roomTypesClues');
     validateRoomTypesParam('roomTypesKeypad');
     validateRoomTypesParam('keypadRoomTypes');
+  } else if (template === 'lockedDoor') {
+    if (params.keyItemId !== undefined) {
+      const itemId = String(params.keyItemId || '').trim();
+      if (!itemId) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'keyItemId'], 'keyItemId should be a non-empty string');
+      }
+    }
+    if (params.consumeKey !== undefined && typeof params.consumeKey !== 'boolean') {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'consumeKey'], 'consumeKey should be a boolean');
+    }
+    validateRoomTypesParam('roomTypesKey');
+    validateRoomTypesParam('roomTypesDoor');
+    validateRoomTypesParam('roomTypes');
+  } else if (template === 'placeItemsAtAltars') {
+    const items = Number(params.items ?? params.count);
+    const altars = Number(params.altars);
+    if (!Number.isFinite(items) || items <= 0) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'items'], 'items should be a positive number');
+    }
+    if (params.altars !== undefined && (!Number.isFinite(altars) || altars <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'altars'], 'altars should be a positive number');
+    }
+    if (params.itemId !== undefined) {
+      const itemId = String(params.itemId || '').trim();
+      if (!itemId) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'itemId'], 'itemId should be a non-empty string');
+      }
+    }
+    validateRoomTypesParam('roomTypesItems');
+    validateRoomTypesParam('roomTypesAltars');
+    validateRoomTypesParam('roomTypesTargets');
+    validateRoomTypesParam('roomTypes');
+  } else if (template === 'searchRoomTypeN') {
+    const count = Number(params.count);
+    if (params.count !== undefined && (!Number.isFinite(count) || count <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'count'], 'count should be a positive number');
+    }
+    validateRoomTypesParam('roomTypesTargets');
+    validateRoomTypesParam('roomTypes');
+  } else if (template === 'photographEvidence') {
+    const count = Number(params.count);
+    if (params.count !== undefined && (!Number.isFinite(count) || count <= 0)) {
+      pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'count'], 'count should be a positive number');
+    }
+    if (params.maxDistance !== undefined) {
+      const d = Number(params.maxDistance);
+      if (!Number.isFinite(d) || d <= 0) {
+        pushIssue(warnings, filePath, ['missions', 'list', String(index), 'params', 'maxDistance'], 'maxDistance should be a positive number');
+      }
+    }
+    validateRoomTypesParam('roomTypesTargets');
+    validateRoomTypesParam('roomTypes');
   } else if (template === 'unlockExit') {
     // no required params
   }
