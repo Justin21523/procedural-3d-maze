@@ -1,6 +1,8 @@
 const PAGES = [
   { key: 'game', label: 'Game', href: '/' },
+  { key: 'hub', label: 'Debug Hub', href: '/debug-hub.html' },
   { key: 'lab', label: 'Enemy Lab', href: '/enemy-lab.html' },
+  { key: 'ai', label: 'AI Test', href: '/test-ai.html' },
   { key: 'meta', label: 'Meta Preview', href: '/test-enemy-meta.html' },
   { key: 'diag', label: 'Diagnostics', href: '/diagnostic.html' }
 ];
@@ -103,18 +105,18 @@ export function installToolNav() {
   title.textContent = 'Tools';
   nav.appendChild(title);
 
-  const backBtn = document.createElement('button');
-  backBtn.type = 'button';
-  backBtn.textContent = 'Back';
-  backBtn.title = 'Go back (browser history)';
-  backBtn.addEventListener('click', () => {
+  const backToGameBtn = document.createElement('button');
+  backToGameBtn.type = 'button';
+  backToGameBtn.textContent = 'Back to Game';
+  backToGameBtn.title = 'Return to the main game (/)';
+  backToGameBtn.addEventListener('click', () => {
     try {
-      window.history.back();
+      window.location.assign('/');
     } catch {
       // ignore
     }
   });
-  nav.appendChild(backBtn);
+  nav.appendChild(backToGameBtn);
 
   for (const page of PAGES) {
     const a = document.createElement('a');
@@ -132,4 +134,3 @@ if (document.readyState === 'loading') {
 } else {
   installToolNav();
 }
-

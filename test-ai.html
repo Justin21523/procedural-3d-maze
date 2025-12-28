@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Import Test</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: rgba(20, 24, 32, 0.92);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: rgba(255, 255, 255, 0.92);
+      --muted: rgba(255, 255, 255, 0.68);
+      --good: #2ecc71;
+      --bad: #ff5a5a;
+      --accent: #7aa2ff;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+
+    .wrap {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 26px 16px 60px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 13px;
+    }
+
+    #status {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.25);
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    #status.ok { border-color: rgba(46, 204, 113, 0.45); color: var(--good); }
+    #status.bad { border-color: rgba(255, 90, 90, 0.55); color: var(--bad); }
+
+    button {
+      background: rgba(122, 162, 255, 0.15);
+      border: 1px solid rgba(122, 162, 255, 0.35);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 13px;
+      margin-left: 8px;
+    }
+
+    button:hover { background: rgba(122, 162, 255, 0.22); }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      margin-top: 12px;
+    }
+
+    ul {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    li span.ok { color: var(--good); }
+    li span.bad { color: var(--bad); }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.88);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>AI Import Test</h1>
+    <p>
+      Loads key AI modules to confirm they import cleanly in the browser. Expected result: <span style="color: var(--good); font-weight: 700;">All modules loaded successfully</span>.
+    </p>
+
+    <div>
+      <span id="status">(idle)</span>
+      <button id="runBtn" type="button">Run Test</button>
+    </div>
+
+    <div class="panel">
+      <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">
+        Imported modules:
+      </div>
+      <ul id="list"></ul>
+    </div>
+  </div>
+
+  <script type="module" src="/src/ui/toolNav.js"></script>
+  <script type="module">
+    const MODULES = [
+      '/src/ai/monsterTypes.js',
+      '/src/ai/enemyCatalog.js',
+      '/src/ai/autoPilot.js',
+      '/src/ai/modules/rangedCombat.js',
+      '/src/ai/components/tactics/squadCoordinator.js',
+      '/src/core/missions/missionDirector.js'
+    ];
+
+    const ui = {
+      status: document.getElementById('status'),
+      list: document.getElementById('list'),
+      runBtn: document.getElementById('runBtn')
+    };
+
+    function setStatus(kind, text) {
+      ui.status.classList.remove('ok', 'bad');
+      if (kind) ui.status.classList.add(kind);
+      ui.status.textContent = text;
+    }
+
+    function renderList(results) {
+      ui.list.innerHTML = '';
+      for (const r of results) {
+        const li = document.createElement('li');
+        const label = document.createElement('code');
+        label.textContent = r.path;
+        const mark = document.createElement('span');
+        mark.className = r.ok ? 'ok' : 'bad';
+        mark.textContent = r.ok ? ' ✓' : ' ✗';
+        li.appendChild(label);
+        li.appendChild(mark);
+        if (r.error) {
+          const div = document.createElement('div');
+          div.style.fontSize = '12px';
+          div.style.color = 'var(--bad)';
+          div.style.margin = '6px 0 0';
+          div.textContent = String(r.error?.message || r.error);
+          li.appendChild(div);
+        }
+        ui.list.appendChild(li);
+      }
+    }
+
+    async function run() {
+      ui.runBtn.disabled = true;
+      setStatus('', 'Running…');
+      const results = [];
+      for (const path of MODULES) {
+        try {
+          await import(path);
+          results.push({ path, ok: true });
+        } catch (err) {
+          results.push({ path, ok: false, error: err });
+        }
+      }
+
+      renderList(results);
+      const ok = results.every((r) => r.ok);
+      setStatus(ok ? 'ok' : 'bad', ok ? 'All modules loaded successfully' : 'Some modules failed to load');
+      ui.runBtn.disabled = false;
+    }
+
+    ui.runBtn.addEventListener('click', () => void run());
+    void run();
+  </script>
+</body>
+</html>
+
