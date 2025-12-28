@@ -234,6 +234,10 @@
         (<span class="pill">scale</span>, <span class="pill">upright rotation</span>, <span class="pill">ground offset</span>)
         and save it to the model’s <span class="pill">meta.json</span>.
       </p>
+      <p style="margin-top:-6px;">
+        If you add/remove files under <span class="pill">public/models/</span>, run <span class="pill">npm run models:sync</span> to refresh
+        <span class="pill">public/models/manifest.json</span>.
+      </p>
 
       <div class="section">
         <h3>Workspace</h3>
@@ -273,7 +277,11 @@
             </div>
             <div style="text-align:right;">
               <label>&nbsp;</label>
-              <span class="pill" id="modelCount">0 models</span>
+              <div style="display:flex; gap:8px; justify-content:flex-end; align-items:center;">
+                <span class="pill" id="modelCount">0 models</span>
+                <button id="reloadManifestBtn" type="button" class="secondary">Reload</button>
+              </div>
+              <div class="pill" id="manifestStamp" style="margin-top:8px;">manifest: —</div>
             </div>
           </div>
           <div class="row">
@@ -405,6 +413,19 @@
             <div>
               <label for="previewYaw">Preview Yaw (deg)</label>
               <input id="previewYaw" type="range" min="0" max="360" step="5" value="0">
+            </div>
+          </div>
+
+          <div class="grid-2" style="margin-top:10px;">
+            <div>
+              <label for="autoRotate" style="margin:0;">
+                <input id="autoRotate" type="checkbox">
+                Auto Rotate Preview (edit mode)
+              </label>
+            </div>
+            <div>
+              <label for="autoRotateSpeed">Rotate Speed (deg/s) <span class="pill" id="autoRotateSpeedVal">45</span></label>
+              <input id="autoRotateSpeed" type="range" min="5" max="180" step="5" value="45">
             </div>
           </div>
         </div>
@@ -578,6 +599,8 @@
       modelFilter: document.getElementById('modelFilter'),
       modelSelect: document.getElementById('modelSelect'),
       modelCount: document.getElementById('modelCount'),
+      reloadManifestBtn: document.getElementById('reloadManifestBtn'),
+      manifestStamp: document.getElementById('manifestStamp'),
       metaHint: document.getElementById('metaHint'),
       typeSelect: document.getElementById('typeSelect'),
       roleSelect: document.getElementById('roleSelect'),
@@ -608,6 +631,9 @@
 
       hitRadius: document.getElementById('hitRadius'),
       previewYaw: document.getElementById('previewYaw'),
+      autoRotate: document.getElementById('autoRotate'),
+      autoRotateSpeed: document.getElementById('autoRotateSpeed'),
+      autoRotateSpeedVal: document.getElementById('autoRotateSpeedVal'),
 
       rangedEnabled: document.getElementById('rangedEnabled'),
       rangedKind: document.getElementById('rangedKind'),
@@ -747,7 +773,10 @@
       const res = await fetch('/models/manifest.json', { cache: 'no-store' });
       const json = await res.json();
       const models = Array.isArray(json) ? json : json?.models;
-      return Array.isArray(models) ? models.filter(p => typeof p === 'string') : [];
+      return {
+        generatedAt: typeof json?.generatedAt === 'string' ? json.generatedAt : null,
+        models: Array.isArray(models) ? models.filter(p => typeof p === 'string') : []
+      };
     }
 
     async function fetchExistingMeta(modelPath) {
@@ -1510,6 +1539,10 @@
     ui.hitRadius.addEventListener('input', () => updateMetaOutput(currentModelPath, baseMeta));
     ui.previewYaw.addEventListener('input', () => applyPreviewYaw());
 
+    ui.autoRotateSpeed.addEventListener('input', () => {
+      ui.autoRotateSpeedVal.textContent = String(Math.round(toNum(ui.autoRotateSpeed.value, 45)));
+    });
+
     ui.applyCombatBtn.addEventListener('click', () => {
       applyCombatToLiveMonster();
       updateMetaOutput(currentModelPath, baseMeta);
@@ -1613,13 +1646,31 @@
     }
 
     try {
-      allModels = await fetchManifest();
+      const { generatedAt, models } = await fetchManifest();
+      allModels = models;
+      ui.manifestStamp.textContent = generatedAt ? `manifest: ${generatedAt}` : 'manifest: (unknown)';
       repopulateModels(buildModelList(allModels, ''), null);
       ui.modelSelect.dispatchEvent(new Event('change'));
     } catch (err) {
       console.error(err);
       setStatus('Manifest load failed', 'bad');
     }
+
+    ui.reloadManifestBtn.addEventListener('click', async () => {
+      setStatus('Reloading manifest…', 'warn');
+      try {
+        const filter = ui.modelFilter.value || '';
+        const keep = ui.modelSelect.value || null;
+        const { generatedAt, models } = await fetchManifest();
+        allModels = models;
+        ui.manifestStamp.textContent = generatedAt ? `manifest: ${generatedAt}` : 'manifest: (unknown)';
+        repopulateModels(buildModelList(allModels, filter), keep);
+        setStatus('Manifest reloaded', 'ok');
+      } catch (err) {
+        console.error(err);
+        setStatus('Manifest reload failed', 'bad');
+      }
+    });
 
     // Main loop
     let lastMs = performance.now();
@@ -1645,6 +1696,14 @@
 
       sceneManager.update(dt);
       sceneManager.render();
+
+      if (labMode === 'edit' && ui.autoRotate?.checked) {
+        const speed = clamp(toNum(ui.autoRotateSpeed?.value, 45), 0, 720);
+        const cur = toNum(ui.previewYaw?.value, 0);
+        const next = (cur + speed * dt) % 360;
+        ui.previewYaw.value = String(next);
+        applyPreviewYaw();
+      }
 
       // HUD
       const monsters = monsterManager.getMonsters?.() || [];
