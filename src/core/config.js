@@ -147,6 +147,7 @@ export const CONFIG = {
   MAX_ACTIVE_MONSTER_PROJECTILES: 80,
   MAX_ACTIVE_IMPACTS: 80,
   MAX_ACTIVE_EXPLOSIONS: 40,
+  MAX_ACTIVE_MUZZLE_FLASHES: 24,
 
   // Shadow settings
   SHADOW_ENABLED: true,           // Enable real-time shadows
