@@ -1,0 +1,101 @@
+{
+  "schema": "v1",
+  "id": "labs-stealth",
+  "name": "Labs Stealth",
+  "weight": 0.85,
+  "difficulty": { "min": 1.8, "max": 9.5 },
+  "level": {
+    "maze": { "width": 35, "height": 33, "roomDensity": 3.2, "extraConnectionChance": 0.18 },
+    "rooms": {
+      "typeWeights": {
+        "LAB": 2.4,
+        "STORAGE": 1.6,
+        "OFFICE": 1.3,
+        "CLASSROOM": 0.9,
+        "CAFETERIA": 0.65,
+        "BATHROOM": 0.65,
+        "LIBRARY": 0.55,
+        "POOL": 0.14
+      }
+    },
+    "monsters": {
+      "count": 3,
+      "maxCount": 6,
+      "speedMultiplier": 1.05,
+      "visionMultiplier": 1.05,
+      "memoryMultiplier": 1.0,
+      "typeWeights": { "WANDERER": 0.45, "HUNTER": 0.35, "SENTINEL": 0.15, "GREETER": 0.05 },
+      "allowSprintTypes": ["HUNTER"]
+    },
+    "player": {
+      "maxHealthMultiplier": 1.0,
+      "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+      "upgradesPerLevel": 1
+    },
+    "autopilot": { "avoidRadius": 5, "replanInterval": 0.5, "stuckSeconds": 1.0, "noProgressSeconds": 0.7 }
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "required": [
+      {
+        "id": "doorCode",
+        "template": "codeLock",
+        "params": {
+          "clues": 3,
+          "requiresPower": false,
+          "roomTypesClues": ["LAB", "OFFICE", "STORAGE"],
+          "roomTypesKeypad": ["LAB", "OFFICE"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Find the three note clues (A/B/C). Each reveals one digit.",
+            "After collecting all clues, find the keypad and enter A→B→C digits, then press Enter.",
+            "Use quiet corridors to move between labs and offices."
+          ]
+        }
+      }
+    ],
+    "optionalCount": { "min": 1, "max": 2 },
+    "optionalPool": [
+      {
+        "template": "stealthNoise",
+        "weight": 1.1,
+        "params": {
+          "seconds": 14,
+          "resetOnGunshot": true,
+          "hints": [
+            "Stay quiet until the timer completes.",
+            "Avoid firing and sprinting near enemies.",
+            "Create distance, break line of sight, then wait it out."
+          ]
+        }
+      },
+      {
+        "template": "enterRoomType",
+        "weight": 0.6,
+        "params": {
+          "count": 1,
+          "roomTypes": ["LAB"],
+          "hints": [
+            "Find and enter the Lab.",
+            "Explore new room clusters to discover labs.",
+            "Avoid dead ends if being chased."
+          ]
+        }
+      },
+      {
+        "template": "killCount",
+        "weight": 0.35,
+        "params": {
+          "count": 2,
+          "hints": [
+            "Defeat monsters to reach the required count.",
+            "Burst fire, then reposition.",
+            "Do not fight in tight corners."
+          ]
+        }
+      }
+    ],
+    "includeUnlockExit": true
+  }
+}
+

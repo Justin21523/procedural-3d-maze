@@ -9,6 +9,28 @@ function isPlainObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
+function mulberry32(seed) {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6D2B79F5;
+    let x = t;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashStringSeed(str) {
+  // FNV-1a 32-bit
+  let h = 0x811C9DC5;
+  const s = String(str || '');
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 function ensureOdd(n) {
   const rounded = Math.round(n);
   return rounded % 2 === 0 ? rounded + 1 : rounded;
@@ -239,19 +261,164 @@ async function loadPublicLevels(manifestUrl = '/levels/manifest.json') {
   return levels;
 }
 
+async function loadPublicLevelRecipes(manifestUrl = '/level-recipes/manifest.json') {
+  const manifest = await fetchJson(manifestUrl);
+  const files = Array.isArray(manifest?.recipes) ? manifest.recipes : null;
+  if (!files || files.length === 0) return [];
+
+  const basePath = manifestUrl.split('/').slice(0, -1).join('/') || '/level-recipes';
+  const recipes = [];
+
+  for (const f of files) {
+    const file = String(f || '').trim();
+    if (!file) continue;
+    const url = `${basePath}/${file}`;
+    try {
+      const raw = await fetchJson(url);
+      if (raw && typeof raw === 'object') {
+        raw.__source = url;
+      }
+      recipes.push(raw);
+    } catch (err) {
+      console.warn(`⚠️ Failed to load recipe JSON: ${url}`, err?.message || err);
+    }
+  }
+
+  return recipes;
+}
+
+function normalizeOptionalCount(raw) {
+  if (Number.isFinite(Number(raw))) {
+    const n = clamp(toInt(raw, 0) || 0, 0, 50);
+    return { min: n, max: n };
+  }
+  const obj = isPlainObject(raw) ? raw : {};
+  const min = clamp(toInt(obj.min, 0) || 0, 0, 50);
+  const max = clamp(toInt(obj.max, min) || min, min, 50);
+  return { min, max };
+}
+
+function normalizeLevelRecipe(raw, index = 0) {
+  const src = isPlainObject(raw) ? deepClone(raw) : {};
+  const id = String(src.id || src.recipeId || `recipe_${index + 1}`).trim();
+  const name = String(src.name || id || `Recipe ${index + 1}`).trim() || `Recipe ${index + 1}`;
+  const weight = clamp(toNumber(src.weight, 1) ?? 1, 0, 1000);
+
+  const difficulty = isPlainObject(src.difficulty) ? src.difficulty : {};
+  const minDifficulty = clamp(toNumber(difficulty.min, 0) ?? 0, 0, 999);
+  const maxDifficulty = clamp(toNumber(difficulty.max, 999) ?? 999, minDifficulty, 999);
+
+  const level = isPlainObject(src.level) ? deepClone(src.level) : {};
+  const missions = isPlainObject(src.missions) ? deepClone(src.missions) : {};
+
+  const required = Array.isArray(missions.required) ? missions.required : [];
+  const optionalPool = Array.isArray(missions.optionalPool) ? missions.optionalPool : [];
+  const optionalCount = normalizeOptionalCount(missions.optionalCount);
+  const includeUnlockExit = missions.includeUnlockExit !== false;
+  const timeLimitSec = clamp(toInt(missions.timeLimitSec, 0) || 0, 0, 24 * 60 * 60);
+
+  const source = String(src.__source || '').trim();
+
+  if (!id) return null;
+  if (weight <= 0) return null;
+
+  return {
+    id,
+    name,
+    weight,
+    minDifficulty,
+    maxDifficulty,
+    level,
+    missions: {
+      timeLimitSec,
+      required,
+      optionalPool,
+      optionalCount,
+      includeUnlockExit,
+      exitRequires: Array.isArray(missions.exitRequires) ? normalizeStringArray(missions.exitRequires) : null
+    },
+    source
+  };
+}
+
+function normalizeRecipeMissionEntry(raw, index = 0) {
+  const entry = isPlainObject(raw) ? raw : {};
+  const template = String(entry.template || entry.type || '').trim();
+  const id = String(entry.id || entry.missionId || '').trim();
+  const required = entry.required;
+  const weight = clamp(toNumber(entry.weight, 1) ?? 1, 0, 1000);
+  const params = isPlainObject(entry.params) ? deepClone(entry.params) : {};
+  return template ? { id, template, required, weight, params } : null;
+}
+
+function pickWeightedEntry(entries, rand) {
+  if (!Array.isArray(entries) || entries.length === 0) return null;
+  const total = entries.reduce((sum, e) => sum + (Number(e?.weight) || 0), 0);
+  if (!(total > 0)) return null;
+  let target = rand() * total;
+  for (const entry of entries) {
+    const w = Number(entry?.weight) || 0;
+    if (!(w > 0)) continue;
+    target -= w;
+    if (target <= 0) return entry;
+  }
+  return entries[entries.length - 1] || null;
+}
+
+function uniqueMissionId(baseId, used) {
+  const start = String(baseId || '').trim() || 'm';
+  if (!used.has(start)) {
+    used.add(start);
+    return start;
+  }
+  for (let i = 2; i < 999; i++) {
+    const next = `${start}${i}`;
+    if (!used.has(next)) {
+      used.add(next);
+      return next;
+    }
+  }
+  const fallback = `${start}${Math.floor(Math.random() * 9999)}`;
+  used.add(fallback);
+  return fallback;
+}
+
+function defaultUnlockExitMission() {
+  return {
+    id: 'unlockExit',
+    template: 'unlockExit',
+    required: true,
+    params: {
+      hints: [
+        'Go to the exit and press E to unlock it.',
+        'After unlocking, press E again to finish the level.',
+        'If it stays locked, you missed a required objective.'
+      ]
+    }
+  };
+}
+
 /**
  * LevelDirector
  * - Generates endless, room-first levels with rising difficulty.
  * - Adapts next difficulty based on player performance (speed, health, mission completion).
  */
 export class LevelDirector {
-  constructor(baseLevels = []) {
+  constructor(baseLevels = [], recipes = []) {
     this.baseLevels = Array.isArray(baseLevels) ? baseLevels.map((l, idx) => normalizeLevelConfig(l, idx)) : [];
+    this.recipes = Array.isArray(recipes)
+      ? recipes.map((r, idx) => normalizeLevelRecipe(r, idx)).filter(Boolean)
+      : [];
     this.generated = [];
     this.lastDifficulty = 1;
   }
 
-  static async createFromPublic({ manifestUrl = '/levels/manifest.json', fallbackLevels = [] } = {}) {
+  static async createFromPublic({
+    manifestUrl = '/levels/manifest.json',
+    fallbackLevels = [],
+    recipeManifestUrl = '/level-recipes/manifest.json',
+    fallbackRecipes = []
+  } = {}) {
     let loaded = [];
     try {
       loaded = await loadPublicLevels(manifestUrl);
@@ -259,11 +426,22 @@ export class LevelDirector {
       console.warn('⚠️ Failed to load public level manifest:', err?.message || err);
     }
 
+    let loadedRecipes = [];
+    try {
+      loadedRecipes = await loadPublicLevelRecipes(recipeManifestUrl);
+    } catch (err) {
+      console.warn('⚠️ Failed to load public recipe manifest:', err?.message || err);
+    }
+
     const baseLevels = loaded.length > 0
       ? loaded
       : (Array.isArray(fallbackLevels) ? fallbackLevels : []);
 
-    return new LevelDirector(baseLevels);
+    const recipes = loadedRecipes.length > 0
+      ? loadedRecipes
+      : (Array.isArray(fallbackRecipes) ? fallbackRecipes : []);
+
+    return new LevelDirector(baseLevels, recipes);
   }
 
   /**
@@ -315,9 +493,122 @@ export class LevelDirector {
     }
 
     const difficulty = this.difficultyForLevel(index, stats, outcome);
-    const config = this.buildDynamicConfig(index, difficulty);
+    const config = this.recipes.length > 0
+      ? this.buildRecipeConfig(index, difficulty)
+      : this.buildDynamicConfig(index, difficulty);
     this.generated[index - this.baseLevels.length] = config;
     return config;
+  }
+
+  pickRecipe(index, difficulty) {
+    const candidates = this.recipes.filter((r) => {
+      if (!r || !(r.weight > 0)) return false;
+      if (!(difficulty >= (r.minDifficulty ?? 0))) return false;
+      if (!(difficulty <= (r.maxDifficulty ?? 999))) return false;
+      return true;
+    });
+
+    const pool = candidates.length > 0 ? candidates : this.recipes.filter((r) => r && r.weight > 0);
+    if (pool.length === 0) return null;
+
+    const rand = mulberry32(hashStringSeed(`recipe:${index}`));
+    return pickWeightedEntry(pool, rand) || pool[0];
+  }
+
+  buildRecipeConfig(index, difficulty) {
+    const recipe = this.pickRecipe(index, difficulty);
+    if (!recipe) return this.buildDynamicConfig(index, difficulty);
+
+    const rand = mulberry32(hashStringSeed(`${recipe.id}:${index}`));
+    const base = isPlainObject(recipe.level) ? deepClone(recipe.level) : {};
+
+    const level = {
+      ...base,
+      id: index + 1,
+      name: base.name || `L${index + 1} - ${recipe.name}`,
+      __source: recipe.source ? `${recipe.source}#${recipe.id}` : `recipe:${recipe.id}`
+    };
+
+    // Gentle scaling inside a recipe (keeps content stable but still progresses a bit).
+    const sizeBoost = clamp(Math.floor(difficulty * 1.25), 0, 18);
+    const maze = isPlainObject(level.maze) ? level.maze : {};
+    level.maze = {
+      ...maze,
+      width: ensureOdd((toInt(maze.width, CONFIG.MAZE_WIDTH || 31) || (CONFIG.MAZE_WIDTH || 31)) + sizeBoost),
+      height: ensureOdd((toInt(maze.height, CONFIG.MAZE_HEIGHT || 31) || (CONFIG.MAZE_HEIGHT || 31)) + Math.floor(sizeBoost * 0.8)),
+      roomDensity: toNumber(maze.roomDensity, 2.9) ?? 2.9,
+      extraConnectionChance: toNumber(maze.extraConnectionChance, 0.12) ?? 0.12,
+    };
+
+    const monsters = isPlainObject(level.monsters) ? level.monsters : {};
+    const baseCount = clamp(toInt(monsters.count, CONFIG.MONSTER_COUNT || 6) || (CONFIG.MONSTER_COUNT || 6), 0, 120);
+    const maxCount = clamp(toInt(monsters.maxCount, 0) || 0, 0, 240);
+    const scaledCount = clamp(Math.round(baseCount * (1 + clamp(difficulty * 0.06, 0, 0.6))), 0, maxCount > 0 ? maxCount : 120);
+    level.monsters = {
+      ...monsters,
+      count: scaledCount,
+      maxCount
+    };
+
+    const usedIds = new Set();
+    const missionList = [];
+
+    const requiredRaw = Array.isArray(recipe.missions?.required) ? recipe.missions.required : [];
+    for (const entry of requiredRaw) {
+      const m = normalizeRecipeMissionEntry(entry, missionList.length);
+      if (!m) continue;
+      const id = uniqueMissionId(m.id || m.template, usedIds);
+      missionList.push({
+        id,
+        template: m.template,
+        required: m.required !== false,
+        params: m.params || {}
+      });
+    }
+
+    const poolRaw = Array.isArray(recipe.missions?.optionalPool) ? recipe.missions.optionalPool : [];
+    const pool = poolRaw.map((e, idx) => normalizeRecipeMissionEntry(e, idx)).filter(Boolean);
+
+    const optCountCfg = recipe.missions?.optionalCount || { min: 0, max: 0 };
+    const optMin = clamp(toInt(optCountCfg.min, 0) || 0, 0, 50);
+    const optMax = clamp(toInt(optCountCfg.max, optMin) || optMin, optMin, 50);
+    const wantOptional = pool.length > 0 ? clamp(Math.floor(rand() * (optMax - optMin + 1)) + optMin, 0, pool.length) : 0;
+
+    for (let i = 0; i < wantOptional; i++) {
+      if (pool.length === 0) break;
+      const picked = pickWeightedEntry(pool, rand);
+      if (!picked) break;
+      const idx = pool.indexOf(picked);
+      if (idx >= 0) pool.splice(idx, 1);
+
+      const id = uniqueMissionId(picked.id || picked.template, usedIds);
+      missionList.push({
+        id,
+        template: picked.template,
+        required: picked.required === true ? true : false,
+        params: picked.params || {}
+      });
+    }
+
+    const wantsUnlockExit = recipe.missions?.includeUnlockExit !== false;
+    if (wantsUnlockExit && !missionList.some((m) => m?.template === 'unlockExit')) {
+      const unlock = defaultUnlockExitMission();
+      unlock.id = uniqueMissionId(unlock.id, usedIds);
+      missionList.push(unlock);
+    }
+
+    const exitRequires =
+      Array.isArray(recipe.missions?.exitRequires) && recipe.missions.exitRequires.length > 0
+        ? normalizeStringArray(recipe.missions.exitRequires)
+        : missionList.filter((m) => m?.required !== false).map((m) => m.id);
+
+    level.missions = {
+      timeLimitSec: recipe.missions?.timeLimitSec || 0,
+      list: missionList,
+      exit: { requires: exitRequires }
+    };
+
+    return normalizeLevelConfig(level, index);
   }
 
   tuneForRooms(config, index = 0) {
