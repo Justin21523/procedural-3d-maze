@@ -866,6 +866,7 @@ export class MonsterManager {
         !monster.lastBrainCommand;
 
       let command = monster.lastBrainCommand;
+      let tickDt = dt;
 
       if (shouldTick) {
         // Keep grid in sync with any external changes before AI reads it.
@@ -873,7 +874,7 @@ export class MonsterManager {
           monster.syncGridFromWorld();
         }
 
-        const tickDt = isFar ? (monster.aiTickAccumulator || dt) : dt;
+        tickDt = isFar ? (monster.aiTickAccumulator || dt) : dt;
         monster.aiTickAccumulator = 0;
 
         const heard = this.pickAudibleNoise(monster, brain);
@@ -893,7 +894,8 @@ export class MonsterManager {
       }
 
       command = command || { move: { x: 0, y: 0 }, lookYaw: 0, sprint: false };
-      this.applyBrainCommand(monster, command, dt, {
+      const moveDt = isFar ? (shouldTick ? tickDt : 0) : dt;
+      this.applyBrainCommand(monster, command, moveDt, {
         allowSteering: !isFar,
         allowLook: shouldTick
       });
