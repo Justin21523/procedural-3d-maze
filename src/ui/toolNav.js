@@ -1,6 +1,7 @@
 const PAGES = [
   { key: 'game', label: 'Game', href: '/' },
   { key: 'hub', label: 'Debug Hub', href: '/debug-hub.html' },
+  { key: 'levels', label: 'Level Lab', href: '/level-lab.html' },
   { key: 'lab', label: 'Enemy Lab', href: '/enemy-lab.html' },
   { key: 'ai', label: 'AI Test', href: '/test-ai.html' },
   { key: 'meta', label: 'Meta Preview', href: '/test-enemy-meta.html' },
