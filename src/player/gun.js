@@ -21,6 +21,7 @@ export class Gun {
     this.eventBus = eventBus;
 
     this.muzzleFlashes = [];
+    this.muzzleFlashPool = [];
 
     this.weaponDefs = createWeaponCatalog();
     this.weaponOrder = DEFAULT_WEAPON_ORDER.filter(id => !!this.weaponDefs[id]);
@@ -59,6 +60,7 @@ export class Gun {
   }
 
   reset() {
+    this.clearMuzzleFlashes();
     this.weaponStates.clear();
     this.initWeaponStates();
     this.activeWeaponId = this.weaponOrder[0] || 'rifle';
@@ -67,6 +69,59 @@ export class Gun {
       if (!skill) continue;
       skill.cooldown = 0;
     }
+  }
+
+  createPooledMuzzleFlash() {
+    const light = new THREE.PointLight(0xffffff, 1, 8, 2);
+    light.visible = false;
+
+    const spriteMat = new THREE.SpriteMaterial({
+      color: 0xffffff,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false
+    });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.visible = false;
+    sprite.scale.set(0.6, 0.6, 0.6);
+
+    return {
+      light,
+      sprite,
+      life: 0,
+      maxLife: 0,
+      maxIntensity: 1.0,
+      baseScale: 0.6
+    };
+  }
+
+  releaseMuzzleFlash(fx) {
+    if (!fx) return;
+    if (fx.light) {
+      this.scene.remove(fx.light);
+      fx.light.visible = false;
+      fx.light.intensity = 0;
+    }
+    if (fx.sprite) {
+      this.scene.remove(fx.sprite);
+      fx.sprite.visible = false;
+      fx.sprite.material.opacity = 0;
+    }
+    fx.life = 0;
+    fx.maxLife = 0;
+
+    const limit = Math.max(0, Math.round(CONFIG.MAX_ACTIVE_MUZZLE_FLASHES ?? 24));
+    if (this.muzzleFlashPool.length < limit) {
+      this.muzzleFlashPool.push(fx);
+    }
+  }
+
+  clearMuzzleFlashes() {
+    for (const fx of this.muzzleFlashes) {
+      this.releaseMuzzleFlash(fx);
+    }
+    this.muzzleFlashes = [];
   }
 
   initWeaponStates() {
@@ -486,29 +541,37 @@ export class Gun {
   }
 
   spawnMuzzleFlash(origin, direction, color = 0xffdd88, intensity = 2) {
-    const flash = new THREE.PointLight(color, intensity, 8, 2);
-    flash.position.copy(origin);
-    flash.position.addScaledVector(direction, 0.2);
-    this.scene.add(flash);
+    const maxActive = CONFIG.MAX_ACTIVE_MUZZLE_FLASHES;
+    if (Number.isFinite(maxActive) && maxActive >= 0 && this.muzzleFlashes.length >= maxActive) {
+      return;
+    }
 
-    const spriteMat = new THREE.SpriteMaterial({
-      color,
-      blending: THREE.AdditiveBlending,
-      transparent: true,
-      opacity: 0.95,
-      depthWrite: false
-    });
-    const sprite = new THREE.Sprite(spriteMat);
-    sprite.position.copy(flash.position);
-    sprite.scale.set(0.6, 0.6, 0.6);
-    this.scene.add(sprite);
+    const fx = this.muzzleFlashPool.length > 0
+      ? this.muzzleFlashPool.pop()
+      : this.createPooledMuzzleFlash();
 
-    this.muzzleFlashes.push({
-      light: flash,
-      sprite,
-      life: 0.08,
-      maxLife: 0.08
-    });
+    if (!fx?.light || !fx?.sprite) return;
+
+    const flashPos = origin.clone().addScaledVector(direction, 0.2);
+
+    fx.light.color.setHex(color);
+    fx.light.intensity = intensity;
+    fx.light.position.copy(flashPos);
+    fx.light.visible = true;
+    this.scene.add(fx.light);
+
+    fx.sprite.material.color.setHex(color);
+    fx.sprite.material.opacity = 0.95;
+    fx.sprite.position.copy(flashPos);
+    fx.sprite.scale.set(fx.baseScale, fx.baseScale, fx.baseScale);
+    fx.sprite.visible = true;
+    this.scene.add(fx.sprite);
+
+    fx.life = 0.08;
+    fx.maxLife = 0.08;
+    fx.maxIntensity = intensity;
+
+    this.muzzleFlashes.push(fx);
   }
 
   updateMuzzleFlashes(dt) {
@@ -518,15 +581,14 @@ export class Gun {
       const progress = Math.max(0, fx.life / fx.maxLife);
       if (fx.sprite) {
         fx.sprite.material.opacity = progress;
-        fx.sprite.scale.setScalar(0.6 + (1 - progress) * 0.3);
+        fx.sprite.scale.setScalar((fx.baseScale || 0.6) + (1 - progress) * 0.3);
       }
       if (fx.light) {
-        fx.light.intensity = 2 * progress;
+        fx.light.intensity = (fx.maxIntensity || 2) * progress;
       }
       if (fx.life <= 0) {
-        if (fx.light) this.scene.remove(fx.light);
-        if (fx.sprite) this.scene.remove(fx.sprite);
         this.muzzleFlashes.splice(i, 1);
+        this.releaseMuzzleFlash(fx);
       }
     }
   }
