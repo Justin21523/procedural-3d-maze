@@ -84,6 +84,35 @@ export class UIManager {
 
     if (!this.eventBus?.on) return;
 
+    const templateLabel = (template) => {
+      const key = String(template || '').trim();
+      const map = {
+        findKeycard: 'Find Keycard',
+        collectEvidence: 'Collect Evidence',
+        restorePower: 'Restore Power',
+        activateShrines: 'Activate Shrines',
+        restorePowerFuses: 'Restore Power (Fuses)',
+        uploadEvidence: 'Upload Evidence',
+        codeLock: 'Code Lock',
+        lockedDoor: 'Unlock Door',
+        placeItemsAtAltars: 'Place Items',
+        searchRoomTypeN: 'Search Rooms',
+        photographEvidence: 'Photograph Evidence',
+        deliverItemToTerminal: 'Deliver Packages',
+        switchSequence: 'Switch Sequence',
+        hideForSeconds: 'Hide',
+        escort: 'Escort',
+        surviveTimer: 'Survive',
+        surviveNoDamage: 'Avoid Damage',
+        enterRoomType: 'Enter Rooms',
+        enterRoomSequence: 'Room Sequence',
+        killCount: 'Defeat Monsters',
+        stealthNoise: 'Stay Quiet',
+        unlockExit: 'Unlock Exit'
+      };
+      return map[key] || key || 'Objective';
+    };
+
     this.unsubscribers.push(
       this.eventBus.on(EVENTS.WEAPON_FIRED, () => {
         if (!CONFIG.PLAYER_CROSSHAIR_ENABLED) return;
@@ -154,6 +183,23 @@ export class UIManager {
         if (this.missionObjectiveElement) {
           this.missionObjectiveElement.textContent = objective ? String(objective) : '—';
         }
+      })
+    );
+
+    this.unsubscribers.push(
+      this.eventBus.on(EVENTS.MISSION_COMPLETED, (payload) => {
+        if (payload?.required === false) return;
+        const label = templateLabel(payload?.template);
+        this.flashInteractPrompt(`Objective complete: ${label}`, 1.7);
+      })
+    );
+
+    this.unsubscribers.push(
+      this.eventBus.on(EVENTS.MISSION_FAILED, (payload) => {
+        const label = templateLabel(payload?.template);
+        const reason = String(payload?.reason || '').trim();
+        const msg = reason ? `Objective failed: ${label} (${reason})` : `Objective failed: ${label}`;
+        this.flashInteractPrompt(msg, 1.9);
       })
     );
 
