@@ -125,7 +125,8 @@ export class WorldState {
 
   applyPropObstacles(levelConfig = null) {
     const seed = levelConfig?.props?.seed;
-    planPropObstacles(this, { seed });
+    const maxCount = levelConfig?.budgets?.propsMax;
+    planPropObstacles(this, { seed, maxCount });
   }
 
   getPropPlan() {
