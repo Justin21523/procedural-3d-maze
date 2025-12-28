@@ -80,10 +80,32 @@ function normalizeMissionEntry(raw, index = 0) {
   const required = entry.required !== false;
 
   const params = isPlainObject(entry.params) ? deepClone(entry.params) : {};
-  if (Array.isArray(params.roomTypes)) {
-    const roomTypes = normalizeRoomTypes(params.roomTypes);
-    if (roomTypes) params.roomTypes = roomTypes;
-    else delete params.roomTypes;
+  const normalizeRoomTypeArrayParam = (key) => {
+    if (!Array.isArray(params[key])) return;
+    const roomTypes = normalizeRoomTypes(params[key]);
+    if (roomTypes) params[key] = roomTypes;
+    else delete params[key];
+  };
+
+  // Common mission params that specify room type allowlists.
+  for (const key of [
+    'roomTypes',
+    'roomTypesFuses',
+    'roomTypesPanel',
+    'panelRoomTypes',
+    'roomTypesEvidence',
+    'roomTypesTerminal',
+    'terminalRoomTypes',
+    'roomTypesClues',
+    'roomTypesKeypad',
+    'clueRoomTypes',
+    'keypadRoomTypes',
+    // New templates may use these:
+    'roomTypesTargets',
+    'roomTypesShrines',
+    'sequence'
+  ]) {
+    normalizeRoomTypeArrayParam(key);
   }
 
   return id && template ? { id, template, required, params } : null;
