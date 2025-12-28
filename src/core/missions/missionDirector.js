@@ -1785,6 +1785,12 @@ export class MissionDirector {
     mission.state.targets = [];
 
     const maxDistance = clamp(toFinite(mission.params.maxDistance, 3.2) ?? 3.2, 1.5, 8);
+    const aimMinDotParam = toFinite(mission.params.aimMinDot, null);
+    const aimAngleDeg = clamp(toFinite(mission.params.aimAngleDeg, 18) ?? 18, 5, 60);
+    const aimMinDot = Number.isFinite(aimMinDotParam)
+      ? clamp(aimMinDotParam, 0.2, 0.9999)
+      : Math.cos((aimAngleDeg * Math.PI) / 180);
+    const aimOffsetY = clamp(toFinite(mission.params.aimOffsetY, 0.7) ?? 0.7, 0, 2.5);
 
     for (let i = 0; i < tiles.length; i++) {
       if (!this.canSpawnMissionObject(1)) break;
@@ -1810,7 +1816,14 @@ export class MissionDirector {
           maxDistance,
           prompt: () => `E: ${label}`,
           interact: () => ({ ok: true, picked: true, message: 'Photo captured' }),
-          meta: { missionId: mission.id, template: mission.template, index: i }
+          meta: {
+            missionId: mission.id,
+            template: mission.template,
+            index: i,
+            aimMinDot,
+            aimOffsetY,
+            aimHint: 'Keep the target centered'
+          }
         })
       );
       this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
