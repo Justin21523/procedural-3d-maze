@@ -80,6 +80,31 @@ export function planPropObstacles(worldState, options = {}) {
   const baseRoomChance = clamp(Number(CONFIG.PROP_OBSTACLE_ROOM_CHANCE ?? 0.12) || 0.12, 0, 1);
   const margin = Math.max(0, Math.round(CONFIG.PROP_OBSTACLE_MARGIN ?? 1));
 
+  const derivedMax = Math.max(0, Math.round(width * height * 0.06));
+  let maxCount = null;
+
+  const rawMax = options.maxCount;
+  if (rawMax !== undefined && rawMax !== null && rawMax !== '') {
+    const n = Number(rawMax);
+    if (Number.isFinite(n)) {
+      maxCount = Math.max(0, Math.round(n));
+    }
+  }
+
+  if (maxCount === null && Number.isFinite(CONFIG.PROP_OBSTACLE_MAX_COUNT)) {
+    maxCount = Math.max(0, Math.round(CONFIG.PROP_OBSTACLE_MAX_COUNT));
+  }
+  if (maxCount === null) {
+    maxCount = derivedMax;
+  }
+
+  if (maxCount <= 0) {
+    ws.propPlan = plan;
+    return { seed, plan, count: 0, maxCount };
+  }
+
+  const candidates = [];
+
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (grid[y][x] !== TILE_TYPES.FLOOR) continue;
@@ -90,20 +115,31 @@ export function planPropObstacles(worldState, options = {}) {
       if (margin > 0 && ws.isWalkableWithMargin && !ws.isWalkableWithMargin(x, y, margin)) continue;
 
       const rand = mulberry32(hashSeed(seed, x, y));
-      const chance = baseRoomChance;
-      if (rand() > chance) continue;
+      if (rand() > baseRoomChance) continue;
 
       const kind = pickKind(roomType, rand);
       if (!kind) continue;
 
       const rotation = rand() * Math.PI * 2;
       const entry = { kind, rotation, roomType };
-      plan[y][x] = entry;
-      ws.setObstacle?.(x, y, true);
+      const score = mulberry32(hashSeed(seed ^ 0x9E3779B9, x, y))();
+      candidates.push({ x, y, entry, score });
     }
   }
 
-  ws.propPlan = plan;
-  return { seed, plan };
-}
+  candidates.sort((a, b) => a.score - b.score);
 
+  let placed = 0;
+  for (const c of candidates) {
+    if (placed >= maxCount) break;
+    if (!ws.isWalkable?.(c.x, c.y)) continue;
+    if (margin > 0 && ws.isWalkableWithMargin && !ws.isWalkableWithMargin(c.x, c.y, margin)) continue;
+
+    plan[c.y][c.x] = c.entry;
+    ws.setObstacle?.(c.x, c.y, true);
+    placed += 1;
+  }
+
+  ws.propPlan = plan;
+  return { seed, plan, count: placed, maxCount };
+}
