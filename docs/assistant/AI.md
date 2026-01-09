@@ -1,229 +1,229 @@
-# AI 全套：Enemy AI + AI Player（Autopilot）
+# AI Deep Dive: Enemy AI + AI Player (Autopilot)
 
-本文件描述兩套「會自己做決策」的系統：
+This document describes the two “decision-making” systems:
 
-1. **AI 玩家（Autopilot）**：在玩家沒有輸入時接管角色，完成任務/戰鬥/生存並策略性使用道具。
-2. **怪物 AI（Enemy AI）**：以 brain（大腦）為單位的模組化行為，支援視覺（Vision/FOV）、聽覺（Noise/Hearing）、嗅覺（Scent/Smell）、小隊戰術（Squad/Tactics）與特殊規則（木頭人）。
-
----
-
-## 1) AI 玩家（Autopilot）概覽
-
-### 1.1 接管條件與資料流
-
-- 接管開關：`CONFIG.AUTOPILOT_ENABLED`（`src/core/config.js`）
-- 接管延遲：`CONFIG.AUTOPILOT_DELAY`（秒）
-- 接管判斷：`src/core/gameLoop.js` 的 `autopilot` system
-  - 讀 `InputHandler` 的鍵盤/滑鼠 idle：`src/player/input.js:getIdleTimeSeconds()`
-  - 玩家有 WASD/滑鼠輸入時，Autopilot 不會「控制」角色（但仍可 `tick()` 做預規劃）
-  - 產生的控制指令透過 `ctx.externalCommand` 送往玩家/武器/互動系統
-
-### 1.2 Autopilot 的核心檔案
-
-- 導航/任務解題：`src/ai/autoPilot.js`
-- 任務狀態來源：`src/core/missions/missionDirector.js:getAutopilotState()`
-- 任務目標列表：`src/core/missions/missionDirector.js:getAutopilotTargets()`
-- 道具策略（由 Autopilot 驅動時才啟用）：`src/core/playerToolAISystem.js`
+1. **AI player (Autopilot)**: takes over when the human player is idle and can explore, solve objectives, fight, and use tools.
+2. **Enemy AI**: modular monster behavior (brains + perception + optional tactics modules), including special rules like “Weeping Angel”.
 
 ---
 
-## 2) Autopilot：怎麼「做事」？
+## 1) Autopilot overview
 
-### 2.1 任務導向：Task Runner（Search → MoveTo → Interact）
+### 1.1 Activation and data flow
 
-Autopilot 不是單純「走向最近目標」；它用任務拆解的方式降低卡住機率：
+- Enable/disable: `CONFIG.AUTOPILOT_ENABLED` (`src/core/config.js`)
+- Idle delay: `CONFIG.AUTOPILOT_DELAY` (seconds)
+- Activation logic: `src/core/gameLoop.js` (`autopilot` system)
+  - reads input idle time: `src/player/input.js:getIdleTimeSeconds()`
+  - if the player is actively using WASD/mouse, Autopilot won’t “drive” (but may still `tick()` to pre-plan)
+  - active control is delivered via `ctx.externalCommand` to player/gun/interact systems
 
-- 任務框架：`src/ai/tasks/taskRunner.js`
-- 常用 task：
-  - `SearchTask`：`src/ai/tasks/searchTask.js`
-  - `MoveToTask`：`src/ai/tasks/moveToTask.js`
-  - `InteractTask`：`src/ai/tasks/interactTask.js`
-  - `EscortTask/GuardTask`：`src/ai/tasks/*`
+### 1.2 Key Autopilot files
 
-Autopilot 每幀會：
+- Navigation + objective solving: `src/ai/autoPilot.js`
+- Mission state source: `src/core/missions/missionDirector.js:getAutopilotState()`
+- Autopilot target list: `src/core/missions/missionDirector.js:getAutopilotTargets()`
+- Tool strategy (only when Autopilot is actively driving): `src/core/playerToolAISystem.js`
 
-1. 讀任務狀態（`getAutopilotState()`）與目標列表（targets）
-2. 依 template 決定「現在應該做什麼」並建立 task queue
-3. 用 `Pathfinding` 找路：`src/ai/pathfinding.js`
-4. 產生一幀的輸入指令（move/look/sprint/fire/interact…）
+---
 
-### 2.2 反抖動：避免路口來回（Junction Dithering）
+## 2) How Autopilot “gets things done”
 
-針對「路口太多會左右搖擺」的典型問題，Autopilot 有幾層保護：
+### 2.1 Task-driven objective solving (Search → MoveTo → Interact)
 
-- **Visited tiles 記憶**：偏好走沒走過的地方（`visitedTiles`）
+Autopilot is not just “walk to nearest target”. It uses a task decomposition approach to reduce failure cases in complex mazes:
+
+- Task runner: `src/ai/tasks/taskRunner.js`
+- Common tasks:
+  - `SearchTask`: `src/ai/tasks/searchTask.js`
+  - `MoveToTask`: `src/ai/tasks/moveToTask.js`
+  - `InteractTask`: `src/ai/tasks/interactTask.js`
+  - `EscortTask` / `GuardTask`: `src/ai/tasks/*`
+
+Per frame, Autopilot typically:
+
+1. Reads mission state (`getAutopilotState()`) and target list
+2. Chooses what to do next and builds a task queue
+3. Plans with pathfinding: `src/ai/pathfinding.js`
+4. Emits one frame of commands (move/look/sprint/fire/interact…)
+
+### 2.2 Anti-oscillation at junctions (“dithering” fixes)
+
+The classic failure mode is “too many branches → jitter at the junction”. Autopilot stacks several guards:
+
+- **Visited tile memory**: prefer unexplored tiles (`visitedTiles`)
   - `src/ai/autoPilot.js:recordVisit()`
-- **Unreachable 記憶**：短時間內不重試走不到的點
+- **Unreachable memory**: avoid retrying targets that recently failed
   - `src/ai/autoPilot.js:recordUnreachable()`
-- **Step lock（路口出門承諾）**：在鄰居數量多的 junction，鎖定下一步幾百毫秒，避免來回換方向
-  - `src/ai/autoPilot.js:updateStepLock()`（使用 `stepLockSeconds`, `stepLockMinNeighbors`）
-- **No-progress 偵測**：玩家被卡住/碰撞抖動時，會強制脫困並清路徑
-  - `src/core/gameLoop.js:noProgress` system（呼叫 `player.forceUnstuck()` 與 `autopilot.resetPath()`）
+- **Step lock**: commit to a next step for a short duration at high-degree junctions
+  - `src/ai/autoPilot.js:updateStepLock()` (e.g., `stepLockSeconds`, `stepLockMinNeighbors`)
+- **No-progress detection**: if the player is stuck/colliding and not making progress, force an unstuck + clear the path
+  - `src/core/gameLoop.js` (`noProgress` system → `player.forceUnstuck()` + `autopilot.resetPath()`)
 
-### 2.3 戰鬥：瞄準/射擊節奏（Combat Directive）
+### 2.3 Combat directive (aiming + firing cadence)
 
-Autopilot 的戰鬥決策集中在 `src/ai/autoPilot.js`，並由 `src/core/config.js` 的參數控制：
+Autopilot combat decisions live primarily in `src/ai/autoPilot.js`, and are governed by `src/core/config.js`:
 
-- `CONFIG.AUTOPILOT_COMBAT_*`：搜尋距離、可開火 FOV、對準角度、需要 LOS 等
-- `CONFIG.AUTOPILOT_COMBAT_DAMAGE_MULT`：自動駕駛傷害倍率（**只影響 Autopilot，不影響玩家手動**）
-- burst 連發節奏：`CONFIG.AUTOPILOT_COMBAT_BURST_*`
+- `CONFIG.AUTOPILOT_COMBAT_*`: search distance, fire FOV, aim alignment, LOS requirements, etc
+- `CONFIG.AUTOPILOT_COMBAT_DAMAGE_MULT`: damage multiplier for Autopilot only (does not affect manual play)
+- Burst cadence: `CONFIG.AUTOPILOT_COMBAT_BURST_*`
 
-特殊任務約束：
+Mission constraints can override combat:
 
-- `stealthNoise`（Stay Quiet）：會強制 `fire:false` 且 `move:0`（避免因戰鬥/亂動導致失敗）
-- `deliverFragile`：攜帶易碎品時禁止開火（避免自爆式失敗）
-
----
-
-## 3) Autopilot 道具策略（PlayerToolAISystem）
-
-檔案：`src/core/playerToolAISystem.js`
-
-這個系統只在 **Autopilot 實際接管（`ctx.autopilotActive === true`）**時啟用，目標是把道具從「純任務導向」拉到「生存/戰鬥策略」：
-
-- 讀背包快照：`gameState.getInventorySnapshot()`
-- 掃描威脅：依 monster 距離、是否看見玩家（seenByAny）、數量（seenCount）
-- 依任務模板調整「噪音容忍度」
-  - `stealthNoise`：`avoidNoise=true`，避免投擲/地雷
-  - `hideForSeconds/hideUntilClear`：會視為 holding objective，偏好 `jammer/sensor`
-
-典型規則（高層描述，實作以檔案為準）：
-
-- **極近距離（<=2 tiles）**：優先 `flash` → `smoke` → `trap` → `mine`
-- **被看見且需要脫離視線**：丟 `smoke`
-- **被看見但允許噪音**：放 `lure`/丟 `decoy` 拉走怪物
-- **守點任務**：放 `jammer`（削弱感知）+ `sensor`（偵測靠近）
+- `stealthNoise` (“Stay Quiet”): forces `fire:false` and often `move:0` to avoid failing the objective
+- `deliverFragile`: disables firing while carrying a fragile objective item
 
 ---
 
-## 4) 怪物 AI（Enemy AI）架構
+## 3) Autopilot tool strategy (PlayerToolAISystem)
 
-### 4.1 Brain（大腦）介面
+File: `src/core/playerToolAISystem.js`
 
-每隻怪物都有一個 brain，brain 輸出「一幀的行為指令」：
+This system runs only when **Autopilot is actively driving** (`ctx.autopilotActive === true`). The purpose is to make tools matter beyond “mission-only” usage: survival, combat tempo, and disengage options.
 
-- Base class：`src/ai/brains/baseBrain.js:BaseMonsterBrain`
-- 建立 factory：`src/ai/monsterAI.js:createMonsterBrain()`
-- brain.tick 回傳（概念上）：
+Inputs:
+
+- Inventory snapshot: `gameState.getInventorySnapshot()`
+- Threat scan: monster distance, “seen by any” status, nearby count, etc
+- Mission template constraints (e.g. “avoidNoise” when `stealthNoise`)
+
+High-level behavior (see file for exact rules):
+
+- **Point-blank (≤ ~2 tiles)**: prefer `flash` → `smoke` → `trap` → `mine`
+- **Seen and need to break LOS**: throw `smoke`
+- **Seen but noise is allowed**: deploy `lure` / throw `decoy` to pull monsters away
+- **Hold-point objectives**: deploy `jammer` (reduce perception) + `sensor` (early warning)
+
+---
+
+## 4) Enemy AI architecture
+
+### 4.1 Brain interface
+
+Each monster has a **brain** that outputs per-frame commands.
+
+- Base class: `src/ai/brains/baseBrain.js:BaseMonsterBrain`
+- Factory: `src/ai/monsterAI.js:createMonsterBrain()`
+- Manager: `src/entities/monsterManager.js`
+
+Conceptually a brain produces:
 
 ```js
 {
   move: { x: -1..1, y: -1..1 },
   lookYaw: radians,
   sprint: boolean,
-  fire?: { ... } // 由 combat module 或 brain 自己決定
+  fire?: { ... } // either from the brain or a combat module
 }
 ```
 
-MonsterManager 會：
+`MonsterManager.update()` typically:
 
-1. 把感知結果注入 brain：
+1. Updates perception and feeds sensory events into the brain
    - `brain.hearNoise(...)`
    - `brain.smellScent(...)`
-2. 呼叫 `brain.tick(dt)` 取得命令
-3. 套用 sanitize（避免 NaN/過大向量）
-4. 套用移動/轉向/射擊
+2. Calls `brain.tick(dt)` to get commands
+3. Sanitizes commands (avoid NaN, clamp vectors)
+4. Applies movement/turning/firing
 
-實作位置：`src/entities/monsterManager.js:update()`
+### 4.2 Perception (vision/hearing/smell)
 
-### 4.2 感知（Perception）：視覺/聽覺/嗅覺
+Core implementation: `src/entities/monsterManager/perception.js:MonsterPerception`
 
-核心：`src/entities/monsterManager/perception.js:MonsterPerception`
+#### Vision (FOV + LOS)
 
-#### 視覺（Vision / FOV / LOS）
+- Primary check: `MonsterPerception.canMonsterSeePlayer(...)`
+- Pipeline:
+  - distance gate + FOV cone (relative to monster yaw)
+  - occlusion gate (line of sight)
+  - **smoke clouds block LOS**: `ToolSystem` spawns smoke clouds; if the LOS segment intersects the smoke spheres, vision is blocked
 
-- 判斷：`MonsterPerception.canMonsterSeePlayer(...)`
-- 特性：
-  - 先做距離 + FOV cone（以怪物 yaw 為中心）
-  - 再做遮蔽物（Line of Sight）
-  - **煙霧會擋視線**：`ToolSystem` 生成 smoke clouds，視線段若穿過煙球就視為看不到
+#### Hearing (noise)
 
-#### 聽覺（Noise/Hearing）
-
-- 事件池：`noiseEvents[]`
-- 來源：
-  - 玩家腳步：`MonsterManager.updatePlayerNoise()` → `MonsterPerception.updatePlayerNoise()`
-  - 槍聲/道具：透過 `EVENTS.NOISE_REQUESTED`（見 `docs/assistant/ARCHITECTURE.md` 的 Noise flow）
-  - 警戒傳播（alert）：當怪物「看見玩家」會廣播 alert noise（幫其他怪物定位）
+- Pool: `noiseEvents[]`
+- Sources:
+  - player footsteps: `MonsterManager.updatePlayerNoise()` → `MonsterPerception.updatePlayerNoise()`
+  - guns/tools: via `EVENTS.NOISE_REQUESTED` (see Noise flow in `docs/assistant/ARCHITECTURE.md`)
+  - alert broadcast: monsters that see the player can emit a noise to help other monsters converge
     - `MonsterPerception.maybeBroadcastAlert(...)`
-- brain 取得：`MonsterPerception.pickAudibleNoise(monster, brain)`
+- Brain access: `MonsterPerception.pickAudibleNoise(monster, brain)`
 
-#### 嗅覺（Scent/Smell）
+#### Smell (scent)
 
-- 事件池：`scentEvents[]`
-- 玩家會留下「麵包屑」：移動一段距離就 drop 一個 scent（可 sprint 加強）
+- Pool: `scentEvents[]`
+- Player trail “breadcrumbs”: periodically dropped when the player moves (and can be stronger while sprinting)
   - `MonsterPerception.updatePlayerScent(...)`
-- 道具也會留下 scent（例如 lure/decoy）
-  - `ToolSystem.triggerDecoy()/deployLure()` → `MonsterManager.registerScent(...)`
-- brain 取得：`MonsterPerception.pickSmelledScent(monster, brain)`
+- Tools can register scents as well (e.g. lure/decoy)
+  - `ToolSystem.triggerDecoy()` / `deployLure()` → `MonsterManager.registerScent(...)`
+- Brain access: `MonsterPerception.pickSmelledScent(monster, brain)`
 
-### 4.3 模組化加成：Brain Composer（Modules）
+### 4.3 Modules (Brain composer)
 
-檔案：`src/ai/brainComposer.js`
+File: `src/ai/brainComposer.js`
 
-它會依 `typeConfig.brain.modules` 把「共用能力」包裝進 brain，而不是把所有邏輯塞進單一 brain：
+Brains can be wrapped with reusable capability modules rather than duplicating logic in every brain:
 
-- `noiseInvestigation`：失去視線時會去調查噪音（Noise Investigation）
-- `flankCoverTactics`：看到玩家時做側翼/壓制等策略（Flank/Cover Tactics）
-- `squadCoordination`：小隊共享目標、分配 flank slot、允許 cover shooter 等（Squad Coordination）
+- `noiseInvestigation`: investigate a recent noise after losing vision
+- `flankCoverTactics`: flanking/suppression behavior when the player is visible
+- `squadCoordination`: share targets, assign flank slots, allow cover shooter roles
 
-注意：composer 會 wrapper `brain.pickTarget()` 與必要時 wrapper `brain.tick()`（例如要求 hold position 時回傳 move=0）。
-
----
-
-## 5) 特殊怪：木頭人（Weeping Angel）
-
-檔案：
-
-- brain：`src/ai/brains/weepingAngel.js`
-- type：`src/ai/monsterTypes.js:WEEPING_ANGEL`
-
-核心規則：
-
-- **玩家看著它（玩家相機 FOV + LOS）時完全凍結**（不移動、不轉向）
-- 玩家沒看時，會用自己的視野 + 最近噪音/氣味追蹤玩家
-
-玩家是否看見怪物的判斷是「站在玩家視角」做的：
-
-- `player.getViewYaw()`：`src/player/playerController.js`
-- `player.getViewFovDeg()`：`src/player/playerController.js`
-- `worldState.hasLineOfSight()`：`src/world/worldState.js`
+The composer typically wraps `brain.pickTarget()` and (when needed) `brain.tick()` (e.g., “hold position” constraints output `move=0`).
 
 ---
 
-## 6) 擴充指南：如何新增怪物/brain/感知規則
+## 5) Special monster: Weeping Angel
 
-### 6.1 新增一個 brain（最小步驟）
+Files:
 
-1. 在 `src/ai/brains/` 新增檔案並 `extends BaseMonsterBrain`
-2. 實作 `pickTarget()` 與 `tick(dt)`
-3. 在 `src/ai/monsterAI.js:createMonsterBrain()` 加入 switch case 映射（`aiType` 字串）
+- Brain: `src/ai/brains/weepingAngel.js`
+- Type: `src/ai/monsterTypes.js:WEEPING_ANGEL`
 
-### 6.2 新增一個怪物類型（Monster Type）
+Core rule:
 
-1. 在 `src/ai/monsterTypes.js` 新增 type entry（包含 `aiType`, `stats`, `combat`, `appearance`）
-2. 若需要 modules：在 `type.brain.modules` 設定 `noiseInvestigation/flankCoverTactics/squadCoordination`
-3. 若要影響刷怪 budget：更新 `src/core/spawnDirector.js:TYPE_COST`
-4. 讓關卡可以選到它：
-   - 在 `public/levels/*.json` 的 `monsters.typePool` 或 `monsters.typeWeights` 加入
+- **If the player is looking at it (player FOV + LOS), it freezes completely** (no movement, no turning).
+- Otherwise it uses its own perception (vision/noise/scent) to approach the player.
 
-### 6.3 修改感知（Vision/Noise/Scent）
+“Is the player looking at the monster?” is evaluated from the player’s perspective:
 
-感知不應該散落在多個 brain；優先改這些集中點：
-
-- 視覺：`src/entities/monsterManager/perception.js:canMonsterSeePlayer()`
-- 噪音挑選：`pickAudibleNoise()`
-- 氣味挑選：`pickSmelledScent()`
-- 噪音來源（道具/槍械）用 `EVENTS.NOISE_REQUESTED` 串接（見 `NoiseBridgeSystem`）
+- `player.getViewYaw()` and `player.getViewFovDeg()`: `src/player/playerController.js`
+- `worldState.hasLineOfSight(...)`: `src/world/worldState.js`
 
 ---
 
-## 7) Debug 建議（AI 相關）
+## 6) Extending the AI system
 
-- 模組載入：`/test-ai.html`
-- 主遊戲載入：`/diagnostic.html`
-- 敵人/戰鬥/模型 meta：`/enemy-lab.html`、`/test-enemy-meta.html`
-- 觀察 console：
-  - `MonsterManager` 會列出 type distribution
-  - `SpawnDirector` 會 emit `spawn:wavePlanned/spawn:waveSpawned`（有需要可加 log/overlay）
+### 6.1 Add a new brain
 
+1. Add a new file under `src/ai/brains/` extending `BaseMonsterBrain`
+2. Implement `pickTarget()` and `tick(dt)`
+3. Map it in `src/ai/monsterAI.js:createMonsterBrain()` (the `aiType` string)
+
+### 6.2 Add a new monster type
+
+1. Add an entry in `src/ai/monsterTypes.js` (includes `aiType`, `stats`, `combat`, `appearance`)
+2. If modules are needed, set `type.brain.modules` (e.g. `noiseInvestigation/flankCoverTactics/squadCoordination`)
+3. If you use spawn budgeting, update `src/core/spawnDirector.js:TYPE_COST`
+4. Make it selectable from levels via:
+   - `public/levels/*.json` → `monsters.typePool` or `monsters.typeWeights`
+
+### 6.3 Modify perception rules
+
+Avoid scattering perception logic across multiple brains; prefer centralized edits here:
+
+- Vision: `src/entities/monsterManager/perception.js:canMonsterSeePlayer()`
+- Noise selection: `pickAudibleNoise()`
+- Scent selection: `pickSmelledScent()`
+- Tool/gun noise should go through `EVENTS.NOISE_REQUESTED` (via `NoiseBridgeSystem`)
+
+---
+
+## 7) Debug pages and observation tips
+
+- AI import sanity: `/test-ai.html`
+- Main bootstrap sanity: `/diagnostic.html`
+- Combat + enemy meta: `/enemy-lab.html`, `/test-enemy-meta.html`
+
+Console hints:
+
+- `MonsterManager` logs type distribution
+- `SpawnDirector` emits `spawn:wavePlanned` / `spawn:waveSpawned` (add logs/overlay when needed)

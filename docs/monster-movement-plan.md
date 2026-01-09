@@ -1,16 +1,27 @@
-# 怪物移動改進計畫（工作筆記）
+# Monster Movement Improvement Plan (Working Notes)
 
-## 提升路徑品質
-- **動態避讓**：在 `MonsterManager.applyBrainCommand` 層做簡易 steering，避開最近的怪物 / 玩家 / props，減少正面卡住。
-- **路徑重試策略**：`Pathfinding` 找不到路時，快速嘗試 2~3 個候選目標（附近房間中心）再計算，避免原地停滯。
-- **寬體積規劃**：在網格上做擴張（inflate）或允許斜向平滑，讓怪物對角切角、減少轉角卡牆。
+This is a scratchpad for movement quality and “unstuck” strategies.
 
-## 強化卡住偵測與自救
-- 追加「距離目標無變化 + 速度 < ε」的檢測，連續 0.7~1s 直接清空路徑並挑新房間中心，同時加大 nudge 距離。
-- 暫時禁走區：卡在某格後，將該格及鄰近 1~2 格暫時標記為避開區，再重算路徑，避免回到同一個卡點。
-- 門口/狹窄單向優先：兩隻怪物共享門口時，給其中一隻短暫優先權，另一隻暫避讓。
+---
 
-## 實作順序（內部）
-1) 指令層動態避讓 + 寬體積/平滑參數。  
-2) Pathfinding 重試 + 房間中心候選目標。  
-3) 新的卡住檢測（速度 + 距離）與暫時禁走區、門口優先。
+## Improve path quality
+
+- **Dynamic avoidance**: add lightweight steering in `MonsterManager.applyBrainCommand` to avoid nearby monsters/player/props, reducing head-on jams.
+- **Path retry strategy**: when `Pathfinding` fails, quickly try 2–3 candidate fallback targets (e.g., nearby room centers) before giving up.
+- **Wider-body planning**: inflate obstacles on the grid (or allow limited diagonal smoothing) to reduce corner-sticking and wall scraping.
+
+---
+
+## Stronger stuck detection and self-recovery
+
+- Add “no distance-to-target change + speed < ε” detection; after ~0.7–1.0s, clear path, pick a new room-center target, and increase nudge distance.
+- Temporary avoid zones: if stuck on a tile, temporarily mark that tile and its neighbors as avoided, then replan to avoid returning to the same trap.
+- Doorway prioritization: when two monsters compete for a doorway, grant short-lived priority to one and force the other to yield briefly.
+
+---
+
+## Proposed implementation order (internal)
+
+1. Command-layer dynamic avoidance + smoothing knobs.
+2. Pathfinding retry + room-center fallback targets.
+3. New stuck detector (speed + distance) + temporary avoid zones + doorway priority.

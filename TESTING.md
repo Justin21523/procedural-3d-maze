@@ -1,10 +1,10 @@
-# 手動測試（Manual Testing）
+# Manual Testing
 
-本專案目前沒有自動化測試；請在改動 gameplay/AI/關卡/渲染後，至少跑一次本文件的 smoke test。
+There is no automated test suite yet. After changing gameplay/AI/levels/rendering, run at least one smoke pass from this document.
 
 ---
 
-## 0) 啟動（建議固定埠）
+## 0) Start the dev server (use a fixed port)
 
 ```bash
 npm install
@@ -13,54 +13,53 @@ npm run dev -- --host --port 3002
 
 ---
 
-## 1) Smoke Test（5–10 分鐘）
+## 1) Smoke test (5–10 minutes)
 
-### 1.1 AI 模組匯入 sanity
+### 1.1 AI module import sanity
 
-- 開：`http://localhost:3002/test-ai.html`
-- 預期：console 顯示「All modules loaded successfully」或等價成功訊息
+- Open: `http://localhost:3002/test-ai.html`
+- Expect: console shows “All modules loaded successfully” (or equivalent success output)
 
-### 1.2 主程式載入診斷
+### 1.2 Main bootstrap sanity
 
-- 開：`http://localhost:3002/diagnostic.html`
-- 按：`Test Main Game`
-- 預期：顯示 `main.js loaded successfully`（或等價成功訊息）
+- Open: `http://localhost:3002/diagnostic.html`
+- Click: `Test Main Game`
+- Expect: `main.js loaded successfully` (or equivalent)
 
-### 1.3 主遊戲基本流程
+### 1.3 Main gameplay sanity
 
-- 開：`http://localhost:3002/`
-- 點：`Click to Start`（取得 Pointer Lock）
-- 預期：
-  - Minimap 可見且**永遠顯示整張地圖縮圖**
-  - HUD 有 objective、道具數量（4/5/6/0/V 與 7/8/9）
-  - 怪物會生成且會移動（遠方怪物不應該跳格）
-  - `M` 可切換 3D 世界標示（World Markers）
-  - 丟一次道具（例如 `8` Smoke）應該有對應音效與效果
-  - Console 無持續報錯
-
----
-
-## 2) 進階頁面（必要時）
-
-### 2.1 Enemy Lab（敵人/戰鬥/存 meta）
-
-- 開：`http://localhost:3002/enemy-lab.html`
-- 用途：
-  - 第一人稱測試戰鬥節奏與怪物射擊
-  - 調整並保存 `public/models/<enemy>/meta.json`（透過 dev server API）
-
-### 2.2 Level Lab（關卡/配方實驗）
-
-- 開：`http://localhost:3002/level-lab.html`
-- 用途：
-  - 測試 `public/levels/*.json` 與 `public/level-recipes/*.json` 配置是否合理
+- Open: `http://localhost:3002/`
+- Click: `Click to Start` (pointer lock)
+- Expect:
+  - Minimap is visible and **always shows the full map thumbnail**
+  - HUD shows objective text and tool counts (fixed hotkeys)
+  - Monsters spawn and move (far monsters should not “teleport”)
+  - `M` toggles 3D world markers
+  - Throw at least one tool (e.g. `8` smoke) and verify SFX + effect
+  - No recurring console errors
 
 ---
 
-## 3) 回報問題時請附
+## 2) Extra pages (as needed)
 
-1. 使用的頁面（`/`, `test-ai.html`, `diagnostic.html`, `enemy-lab.html`, `level-lab.html`）
-2. Console 錯誤與關鍵 log（貼文字或截圖）
-3. 瀏覽器版本與 OS
-4. 觸發步驟（越具體越好）
+### 2.1 Enemy Lab (combat + meta save)
 
+- Open: `http://localhost:3002/enemy-lab.html`
+- Use cases:
+  - test combat pacing and enemy ranged/melee behavior
+  - tune and save `public/models/<enemy>/meta.json` (via dev server API)
+
+### 2.2 Level Lab (levels/recipes iteration)
+
+- Open: `http://localhost:3002/level-lab.html`
+- Use cases:
+  - validate `public/levels/*.json` and `public/level-recipes/*.json` behavior
+
+---
+
+## 3) When reporting issues, include
+
+1. The page you used (`/`, `test-ai.html`, `diagnostic.html`, `enemy-lab.html`, `level-lab.html`)
+2. Console errors and relevant logs (text or screenshots)
+3. Browser + OS
+4. Exact steps to reproduce

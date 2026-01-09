@@ -1,72 +1,71 @@
-# 功能待辦清單（TODO）
+# TODO (Feature Backlog)
 
-**用途：** 追蹤高層級功能開發進度（Feature-level）
+This file tracks high-level feature work (not individual bug fixes).
 
-狀態標記：
+Status markers:
 
-- ✅ 已完成（Completed）
-- 🚧 進行中（In Progress）
-- ⬜ 待開始（Pending）
-- 🔄 需重構（Needs Refactor）
-- ❌ 已取消（Cancelled）
-
----
-
-## ✅ 已實作（現況功能）
-
-### 核心循環
-
-- ✅ 程序生成迷宮（含房型 room map）
-- ✅ 多關卡（`public/levels/*.json`）+ 無限生成（recipes/dynamic）
-- ✅ 任務系統（MissionDirector）+ 出口 gating（required objectives 才能離開）
-
-### 玩家工具組（Player Kit）
-
-- ✅ 武器：射擊/換彈/切槍/模式切換 + 技能（Q/X）
-- ✅ 格擋（Block/Guard）含耐力與破防冷卻
-- ✅ 道具系統（Tools）：
-  - ✅ 部署：Lure/Trap/Jammer/Sensor/Mine
-  - ✅ 投擲：Decoy/Smoke/Flash
-  - ✅ HUD 固定顯示數量與快捷鍵
-
-### AI 全套
-
-- ✅ AI 玩家（Autopilot）：任務解題 + 反抖動/脫困 + 戰鬥節奏
-- ✅ Autopilot 道具策略（PlayerToolAISystem）
-- ✅ 怪物 AI：brain 架構 + modules（noise/tactics/squad）
-- ✅ 感知：視覺（FOV/LOS/煙霧遮蔽）、聽覺（Noise）、嗅覺（Scent）
-- ✅ 特殊怪：木頭人（Weeping Angel）
-- ✅ 刷怪系統（SpawnDirector）：波次 + 多樣性保護（避免單一怪種）
-
-### 導航/UX/效能
-
-- ✅ Minimap：永遠顯示整張地圖縮圖（marker zoom 不裁切）
-- ✅ 3D 世界標示（M 開關）：掉落/裝置/目標提示
-- ✅ 效能保護：遠距離 AI 節流、投射物/特效上限、像素比限制等
-- ✅ 程序化音效：道具 throw/deploy/trigger + objective chime
+- ✅ Completed
+- 🚧 In progress
+- ⬜ Planned
+- 🔄 Needs refactor
+- ❌ Cancelled
 
 ---
 
-## 🚧 進行中（近期優先）
+## ✅ Implemented (current state)
 
-- 🚧 平衡（Balance）：怪物數量/傷害/視距、道具持續時間與掉落權重、任務節奏
-- 🚧 關卡內容擴充：更多 recipes、更多 mission 組合、更多「非任務導向」遭遇設計
-- 🚧 效能目標：中階機器維持 ~60 FPS（持續減少 draw calls/每幀掃描成本）
+### Core loop
+
+- ✅ Procedural maze generation (with room map)
+- ✅ Multiple base levels (`public/levels/*.json`) + endless generation (recipes/dynamic)
+- ✅ Mission system (MissionDirector) + exit gating (required objectives)
+
+### Player kit
+
+- ✅ Weapons: fire/reload/switch/mode + skills (Q/X)
+- ✅ Block/guard with stamina and break cooldown
+- ✅ Tools:
+  - ✅ Devices: lure/trap/jammer/sensor/mine
+  - ✅ Throwables: decoy/smoke/flash
+  - ✅ HUD shows fixed hotkeys + counts
+
+### AI
+
+- ✅ AI player (Autopilot): objectives + anti-oscillation/unstuck + combat cadence
+- ✅ Autopilot tool strategy (PlayerToolAISystem)
+- ✅ Enemy AI: brains + modules (noise/tactics/squad)
+- ✅ Perception: vision (FOV/LOS/smoke), hearing (noise), smell (scent)
+- ✅ Special monster: Weeping Angel
+- ✅ SpawnDirector: waves + “variety protection” (avoid single-type runs)
+
+### UX / navigation / performance
+
+- ✅ Minimap always fits the full map (zoom scales markers, not tiles)
+- ✅ 3D world markers (`M` toggle): pickups/devices/objectives
+- ✅ Performance safety: far-AI throttling, hard caps for projectiles/VFX, pixel ratio cap
+- ✅ Procedural SFX: tool throw/deploy/trigger + objective chime
 
 ---
 
-## ⬜ 待開始（中長期）
+## 🚧 In progress (near-term)
 
-- ⬜ 更多道具變體（例如：煙霧/閃光的強弱版本、可部署標記器、更多陷阱類）
-- ⬜ 更多 AI 規則與怪種（例如：只聽聲/只靠氣味、遮蔽物更嚴格、特殊觸發條件）
-- ⬜ 教學/提示 UX：新手引導、快捷鍵提示一致化
-- ⬜ 音效資產（非程序化）：環境音、怪物音、武器音（可選）
-- ⬜ 設定保存：將部分設定寫入 localStorage（可選）
+- 🚧 Balance: monster counts/damage/vision, tool durations and drop weights, mission pacing
+- 🚧 Content expansion: more recipes, more mission combinations, more “non-mission” encounters
+- 🚧 Performance target: ~60 FPS on mid-tier machines (reduce draw calls + per-frame scanning)
 
 ---
 
-## 參考文件
+## ⬜ Planned (mid/long-term)
 
-- 文件治理：`docs/README.md`
-- 接手者專區：`docs/assistant/README.md`
+- ⬜ More tool variants (strong/weak smoke/flash, deployable markers, more trap types)
+- ⬜ More AI rules and monster types (noise-only, smell-only, stronger cover/occlusion rules, special triggers)
+- ⬜ Tutorial/UX: onboarding and consistent hotkey prompts
+- ⬜ Optional non-procedural audio assets (ambient/monster/weapon sounds)
+- ⬜ Settings persistence (localStorage)
 
+---
+
+## References
+
+- Doc registry/governance: `docs/README.md`
+- Assistant hub: `docs/assistant/README.md`
