@@ -5,13 +5,30 @@
 
 本文件集中管理專案中所有演算法相關內容，包含：
 - 迷宮生成（Maze Generation）
-- 路徑搜尋（Pathfinding）
-- 視線判斷（Line-of-Sight）
-- 有限狀態機（Finite State Machine）
+- 路徑搜尋（Pathfinding, A*）
+- 視覺/感知（Vision/FOV/LOS, Noise, Scent）
+- 反抖動/脫困（Anti-oscillation / Unstuck）
+
+備註：
+
+- 本專案早期曾以 FSM/行為樹（Behavior Tree）做過筆記；**目前實作主軸為 brain/module 組合**。AI 全套現況請以 `docs/assistant/AI.md` 為準。
 
 **禁止**另外建立 `maze_notes.md`、`pathfinding_notes.md` 等分散檔案。
 
 ---
+
+## 實作對照（Where In Code）
+
+| 主題 | 主要檔案 |
+|---|---|
+| 迷宮生成 | `src/world/mapGenerator.js`, `src/world/worldState.js` |
+| 路徑搜尋（A*） | `src/ai/pathfinding.js` |
+| 視線（LOS） | `src/world/worldState.js:hasLineOfSight()` |
+| 視覺（FOV/視錐） | `src/entities/monsterManager/perception.js:canMonsterSeePlayer()`、`src/ai/components/perception/vision.js` |
+| 噪音/聽覺 | `src/entities/monsterManager/perception.js`、`src/core/noiseBridgeSystem.js` |
+| 氣味/嗅覺 | `src/entities/monsterManager/perception.js` |
+| 脫困（No-progress） | `src/core/gameLoop.js`（`noProgress` system）、`src/player/playerController.js:forceUnstuck()` |
+| 路口反抖動（Step lock） | `src/ai/autoPilot.js` |
 
 ## 一、迷宮生成（Maze Generation）
 

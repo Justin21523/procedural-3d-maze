@@ -1,18 +1,14 @@
-# Enemy Model Metadata (`meta.json`)
+# Enemy 模型 Metadata（`meta.json`）
 
-Each enemy model folder under `public/models/<enemy>/` can include an optional `meta.json` to normalize:
-- Model scale (so every model feels ~1:1 in-world)
-- Upright orientation / axis correction
-- Ground offset (so feet touch the floor)
-- Optional gameplay overrides (health, hit radius, ranged combat tuning, brain/modules)
+本文件說明如何用 `public/models/<enemy>/meta.json` 來「資料驅動」調整敵人模型（scale、貼地、朝向）與部分玩法覆寫（AI/戰鬥/血量等），讓你**新增模型時不用改 runtime code**。
 
-This lets you add new models by adding data, without touching runtime code.
+---
 
-## Location
+## 位置（Location）
 
 - `public/models/<enemy>/meta.json`
 
-Example:
+範例：
 
 ```json
 {
@@ -21,69 +17,77 @@ Example:
 }
 ```
 
-## Supported Fields
+---
 
-### Top-level
+## 支援欄位（Supported Fields）
 
-- `aiType` (string): override which brain to use (`hunter`, `roomHunter`, `autopilotWanderer`, `distanceStalker`, `speedJitter`, `teleportStalker`, `greeter`, …).
-- `scaleMultiplier` (number): multiplies the selected monster type’s `stats.scale`.
-- `groundOffset` (number): vertical offset so the model sits on the floor (meters-ish units).
-- `hitRadius` (number): bullet collision radius override.
-- `correctionOffset` (object, optional): `{x,y,z}` offset (world units) applied to `__monsterInner.position` (useful to recenter models that “orbit” when turning).
-- `correctionRotationDeg` (object, optional): `{x,y,z}` in degrees, applied after the loader’s auto-upright.
-- `correctionRotationRad` (object, optional): `{x,y,z}` in radians (alternative to degrees).
+### 1) Top-level
 
-If you omit `correctionRotation*`, the loader’s auto-upright result is used as-is.
-If you only want to fix “forward direction”, you can set only `y` and omit `x/z` so the auto-upright tilt is preserved.
+- `aiType`（string）：覆寫使用哪個 brain（例如 `hunter`, `roomHunter`, `autopilotWanderer`, `distanceStalker`, `speedJitter`, `teleportStalker`, `greeter`, `weepingAngel`…）。
+- `scaleMultiplier`（number）：乘上 monster type 的 `stats.scale`，讓不同模型在世界中大小一致。
+- `groundOffset`（number）：垂直偏移，讓模型「腳貼地」。
+- `hitRadius`（number）：子彈命中半徑覆寫。
+- `correctionOffset`（object, optional）：`{x,y,z}`，用來把模型內層中心點校正到原點附近（避免轉向時「繞圈」）。
+- `correctionRotationDeg`（object, optional）：`{x,y,z}`（度），用來修正模型 upright/forward。
+- `correctionRotationRad`（object, optional）：`{x,y,z}`（弧度），同上（deg 的替代）。
 
-### `stats` (shallow merge into monster type stats)
+備註：
 
-Common:
-- `health` (number)
-- `scale` (number)
-- `speedFactor` (number)
-- `visionRange` (number)
-- `visionFOV` (number in radians)
-- `hearingRange` (number)
-- `groundOffset` (number)
-- `hitRadius` (number)
+- 若不提供 `correctionRotation*`，會使用 loader 的 auto-upright 結果。
+- 若只想修 forward 方向，通常只調 `y`，保留 `x/z` 讓 upright tilt 不被破壞。
 
-### `combat` (shallow merge into monster type combat)
+### 2) `stats`（淺合併到 monster type stats）
 
-Common:
-- `contactDamage` (number)
-- `hitStunSeconds` (number)
-- `deathDelay` (number)
-- `deathExplosionRadius` (number)
-- `deathExplosionDamage` (number)
+常見：
 
-Nested:
-- `combat.ranged` (object): ranged tuning for bolt/projectile attacks.
+- `health`（number）
+- `scale`（number）
+- `speedFactor`（number）
+- `visionRange`（number）
+- `visionFOV`（number, radians）
+- `hearingRange`（number）
+- `hitRadius`（number）
 
-#### `combat.ranged` (validated + best-effort clamped)
+### 3) `combat`（淺合併到 monster type combat）
 
-Typical fields:
-- `enabled` (boolean)
-- `kind` (string, e.g. `"bolt"`)
-- `range` / `minRange` (numbers, in world units)
-- `damage` (number)
-- `cooldown` or `shotInterval` (seconds between shots)
-- `fireChance` (0..1)
-- `spread` (0..1)
+常見：
 
-Rhythm fields (reduce “endless spam” + improve FPS):
-- `magSize` (integer)
-- `reloadSeconds` (seconds)
-- `burstMin` / `burstMax` (shots per burst)
-- `burstRestSeconds` (seconds between bursts)
-- `fireAlignDeg` (required yaw alignment before firing)
-- `turnSpeed` (rad/s)
+- `contactDamage`（number）
+- `hitStunSeconds`（number）
+- `deathDelay`（number）
+- `deathExplosionRadius`（number）
+- `deathExplosionDamage`（number）
 
-### `brain` (merged into MonsterManager brainConfig)
+巢狀：
 
-This is for brain/modules wiring (tactics, squad coordination, etc).
+- `combat.ranged`：遠程攻擊調參（validated + best-effort clamped）
 
-Examples:
+#### `combat.ranged`（節奏與效能也在這裡）
+
+常見欄位：
+
+- `enabled`（boolean）
+- `kind`（string，例如 `"bolt"`）
+- `range` / `minRange`（number）
+- `damage`（number）
+- `cooldown` 或 `shotInterval`（seconds）
+- `fireChance`（0..1）
+- `spread`（0..1）
+
+節奏欄位（降低 spam、避免 FPS 崩）：
+
+- `magSize`（integer）
+- `reloadSeconds`（seconds）
+- `burstMin` / `burstMax`（shots per burst）
+- `burstRestSeconds`（seconds）
+- `fireAlignDeg`（required yaw alignment before firing）
+- `turnSpeed`（rad/s）
+
+### 4) `brain`（合併到 MonsterManager 的 brainConfig）
+
+這裡用來做 brain/modules wiring（戰術、小隊協調等）。
+
+範例：
 
 ```json
 {
@@ -97,24 +101,32 @@ Examples:
 }
 ```
 
-## Notes
+---
 
-- `meta.json` values are sanitized at runtime: invalid types are ignored and numeric values are clamped to safe ranges.
-- Use `enemy-lab.html` for first-person testing + live tuning (and saving via dev server).
-- Use `test-enemy-meta.html` for a lightweight transform preview (scale/upright/groundOffset).
+## Notes（重要備註）
 
-### Saving (dev server)
+- `meta.json` 會在 runtime 做 sanitize：型別不對會忽略，數值會 clamp 到安全範圍。
+- 建議用以下頁面調參：
+  - `enemy-lab.html`：第一人稱測試 + live tuning（可保存）
+  - `test-enemy-meta.html`：輕量 transform 預覽（scale/upright/groundOffset）
 
-When running with Vite dev server, `enemy-lab.html` can save directly to disk:
+---
+
+## 保存（Save to Disk via Dev Server）
+
+當你用 Vite dev server 跑起來時（`npm run dev`），`enemy-lab.html` 可直接寫入檔案：
 
 - `POST /api/enemy-meta` with `{ modelPath: "/models/...", meta: {...} }`
-- Writes to:
-  - Folder models: `public/models/<folder>/meta.json`
-  - Top-level models: `public/models/<file>.meta.json`
+- 寫入到：
+  - Folder models：`public/models/<folder>/meta.json`
+  - Root models：`public/models/<file>.meta.json`
 
-### Model Pipeline Automation
+---
 
-After adding/removing files under `public/models/`, you can regenerate the manifest and create missing meta stubs:
+## 模型管線自動化（Model Pipeline Automation）
 
-- `npm run models:sync` (folder `meta.json` stubs only)
-- `npm run models:sync:all` (also creates root `*.meta.json` stubs)
+新增/移除 `public/models/` 下的檔案後，可以用 scripts 重新產生 manifest / meta stubs：
+
+- `npm run models:sync`（只處理 folder `meta.json`）
+- `npm run models:sync:all`（也會產生 root `*.meta.json`）
+

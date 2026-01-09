@@ -28,6 +28,21 @@
 | 視距 | Vision Range | 怪物能看到物體的最大距離 |
 | 視野範圍 | Field of View (FOV) | 怪物能看到的角度範圍 |
 | 碰撞檢測 | Collision Detection | 防止物體穿過牆壁的機制 |
+| 任務 | Mission | 關卡中需要完成的目標集合 |
+| 目標 | Objective | 任務當前的進度/條件（HUD 會顯示） |
+| 互動物件 | Interactable | 可被玩家/Autopilot 以 E 互動的物件 |
+| 掉落 | Pickup | 地圖上可拾取的資源（彈藥/補血/道具） |
+| 背包 | Inventory | 玩家持有的物品計數（由 GameState 管理） |
+| 道具 | Tool / Deployable | 可消耗的戰術資源（誘餌/陷阱/煙霧…） |
+| 投擲物 | Throwable | 以投射物形式丟出的道具（Decoy/Smoke/Flash） |
+| 裝置 | Device | 部署在地上的持續型道具（Lure/Trap/Jammer/Sensor/Mine） |
+| 迷你地圖 | Minimap | 2D 縮圖導航（顯示整張地圖縮圖） |
+| 世界標示 | World Marker | 3D 視野中的標記提示（可用 M 切換） |
+| 自動駕駛 | Autopilot | 玩家 idle 時接管角色的 AI 玩家系統 |
+| 噪音 | Noise | 聽覺感知用的事件（腳步/槍聲/誘餌/爆炸） |
+| 氣味 | Scent / Smell | 嗅覺感知用的事件（玩家移動麵包屑/誘餌氣味） |
+| 致盲 | Blindness | 閃光造成的暫時性視覺失效（怪物看不到玩家） |
+| 木頭人 | Weeping Angel | 被玩家看著會凍結、轉頭才靠近的特殊怪規則 |
 
 ---
 
