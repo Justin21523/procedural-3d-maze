@@ -10,6 +10,7 @@ import { DistanceStalkerBrain } from './brains/distanceStalker.js';
 import { SpeedJitterBrain } from './brains/speedJitter.js';
 import { CorridorGuardianBrain } from './brains/corridorGuardian.js';
 import { ShyGreeterBrain } from './brains/shyGreeter.js';
+import { WeepingAngelBrain } from './brains/weepingAngel.js';
 import { applyBrainModules } from './brainComposer.js';
 
 export { BaseMonsterBrain } from './brains/baseBrain.js';
@@ -21,7 +22,8 @@ export {
   DistanceStalkerBrain,
   SpeedJitterBrain,
   CorridorGuardianBrain,
-  ShyGreeterBrain
+  ShyGreeterBrain,
+  WeepingAngelBrain
 };
 
 /**
@@ -85,6 +87,11 @@ export function createMonsterBrain(options) {
     case 'shyGreeter':
     case 'greeter':
       return postProcess(new ShyGreeterBrain(worldState, pathfinder, monster, playerRef, config));
+
+    case 'weepingAngel':
+    case 'angel':
+    case 'statue':
+      return postProcess(new WeepingAngelBrain(worldState, pathfinder, monster, playerRef, config));
 
     default:
       return postProcess(new AutopilotWandererBrain(worldState, pathfinder, monster, playerRef, config));

@@ -1,4 +1,5 @@
 import { BaseMonsterBrain } from './baseBrain.js';
+import { canSeePlayer as canSeePlayerGrid } from '../components/perception/vision.js';
 
 /**
  * ShyGreeterBrain
@@ -47,13 +48,14 @@ export class ShyGreeterBrain extends BaseMonsterBrain {
   }
 
   canSeePlayer(monsterGrid, playerGrid) {
-    const dist = this.manhattan(monsterGrid, playerGrid);
-    if (dist > this.visionRange) return false;
-
-    if (this.worldState && typeof this.worldState.hasLineOfSight === 'function') {
-      return this.worldState.hasLineOfSight(monsterGrid, playerGrid);
-    }
-    return true;
+    const yaw = this.monster?.getYaw?.() ?? this.monster?.yaw;
+    const visionFOV = this.monster?.visionFOV ?? this.monster?.typeConfig?.stats?.visionFOV;
+    return canSeePlayerGrid(this.worldState, monsterGrid, playerGrid, this.visionRange, {
+      monster: this.monster,
+      monsterYaw: yaw,
+      visionFOV,
+      requireLineOfSight: true
+    });
   }
 
   pickRandomRoamTile() {
@@ -193,4 +195,3 @@ export class ShyGreeterBrain extends BaseMonsterBrain {
     return { move, lookYaw, sprint: false };
   }
 }
-

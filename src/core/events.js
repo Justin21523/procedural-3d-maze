@@ -37,6 +37,7 @@ export const EVENTS = Object.freeze({
   // World / navigation
   ROOM_ENTERED: 'room:entered',
   TIMER_TICK: 'timer:tick',
+  NOISE_REQUESTED: 'noise:requested',
   NOISE_EMITTED: 'noise:emitted',
 
   // Hints / UI

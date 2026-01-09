@@ -94,6 +94,22 @@ export class MonsterManager {
     return this.perception?.pickAudibleNoise?.(monster, brain) ?? null;
   }
 
+  registerScent(position, options = {}) {
+    return this.perception?.registerScent?.(position, options) ?? null;
+  }
+
+  updateScent(dt) {
+    this.perception?.updateScent?.(dt);
+  }
+
+  getMonsterSmellRange(monster, brain) {
+    return this.perception?.getMonsterSmellRange?.(monster, brain) ?? 0;
+  }
+
+  pickSmelledScent(monster, brain) {
+    return this.perception?.pickSmelledScent?.(monster, brain) ?? null;
+  }
+
   updatePlayerNoise(dt, playerPos) {
     const sprinting = this.playerRef?.isSprinting
       ? this.playerRef.isSprinting()
@@ -102,6 +118,13 @@ export class MonsterManager {
     if (entry && this.eventBus?.emit) {
       this.eventBus.emit(EVENTS.NOISE_EMITTED, entry);
     }
+  }
+
+  updatePlayerScent(dt, playerPos) {
+    const sprinting = this.playerRef?.isSprinting
+      ? this.playerRef.isSprinting()
+      : (this.playerRef?.input?.isSprinting?.() ?? false);
+    return this.perception?.updatePlayerScent?.(dt, playerPos, { sprinting }) ?? null;
   }
 
   canMonsterSeePlayer(monster, playerGrid) {
@@ -148,7 +171,18 @@ export class MonsterManager {
     this.levelConfig = levelConfig;
     const requested = resolveMonsterCount(levelConfig);
     const typeWeights = levelConfig?.monsters?.typeWeights || null;
-    return this.initialize(requested, typeWeights, levelConfig);
+    const typePoolRaw = levelConfig?.monsters?.typePool;
+    const typePool = Array.isArray(typePoolRaw)
+      ? typePoolRaw.map((v) => String(v || '').trim()).filter(Boolean)
+      : null;
+
+    const weights =
+      typeWeights ||
+      (typePool && typePool.length > 0
+        ? Object.fromEntries(typePool.map((key) => [key, 1]))
+        : null);
+
+    return this.initialize(requested, weights, levelConfig);
   }
 
   /**
@@ -594,11 +628,12 @@ export class MonsterManager {
   applySteering(monster, desiredMove) {
     if (!this.monsters || this.monsters.length === 0) return desiredMove;
     const move = { ...desiredMove };
-    const pos = monster.getWorldPosition ? monster.getWorldPosition() : null;
+    const pos = monster?.model?.position || monster?.position || null;
     if (!pos) return move;
 
     const avoidRadius = 1.2 * (CONFIG.TILE_SIZE || 1);
-    const avoidForce = new THREE.Vector3(0, 0, 0);
+    let avoidX = 0;
+    let avoidZ = 0;
     let count = 0;
     let doorYield = 1.0;
 
@@ -607,81 +642,124 @@ export class MonsterManager {
     const gx = Math.floor(pos.x / tileSize);
     const gy = Math.floor(pos.z / tileSize);
     const onDoor = this.worldState?.getTile && this.worldState.getTile(gx, gy) === 2;
+    const doorCx = (gx + 0.5) * tileSize;
+    const doorCz = (gy + 0.5) * tileSize;
 
     for (const other of this.monsters) {
       if (other === monster) continue;
-      const op = other.getWorldPosition ? other.getWorldPosition() : null;
+      const op = other?.model?.position || other?.position || null;
       if (!op) continue;
-      const dist = pos.distanceTo(op);
+      const dx = pos.x - op.x;
+      const dz = pos.z - op.z;
+      const dist = Math.hypot(dx, dz);
       if (dist > avoidRadius || dist <= 0.001) continue;
-      const away = pos.clone().sub(op).setY(0);
-      away.normalize().multiplyScalar((avoidRadius - dist) / avoidRadius);
-      avoidForce.add(away);
+      const t = (avoidRadius - dist) / avoidRadius;
+      avoidX += (dx / dist) * t;
+      avoidZ += (dz / dist) * t;
       count++;
 
       if (onDoor) {
-        const otherDistToDoorCenter = Math.hypot(
-          op.x - (gx + 0.5) * tileSize,
-          op.z - (gy + 0.5) * tileSize
-        );
-        const selfDist = Math.hypot(
-          pos.x - (gx + 0.5) * tileSize,
-          pos.z - (gy + 0.5) * tileSize
-        );
+        const otherDistToDoorCenter = Math.hypot(op.x - doorCx, op.z - doorCz);
+        const selfDist = Math.hypot(pos.x - doorCx, pos.z - doorCz);
         if (otherDistToDoorCenter < selfDist) {
           doorYield = 0.55; // slow down to let the other pass
         }
       }
     }
 
-    // Lightly avoid player as well
-    if (this.playerRef?.getPosition) {
-      const p = this.playerRef.getPosition();
-      const dist = pos.distanceTo(p);
-      if (dist > 0.001 && dist < avoidRadius) {
-        const away = pos.clone().sub(p).setY(0);
-        away.normalize().multiplyScalar((avoidRadius - dist) / avoidRadius);
-        avoidForce.add(away);
-        count++;
+    // Avoid player only at close range to reduce overlap jitter while chasing.
+    let playerAvoidX = 0;
+    let playerAvoidZ = 0;
+    const playerPos = this.playerRef?.position || (this.playerRef?.getPosition ? this.playerRef.getPosition() : null);
+    if (playerPos) {
+      const dx = pos.x - playerPos.x;
+      const dz = pos.z - playerPos.z;
+      const dist = Math.hypot(dx, dz);
+      const playerAvoidRadius = Math.min(avoidRadius, Math.max((CONFIG.PLAYER_RADIUS || 0.35) * 2.0, tileSize * 0.55));
+      if (dist > 0.001 && dist < playerAvoidRadius) {
+        const t = (playerAvoidRadius - dist) / playerAvoidRadius;
+        const inv = 1 / dist;
+        playerAvoidX = dx * inv * t;
+        playerAvoidZ = dz * inv * t;
       }
     }
 
+    const hasAvoid = count > 0 || (playerAvoidX !== 0 || playerAvoidZ !== 0);
     if (count > 0) {
-      avoidForce.divideScalar(count);
-      const desired = new THREE.Vector3(move.x, 0, move.y);
-      desired.add(avoidForce.multiplyScalar(0.6)).normalize();
-      return { x: desired.x * doorYield, y: desired.z * doorYield };
+      avoidX /= count;
+      avoidZ /= count;
+    }
+
+    if (hasAvoid) {
+      const desiredX = move.x + avoidX * 0.6 + playerAvoidX * 0.45;
+      const desiredZ = move.y + avoidZ * 0.6 + playerAvoidZ * 0.45;
+      const len = Math.hypot(desiredX, desiredZ) || 1;
+      return { x: (desiredX / len) * doorYield, y: (desiredZ / len) * doorYield };
     }
 
     return { x: move.x * doorYield, y: move.y * doorYield };
   }
 
   tryMoveMonster(monster, currentPos, targetPos, deltaVec) {
-    if (this.canMonsterMoveTo(targetPos.x, targetPos.z)) {
+    // Prevent monsters from "pushing" the player: treat the player as a solid obstacle.
+    // If a monster is already overlapping (edge cases), allow steps that increase separation so it can escape.
+    const playerPos = this.playerRef?.position || null;
+    const playerHidden = this.playerRef
+      ? (typeof this.playerRef.isHidden === 'function' ? this.playerRef.isHidden() : !!this.playerRef.hidden)
+      : false;
+
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const playerRadius = CONFIG.PLAYER_RADIUS || 0.35;
+    const monsterRadius = (CONFIG.PLAYER_RADIUS || 0.35) * 0.9;
+    const minPlayerDist = Math.max(tileSize * 0.65, playerRadius + monsterRadius + 0.02);
+    const minPlayerDistSq = minPlayerDist * minPlayerDist;
+
+    const canStepTo = (fromPos, toPos) => {
+      if (!toPos) return false;
+      if (playerPos && !playerHidden) {
+        const fx = (fromPos?.x || 0) - playerPos.x;
+        const fz = (fromPos?.z || 0) - playerPos.z;
+        const tx = (toPos.x || 0) - playerPos.x;
+        const tz = (toPos.z || 0) - playerPos.z;
+        const fromSq = fx * fx + fz * fz;
+        const toSq = tx * tx + tz * tz;
+        if (!Number.isFinite(fromSq) || !Number.isFinite(toSq)) return false;
+        if (toSq < minPlayerDistSq) {
+          // Allow only if we were already overlapping and are moving away.
+          if (!(fromSq < minPlayerDistSq && toSq > fromSq + 1e-6)) return false;
+        }
+      }
+      return this.canMonsterMoveTo(toPos.x, toPos.z);
+    };
+
+    if (canStepTo(currentPos, targetPos)) {
       monster.setWorldPosition(targetPos);
       return true;
     }
 
     let moved = false;
+    let basePos = currentPos;
     if (Math.abs(deltaVec.x) > Math.abs(deltaVec.z)) {
-      const posX = currentPos.clone().add(new THREE.Vector3(deltaVec.x, 0, 0));
-      if (this.canMonsterMoveTo(posX.x, posX.z)) {
+      const posX = basePos.clone().add(new THREE.Vector3(deltaVec.x, 0, 0));
+      if (canStepTo(basePos, posX)) {
         monster.setWorldPosition(posX);
         moved = true;
+        basePos = monster?.model?.position || monster?.position || posX;
       }
-      const posZ = currentPos.clone().add(new THREE.Vector3(0, 0, deltaVec.z));
-      if (this.canMonsterMoveTo(posZ.x, posZ.z)) {
+      const posZ = basePos.clone().add(new THREE.Vector3(0, 0, deltaVec.z));
+      if (canStepTo(basePos, posZ)) {
         monster.setWorldPosition(posZ);
         moved = true;
       }
     } else {
-      const posZ = currentPos.clone().add(new THREE.Vector3(0, 0, deltaVec.z));
-      if (this.canMonsterMoveTo(posZ.x, posZ.z)) {
+      const posZ = basePos.clone().add(new THREE.Vector3(0, 0, deltaVec.z));
+      if (canStepTo(basePos, posZ)) {
         monster.setWorldPosition(posZ);
         moved = true;
+        basePos = monster?.model?.position || monster?.position || posZ;
       }
-      const posX = currentPos.clone().add(new THREE.Vector3(deltaVec.x, 0, 0));
-      if (this.canMonsterMoveTo(posX.x, posX.z)) {
+      const posX = basePos.clone().add(new THREE.Vector3(deltaVec.x, 0, 0));
+      if (canStepTo(basePos, posX)) {
         monster.setWorldPosition(posX);
         moved = true;
       }
@@ -810,6 +888,7 @@ export class MonsterManager {
     this.updatePendingDeaths(dt);
     this.updateRespawns(dt);
     this.updateNoise(dt);
+    this.updateScent(dt);
 
     const playerPos =
       playerPosition && playerPosition.isVector3 ? playerPosition :
@@ -821,6 +900,7 @@ export class MonsterManager {
 
     if (playerPos) {
       this.updatePlayerNoise(dt, playerPos);
+      this.updatePlayerScent(dt, playerPos);
     }
 
 	    const tileSize = CONFIG.TILE_SIZE || 1;
@@ -839,6 +919,12 @@ export class MonsterManager {
           monster.updateAnimation(dt);
         }
         continue;
+      }
+      if ((monster.perceptionJammedTimer || 0) > 0) {
+        monster.perceptionJammedTimer = Math.max(0, (monster.perceptionJammedTimer || 0) - dt);
+      }
+      if ((monster.perceptionBlindedTimer || 0) > 0) {
+        monster.perceptionBlindedTimer = Math.max(0, (monster.perceptionBlindedTimer || 0) - dt);
       }
       if ((monster.stunTimer || 0) > 0) {
         monster.stunTimer = Math.max(0, (monster.stunTimer || 0) - dt);
@@ -891,24 +977,72 @@ export class MonsterManager {
           brain.hearNoise(heard);
         }
 
+        const smelled = this.pickSmelledScent(monster, brain);
+        if (smelled && typeof brain.smellScent === 'function') {
+          brain.smellScent(smelled);
+        }
+
         if (playerPos && playerGrid) {
           this.maybeBroadcastAlert(monster, playerPos, playerGrid, tickDt);
         }
 
-        const rawCommand = brain.tick(tickDt) || { move: { x: 0, y: 0 }, lookYaw: 0, sprint: false };
-        command = typeof brain.decorateCommand === 'function'
-          ? brain.decorateCommand(rawCommand, tickDt)
-          : rawCommand;
+        let rawCommand = null;
+        try {
+          rawCommand = brain.tick(tickDt) || null;
+        } catch (err) {
+          console.warn('⚠️ Monster brain tick failed:', err?.message || err);
+          rawCommand = null;
+        }
+        if (!rawCommand || typeof rawCommand !== 'object') {
+          rawCommand = { move: { x: 0, y: 0 }, lookYaw: 0, sprint: false };
+        }
+
+        try {
+          command = typeof brain.decorateCommand === 'function'
+            ? brain.decorateCommand(rawCommand, tickDt)
+            : rawCommand;
+        } catch (err) {
+          console.warn('⚠️ Monster brain decorateCommand failed:', err?.message || err);
+          command = rawCommand;
+        }
+
+        // Sanitize command to prevent NaNs / oversized vectors from breaking movement.
+        const mv = command?.move || {};
+        let mx = Number(mv.x);
+        let my = Number(mv.y);
+        if (!Number.isFinite(mx)) mx = 0;
+        if (!Number.isFinite(my)) my = 0;
+        const len = Math.hypot(mx, my);
+        if (len > 1e-6 && len > 1.25) {
+          mx /= len;
+          my /= len;
+        }
+        const lookYaw = Number(command?.lookYaw);
+        command = {
+          ...command,
+          move: { x: mx, y: my },
+          lookYaw: Number.isFinite(lookYaw) ? lookYaw : 0,
+          sprint: !!command?.sprint
+        };
+
         monster.lastBrainCommand = command;
       }
 
       command = command || { move: { x: 0, y: 0 }, lookYaw: 0, sprint: false };
-      const moveDt = isFar ? (shouldTick ? tickDt : 0) : dt;
+      // Always apply movement each frame for smooth motion; only throttle *AI thinking* when far.
+      // (Previously far monsters only moved when shouldTick, causing visible "jumping".)
+      const moveDt = dt;
       if (moveDt > 0) {
-        this.applyBrainCommand(monster, command, moveDt, {
-          allowSteering: !isFar,
-          allowLook: shouldTick
-        });
+        try {
+          this.applyBrainCommand(monster, command, moveDt, {
+            allowSteering: !isFar,
+            allowLook: shouldTick
+          });
+        } catch (err) {
+          console.warn('⚠️ Monster movement failed:', err?.message || err);
+          monster.isMoving = false;
+          monster.isSprinting = false;
+        }
       } else {
         monster.isMoving = false;
         monster.isSprinting = false;
@@ -1016,6 +1150,37 @@ export class MonsterManager {
 
   applyAreaDamage(centerPos, radius, damage, options = {}) {
     this.damage?.applyAreaDamage?.(centerPos, radius, damage, options);
+  }
+
+  applyAreaBlindness(centerPos, radius, seconds, options = {}) {
+    if (!centerPos) return;
+    const r = Number.isFinite(radius) ? radius : 0;
+    const baseSeconds = Number.isFinite(seconds) ? seconds : 0;
+    if (r <= 0 || baseSeconds <= 0) return;
+
+    const falloff = options?.falloff !== false;
+
+    const center = centerPos.clone ? centerPos.clone() : new THREE.Vector3(centerPos.x || 0, centerPos.y || 0, centerPos.z || 0);
+    center.y = 0;
+
+    for (const monster of this.monsters) {
+      if (!monster || monster.isDead || monster.isDying) continue;
+      const pos = monster.getWorldPosition?.();
+      if (!pos) continue;
+
+      const dx = pos.x - center.x;
+      const dz = pos.z - center.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist > r) continue;
+
+      let scaled = baseSeconds;
+      if (falloff) {
+        const t = 1 - dist / r;
+        scaled = baseSeconds * (0.4 + 0.6 * Math.max(0, t));
+      }
+
+      monster.perceptionBlindedTimer = Math.max(monster.perceptionBlindedTimer || 0, scaled);
+    }
   }
 
   killMonster(monster, hitPosition = null) {

@@ -38,6 +38,8 @@ export class BaseMonsterBrain {
 
     // Perception (noise)
     this.lastHeardNoise = null; // { kind, grid, world, priority, strength, heardAt }
+    // Perception (scent)
+    this.lastSmelledScent = null; // { kind, grid, world, strength, intensity, smelledAt }
 
     // Combat module (optional; checks typeConfig.combat.ranged at runtime)
     this.combat = new RangedCombatModule(worldState, monster, playerRef, config.combat || {});
@@ -83,6 +85,38 @@ export class BaseMonsterBrain {
     }
     if (next.priority === (cur.priority || 0) && next.heardAt > (cur.heardAt || 0)) {
       this.lastHeardNoise = next;
+    }
+  }
+
+  /**
+   * Receive a perceived scent event from MonsterManager.
+   * @param {Object} scent
+   */
+  smellScent(scent) {
+    if (!scent || !scent.grid) return;
+    const now = this.now();
+    const next = {
+      kind: scent.kind || 'scent',
+      grid: scent.grid,
+      world: scent.world || null,
+      strength: Number.isFinite(scent.strength) ? scent.strength : 1.0,
+      intensity: Number.isFinite(scent.intensity) ? scent.intensity : (Number.isFinite(scent.strength) ? scent.strength : 1.0),
+      smelledAt: now
+    };
+
+    const cur = this.lastSmelledScent;
+    if (!cur) {
+      this.lastSmelledScent = next;
+      return;
+    }
+
+    // Prefer stronger intensity; otherwise prefer more recent.
+    if ((next.intensity || 0) > (cur.intensity || 0)) {
+      this.lastSmelledScent = next;
+      return;
+    }
+    if ((next.intensity || 0) === (cur.intensity || 0) && next.smelledAt > (cur.smelledAt || 0)) {
+      this.lastSmelledScent = next;
     }
   }
 

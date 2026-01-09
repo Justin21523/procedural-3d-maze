@@ -4,6 +4,10 @@ function isObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function deepCloneJson(value) {
+  return value ? JSON.parse(JSON.stringify(value)) : value;
+}
+
 function toNumber(value) {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string' && value.trim() === '') return null;
@@ -11,11 +15,21 @@ function toNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function toInt(value) {
+  const n = toNumber(value);
+  if (n === null) return null;
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
 function clampNumber(value, min, max) {
   if (!Number.isFinite(value)) return value;
   if (Number.isFinite(min) && value < min) return min;
   if (Number.isFinite(max) && value > max) return max;
   return value;
+}
+
+function clamp01(value) {
+  return clampNumber(value, 0, 1);
 }
 
 function normalizeRotationInput(meta) {
@@ -53,6 +67,181 @@ function normalizeOffsetInput(meta) {
   };
 }
 
+function getStudioPathKey(path) {
+  if (!Array.isArray(path)) return '';
+  return path
+    .map((seg) => {
+      const i = isObject(seg) ? toInt(seg.i) : null;
+      return Number.isFinite(i) && i !== null ? String(i) : 'x';
+    })
+    .join('.');
+}
+
+function sanitizeStudioPath(path) {
+  if (!Array.isArray(path) || path.length === 0) return null;
+  const cleaned = [];
+  for (const seg of path) {
+    if (!isObject(seg)) return null;
+    const i = toInt(seg.i);
+    if (!Number.isFinite(i) || i === null || i < 0 || i > 100000) return null;
+    const name = typeof seg.name === 'string' ? seg.name.slice(0, 200) : null;
+    cleaned.push(name ? { i, name } : { i });
+  }
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function sanitizeStudioTransform(transform) {
+  if (!isObject(transform)) return null;
+  const next = {};
+
+  const position = Array.isArray(transform.position) ? transform.position : null;
+  if (position && position.length === 3) {
+    const x = toNumber(position[0]);
+    const y = toNumber(position[1]);
+    const z = toNumber(position[2]);
+    if (x !== null && y !== null && z !== null) {
+      next.position = [
+        clampNumber(x, -1e4, 1e4),
+        clampNumber(y, -1e4, 1e4),
+        clampNumber(z, -1e4, 1e4)
+      ];
+    }
+  }
+
+  const quaternion = Array.isArray(transform.quaternion) ? transform.quaternion : null;
+  if (quaternion && quaternion.length === 4) {
+    const x = toNumber(quaternion[0]);
+    const y = toNumber(quaternion[1]);
+    const z = toNumber(quaternion[2]);
+    const w = toNumber(quaternion[3]);
+    if (x !== null && y !== null && z !== null && w !== null) {
+      next.quaternion = [
+        clampNumber(x, -1, 1),
+        clampNumber(y, -1, 1),
+        clampNumber(z, -1, 1),
+        clampNumber(w, -1, 1)
+      ];
+    }
+  }
+
+  const scale = Array.isArray(transform.scale) ? transform.scale : null;
+  if (scale && scale.length === 3) {
+    const x = toNumber(scale[0]);
+    const y = toNumber(scale[1]);
+    const z = toNumber(scale[2]);
+    if (x !== null && y !== null && z !== null) {
+      next.scale = [
+        clampNumber(Math.max(0.001, x), 0.001, 1e4),
+        clampNumber(Math.max(0.001, y), 0.001, 1e4),
+        clampNumber(Math.max(0.001, z), 0.001, 1e4)
+      ];
+    }
+  }
+
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+function sanitizeStudioStandardMaterial(standard) {
+  if (!isObject(standard)) return null;
+  const next = {};
+
+  if (typeof standard.color === 'string') {
+    const c = standard.color.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(c)) next.color = c;
+  }
+
+  const metalness = toNumber(standard.metalness);
+  if (metalness !== null) next.metalness = clamp01(metalness);
+
+  const roughness = toNumber(standard.roughness);
+  if (roughness !== null) next.roughness = clamp01(roughness);
+
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+function sanitizeStudio(meta) {
+  if (!isObject(meta)) return null;
+
+  const version = toInt(meta.version);
+  if (version !== 1) return null;
+
+  const objectsIn = Array.isArray(meta.objects) ? meta.objects : [];
+  const materialsIn = Array.isArray(meta.materials) ? meta.materials : [];
+
+  const objectsByKey = new Map();
+  for (const entry of objectsIn) {
+    if (!isObject(entry)) continue;
+    const path = sanitizeStudioPath(entry.path);
+    if (!path) continue;
+    const key = getStudioPathKey(path);
+    if (!key) continue;
+
+    const next = { path };
+    if (typeof entry.visible === 'boolean') next.visible = entry.visible;
+    const transform = sanitizeStudioTransform(entry.transform);
+    if (transform) next.transform = transform;
+
+    if (Object.keys(next).length > 1) {
+      objectsByKey.set(key, next);
+    }
+  }
+
+  const materialsByKey = new Map();
+  for (const entry of materialsIn) {
+    if (!isObject(entry)) continue;
+    const path = sanitizeStudioPath(entry.path);
+    if (!path) continue;
+    const slot = toInt(entry.slot);
+    if (!Number.isFinite(slot) || slot === null || slot < 0 || slot > 256) continue;
+    const standard = sanitizeStudioStandardMaterial(entry.standard);
+    if (!standard) continue;
+    const key = `${getStudioPathKey(path)}|${slot}`;
+    materialsByKey.set(key, { path, slot, standard });
+  }
+
+  const objects = Array.from(objectsByKey.values());
+  const materials = Array.from(materialsByKey.values());
+
+  if (objects.length === 0 && materials.length === 0) return null;
+  return { version: 1, objects, materials };
+}
+
+function mergeStudio(baseStudio, overrideStudio) {
+  const base = sanitizeStudio(baseStudio);
+  const override = sanitizeStudio(overrideStudio);
+  if (!base && !override) return null;
+  if (!base) return override ? deepCloneJson(override) : null;
+  if (!override) return base ? deepCloneJson(base) : null;
+
+  const objectsByKey = new Map();
+  for (const entry of base.objects || []) {
+    const key = getStudioPathKey(entry.path);
+    if (key) objectsByKey.set(key, deepCloneJson(entry));
+  }
+  for (const entry of override.objects || []) {
+    const key = getStudioPathKey(entry.path);
+    if (key) objectsByKey.set(key, deepCloneJson(entry));
+  }
+
+  const materialsByKey = new Map();
+  for (const entry of base.materials || []) {
+    const key = `${getStudioPathKey(entry.path)}|${entry.slot}`;
+    if (key) materialsByKey.set(key, deepCloneJson(entry));
+  }
+  for (const entry of override.materials || []) {
+    const key = `${getStudioPathKey(entry.path)}|${entry.slot}`;
+    if (key) materialsByKey.set(key, deepCloneJson(entry));
+  }
+
+  const merged = {
+    version: 1,
+    objects: Array.from(objectsByKey.values()),
+    materials: Array.from(materialsByKey.values())
+  };
+
+  return merged.objects.length === 0 && merged.materials.length === 0 ? null : merged;
+}
+
 function mergeShallow(base, override) {
   if (!isObject(base)) base = {};
   if (!isObject(override)) return base;
@@ -81,6 +270,9 @@ function mergeMeta(base, override) {
 
   const offset = normalizeOffsetInput(override);
   if (offset) next.correctionOffset = offset;
+
+  const studio = mergeStudio(next.studio, override.studio);
+  if (studio) next.studio = studio;
 
   next.stats = mergeShallow(next.stats, override.stats);
   next.behavior = mergeShallow(next.behavior, override.behavior);
@@ -238,6 +430,11 @@ function sanitizeMeta(meta) {
   sanitizeNumberField(next, 'hitRadius', { min: 0.05, max: 20, positive: true });
   sanitizeRotation(next);
   sanitizeOffset(next);
+  if ('studio' in next) {
+    const studio = sanitizeStudio(next.studio);
+    if (studio) next.studio = studio;
+    else delete next.studio;
+  }
 
   sanitizeSection(next, 'stats', {
     scale: { min: 0.01, max: 20, positive: true },
@@ -406,6 +603,85 @@ export class EnemyCatalog {
   }
 }
 
+export function findEnemyModelObjectByStudioPath(root, path) {
+  if (!root || !Array.isArray(path) || path.length === 0) return null;
+  let current = root;
+  for (const seg of path) {
+    const i = isObject(seg) ? toInt(seg.i) : null;
+    if (i === null || !Number.isFinite(i) || i < 0) return null;
+    const children = current?.children;
+    if (!Array.isArray(children) || children.length === 0) return null;
+
+    let next = children[i] || null;
+    const expectedName = typeof seg.name === 'string' ? seg.name : null;
+    if (expectedName && next && next.name !== expectedName) {
+      // Fallback to name match if indices shifted.
+      next = children.find((c) => c && c.name === expectedName) || next;
+    }
+    if (!next) return null;
+    current = next;
+  }
+  return current || null;
+}
+
+function applyStudioMeta(model, studio) {
+  const root = model;
+  const clean = sanitizeStudio(studio);
+  if (!root || !clean) return;
+
+  for (const entry of clean.objects || []) {
+    const obj = findEnemyModelObjectByStudioPath(root, entry.path);
+    if (!obj) continue;
+    if (typeof entry.visible === 'boolean') {
+      obj.visible = entry.visible;
+    }
+    const t = entry.transform || null;
+    if (t && isObject(t)) {
+      if (Array.isArray(t.position) && t.position.length === 3) {
+        obj.position.set(t.position[0], t.position[1], t.position[2]);
+      }
+      if (Array.isArray(t.quaternion) && t.quaternion.length === 4) {
+        obj.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+      }
+      if (Array.isArray(t.scale) && t.scale.length === 3) {
+        obj.scale.set(t.scale[0], t.scale[1], t.scale[2]);
+      }
+      obj.updateMatrixWorld?.(true);
+    }
+  }
+
+  for (const entry of clean.materials || []) {
+    const obj = findEnemyModelObjectByStudioPath(root, entry.path);
+    if (!obj) continue;
+    const mesh = obj && (obj.isMesh || obj.isSkinnedMesh) ? obj : null;
+    if (!mesh) continue;
+    const mat = mesh.material;
+    const slot = entry.slot;
+
+    let material = null;
+    if (Array.isArray(mat)) {
+      material = mat[slot] || null;
+    } else if (slot === 0) {
+      material = mat || null;
+    }
+    if (!material) continue;
+    if (!material.isMeshStandardMaterial) continue;
+
+    const standard = entry.standard || null;
+    if (!standard) continue;
+    if (typeof standard.color === 'string') {
+      material.color?.set?.(standard.color);
+    }
+    if (Number.isFinite(standard.metalness)) {
+      material.metalness = clamp01(standard.metalness);
+    }
+    if (Number.isFinite(standard.roughness)) {
+      material.roughness = clamp01(standard.roughness);
+    }
+    material.needsUpdate = true;
+  }
+}
+
 export function applyEnemyModelMeta(model, meta) {
   if (!model || !meta) return;
   if (!model.getObjectByName) return;
@@ -432,6 +708,10 @@ export function applyEnemyModelMeta(model, meta) {
     const py = Number.isFinite(off.y) ? baseY + off.y : baseY;
     const pz = Number.isFinite(off.z) ? baseZ + off.z : baseZ;
     inner.position.set(px, py, pz);
+  }
+
+  if (meta.studio) {
+    applyStudioMeta(model, meta.studio);
   }
 }
 

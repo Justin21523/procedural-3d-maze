@@ -76,7 +76,7 @@
           "hints": [
             "Stop moving and stay quiet.",
             "Any movement resets the timer. Wait until it reaches 0.",
-            "Gunshots will fail the objective permanently."
+            "Gunshots reset the countdown—stop and wait again."
           ]
         }
       },

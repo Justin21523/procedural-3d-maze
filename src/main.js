@@ -11,6 +11,7 @@ import { GameState } from './core/gameState.js';
 import { SceneManager } from './rendering/scene.js';
 import { FirstPersonCamera } from './rendering/camera.js';
 import { Minimap } from './rendering/minimap.js';
+import { WorldMarkerSystem } from './rendering/worldMarkerSystem.js';
 import { WorldState } from './world/worldState.js';
 import { InputHandler } from './player/input.js';
 import { PlayerController } from './player/playerController.js';
@@ -29,6 +30,8 @@ import { EventBus } from './core/eventBus.js';
 import { CombatSystem } from './core/combatSystem.js';
 import { FeedbackSystem } from './core/feedbackSystem.js';
 import { InventorySystem } from './core/inventorySystem.js';
+import { NoiseBridgeSystem } from './core/noiseBridgeSystem.js';
+import { ToolSystem } from './core/toolSystem.js';
 import { UIManager } from './ui/uiManager.js';
 import { InteractableSystem } from './core/interactions/interactableSystem.js';
 import { HidingSpotSystem } from './core/interactions/hidingSpotSystem.js';
@@ -100,6 +103,9 @@ async function initGame() {
   let autopilot = null;
   let pickupManager = null;
   let spawnDirector = null;
+  let noiseBridgeSystem = null;
+  let toolSystem = null;
+  let worldMarkerSystem = null;
   let levelLoading = Promise.resolve();
   let lastOutcome = null;
   let lastRunStats = null;
@@ -267,7 +273,8 @@ async function initGame() {
       levelLabel.textContent = label;
     }
     if (levelJumpInput) {
-      levelJumpInput.max = levelDirector.getMaxJump();
+      const maxJump = levelDirector.getMaxJump();
+      levelJumpInput.max = Number.isFinite(maxJump) ? String(maxJump) : '';
       levelJumpInput.value = currentLevelIndex + 1;
     }
     updateLevelDebugUI();
@@ -418,7 +425,11 @@ async function initGame() {
 	      player.getGridPosition(),
 	      monsterManager?.getMonsterPositions() || [],
 	      exitPoint?.getGridPosition() || null,
-	      missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
+	      missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : [],
+        {
+          pickupPositions: pickupManager?.getPickupMarkers?.() || [],
+          devicePositions: toolSystem?.getDeviceMarkers?.() || []
+        }
 	    );
 	    return clamped;
 	  }
@@ -454,6 +465,18 @@ async function initGame() {
   // Create monster manager
   const monsterManager = new MonsterManager(sceneManager.getScene(), worldState, player, eventBus);
   console.log('👹 Monster manager created');
+  noiseBridgeSystem = new NoiseBridgeSystem({ eventBus, monsterManager });
+  void noiseBridgeSystem;
+  toolSystem = new ToolSystem({
+    eventBus,
+    scene: sceneManager.getScene(),
+    worldState,
+    player,
+    monsterManager,
+    gameState,
+    audioManager
+  });
+  toolSystem.startLevel(levelConfig);
 
   // Interactions + objectives (data-driven missions)
   interactableSystem = new InteractableSystem({
@@ -497,18 +520,20 @@ async function initGame() {
     () => (missionDirector?.getAutopilotState ? missionDirector.getAutopilotState() : []),
     exitPoint,
     player,
-    levelConfig
+    levelConfig,
+    () => (pickupManager?.getPickupMarkers?.() || [])
   );
 
-  const projectileManager = new ProjectileManager(
-    sceneManager.getScene(),
-    worldState,
-    monsterManager,
-    player,
-    eventBus
-  );
+	  const projectileManager = new ProjectileManager(
+	    sceneManager.getScene(),
+	    worldState,
+	    monsterManager,
+	    player,
+	    eventBus
+	  );
 
-  monsterManager.setProjectileManager(projectileManager);
+	  monsterManager.setProjectileManager(projectileManager);
+	  toolSystem?.setRefs?.({ projectileManager, audioManager });
 
   const weaponView = new WeaponView(
     sceneManager.getScene(),
@@ -535,21 +560,35 @@ async function initGame() {
     gun,
     monsterManager,
     projectileManager,
+    toolSystem,
     missionDirector
   });
   missionDirector?.syncStatus?.(true);
 
-	  pickupManager = new PickupManager(sceneManager.getScene(), player, gameState, gun, audioManager, eventBus);
-	  spawnDirector = new SpawnDirector(monsterManager, player, pickupManager, eventBus);
-	  spawnDirector.setGameState(gameState);
-	  spawnDirector.setGun(gun);
-	  spawnDirector.setProjectileManager?.(projectileManager);
-	  levelLoading = spawnDirector.startLevel(levelConfig);
+		  pickupManager = new PickupManager(sceneManager.getScene(), player, gameState, gun, audioManager, eventBus);
+		  uiManager?.setRefs?.({ pickupManager });
+		  spawnDirector = new SpawnDirector(monsterManager, player, pickupManager, eventBus);
+		  spawnDirector.setGameState(gameState);
+		  spawnDirector.setGun(gun);
+		  spawnDirector.setProjectileManager?.(projectileManager);
+		  levelLoading = spawnDirector.startLevel(levelConfig);
 
-  // Combat resolution (damage/explosions) driven by EventBus.
-  const combatSystem = new CombatSystem({
-    eventBus,
-    monsterManager,
+	  worldMarkerSystem = new WorldMarkerSystem({
+	    eventBus,
+	    scene: sceneManager.getScene(),
+	    camera,
+	    player,
+	    worldState,
+	    pickupManager,
+	    toolSystem,
+	    missionDirector,
+	    exitPoint
+	  });
+
+	  // Combat resolution (damage/explosions) driven by EventBus.
+	  const combatSystem = new CombatSystem({
+	    eventBus,
+	    monsterManager,
     projectileManager,
     playerRef: player,
     gameState
@@ -557,11 +596,11 @@ async function initGame() {
   void combatSystem;
 
   // Create game loop with all systems（autopilot 實體可後續更新）
-  let gameLoop = new GameLoop(
-    sceneManager,
-    player,
-    minimap,
-    monsterManager,
+	  let gameLoop = new GameLoop(
+	    sceneManager,
+	    player,
+	    minimap,
+	    monsterManager,
     lights,
     worldState,
     gameState,
@@ -571,10 +610,12 @@ async function initGame() {
     projectileManager,
     gun,
     spawnDirector,
+    toolSystem,
     uiManager,
-    interactableSystem,
-    missionDirector
-  );
+	    interactableSystem,
+	    missionDirector
+	  );
+	  gameLoop.worldMarkerSystem = worldMarkerSystem;
 
   // Combat feedback (hit marker + light shake/flash) driven by EventBus
   const feedbackSystem = new FeedbackSystem(eventBus, audioManager, gameLoop?.visualEffects || null);
@@ -586,7 +627,11 @@ async function initGame() {
     player.getGridPosition(),
     monsterManager.getMonsterPositions(),
     exitGridPos,
-    missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
+    missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : [],
+    {
+      pickupPositions: pickupManager?.getPickupMarkers?.() || [],
+      devicePositions: toolSystem?.getDeviceMarkers?.() || []
+    }
   );
   console.log('✅ Initial minimap rendered');
   updateLevelUI();
@@ -603,7 +648,11 @@ async function initGame() {
       player.getGridPosition(),
       monsterManager.getMonsterPositions(),
       exitPoint?.getGridPosition?.() || null,
-      missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
+      missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : [],
+      {
+        pickupPositions: pickupManager?.getPickupMarkers?.() || [],
+        devicePositions: toolSystem?.getDeviceMarkers?.() || []
+      }
     );
     return clamped;
   }
@@ -646,7 +695,11 @@ async function initGame() {
         player.getGridPosition(),
         monsterManager.getMonsterPositions(),
         exitPoint.getGridPosition(),
-        missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
+        missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : [],
+        {
+          pickupPositions: pickupManager?.getPickupMarkers?.() || [],
+          devicePositions: toolSystem?.getDeviceMarkers?.() || []
+        }
       );
     });
   }
@@ -691,6 +744,7 @@ async function initGame() {
       missionDirector?.clear?.();
       hidingSpotSystem?.clear?.();
       interactableSystem?.clear?.();
+      toolSystem?.clear?.();
 
       // 更新血量上限
       if (resetGameState && gameState) {
@@ -701,6 +755,17 @@ async function initGame() {
       // 重建世界
       worldState.initialize(levelConfig);
       sceneManager.buildWorldFromGrid(worldState);
+	      toolSystem?.setRefs?.({
+	        eventBus,
+	        scene: sceneManager.getScene(),
+	        worldState,
+	        player,
+	        monsterManager,
+	        gameState,
+	        projectileManager,
+	        audioManager
+	      });
+      toolSystem?.startLevel?.(levelConfig);
 
       // 重建出口
       const newExitPos = worldState.getExitPoint();
@@ -728,17 +793,28 @@ async function initGame() {
       }
 
       // Rebuild missions/objectives for this level (after reset so totals aren't overwritten)
-      if (missionDirector) {
-        missionDirector.setRefs({
-          worldState,
-          scene: sceneManager.getScene(),
-          gameState,
-          exitPoint,
-          interactableSystem,
-          eventBus
-        });
-        missionDirector.startLevel(levelConfig);
-      }
+	      if (missionDirector) {
+	        missionDirector.setRefs({
+	          worldState,
+	          scene: sceneManager.getScene(),
+	          gameState,
+	          exitPoint,
+	          interactableSystem,
+	          eventBus
+	        });
+	        missionDirector.startLevel(levelConfig);
+	      }
+	      worldMarkerSystem?.setRefs?.({
+	        eventBus,
+	        scene: sceneManager.getScene(),
+	        camera,
+	        player,
+	        worldState,
+	        pickupManager,
+	        toolSystem,
+	        missionDirector,
+	        exitPoint
+	      });
 
       if (hidingSpotSystem) {
         hidingSpotSystem.setRefs({
@@ -774,7 +850,8 @@ async function initGame() {
         () => (missionDirector?.getAutopilotState ? missionDirector.getAutopilotState() : []),
         exitPoint,
         player,
-        levelConfig
+        levelConfig,
+        () => (pickupManager?.getPickupMarkers?.() || [])
       );
       autopilot?.setGun?.(gun);
       gameLoop.autopilot = autopilot;
@@ -794,7 +871,11 @@ async function initGame() {
         player.getGridPosition(),
         monsterManager.getMonsterPositions(),
         newExitPos,
-        missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : []
+        missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : [],
+        {
+          pickupPositions: pickupManager?.getPickupMarkers?.() || [],
+          devicePositions: toolSystem?.getDeviceMarkers?.() || []
+        }
       );
 
       if (startLoop) {
@@ -863,7 +944,10 @@ async function initGame() {
 
   if (levelJumpBtn && levelJumpInput) {
     levelJumpBtn.addEventListener('click', async () => {
-      const target = Math.max(1, Math.min(levelDirector.getMaxJump(), parseInt(levelJumpInput.value, 10) || 1));
+      const raw = parseInt(levelJumpInput.value, 10) || 1;
+      const maxJump = levelDirector.getMaxJump();
+      const max = Number.isFinite(maxJump) ? maxJump : Infinity;
+      const target = Math.max(1, Math.min(max, raw));
       await loadLevel(target - 1, { startLoop: true, resetGameState: true });
     });
   }

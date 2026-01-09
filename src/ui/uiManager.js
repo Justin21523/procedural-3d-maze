@@ -11,6 +11,8 @@ export class UIManager {
     this.gun = options.gun || null;
     this.monsterManager = options.monsterManager || null;
     this.projectileManager = options.projectileManager || null;
+    this.toolSystem = options.toolSystem || null;
+    this.pickupManager = options.pickupManager || null;
     this.missionDirector = options.missionDirector || null;
 
     // Crosshair pulses
@@ -36,6 +38,8 @@ export class UIManager {
     this.pointerElement = document.getElementById('pointer-status');
     this.keysElement = document.getElementById('keys-pressed');
     this.inventoryElement = document.getElementById('hud-inventory');
+    this.toolsElement = document.getElementById('hud-tools');
+    this.throwablesElement = document.getElementById('hud-throwables');
 
     // FPS
     this.fpsElement = document.getElementById('fps');
@@ -43,6 +47,10 @@ export class UIManager {
     this.frameCount = 0;
     this.lastFpsUpdate = 0;
     this.fps = 0;
+
+    // Throttle heavy HUD DOM updates (position, inventory, ammo, etc.)
+    this.hudAccumulator = 0;
+    this.hudIntervalSeconds = 0.1; // 10 Hz
 
     // Noise meter (player noise feedback)
     this.noiseFillElement = document.getElementById('noise-fill');
@@ -252,13 +260,15 @@ export class UIManager {
     );
   }
 
-  setRefs({ player, worldState, gameState, gun, monsterManager, projectileManager, missionDirector } = {}) {
+  setRefs({ player, worldState, gameState, gun, monsterManager, projectileManager, toolSystem, pickupManager, missionDirector } = {}) {
     if (player) this.player = player;
     if (worldState) this.worldState = worldState;
     if (gameState) this.gameState = gameState;
     if (gun) this.gun = gun;
     if (monsterManager) this.monsterManager = monsterManager;
     if (projectileManager) this.projectileManager = projectileManager;
+    if (toolSystem) this.toolSystem = toolSystem;
+    if (pickupManager) this.pickupManager = pickupManager;
     if (missionDirector) this.missionDirector = missionDirector;
   }
 
@@ -279,7 +289,14 @@ export class UIManager {
     this.updateCrosshairPulse(dt);
     this.updateInteractPrompt(dt);
     this.updateNoiseMeter(dt, now);
-    this.updateHud();
+
+    this.hudAccumulator = (this.hudAccumulator || 0) + dt;
+    if (this.hudAccumulator >= (this.hudIntervalSeconds || 0.1)) {
+      // Keep leftover time to reduce drift on low FPS.
+      const interval = Math.max(0.05, this.hudIntervalSeconds || 0.1);
+      this.hudAccumulator = this.hudAccumulator % interval;
+      this.updateHud();
+    }
   }
 
   updateNoiseMeter(deltaTime, nowMs) {
@@ -483,10 +500,16 @@ export class UIManager {
 
     const monsters = this.monsterManager?.getMonsters?.() || [];
     let alive = 0;
+    let jammed = 0;
+    let blinded = 0;
+    let stunned = 0;
     for (const m of monsters) {
       if (!m) continue;
       if (m.isDead || m.isDying) continue;
       alive += 1;
+      if ((m.perceptionJammedTimer || 0) > 0) jammed += 1;
+      if ((m.perceptionBlindedTimer || 0) > 0) blinded += 1;
+      if ((m.stunTimer || 0) > 0) stunned += 1;
     }
 
     const proj = this.projectileManager?.projectiles?.length ?? 0;
@@ -494,6 +517,18 @@ export class UIManager {
     const explosions = this.projectileManager?.explosions?.length ?? 0;
     const muzzle = this.gun?.muzzleFlashes?.length ?? 0;
     const missionObjects = this.missionDirector?.spawnedObjects?.length ?? 0;
+    const devices = this.toolSystem?.devices?.length ?? 0;
+    const smokeClouds =
+      this.toolSystem?.smokeClouds?.length ??
+      (Array.isArray(this.worldState?.smokeClouds) ? this.worldState.smokeClouds.length : 0);
+    const pickupMarkers = this.pickupManager?.getPickupMarkers?.() || [];
+    const pickupTotal = Array.isArray(pickupMarkers) ? pickupMarkers.length : 0;
+    const toolPickupTotal = Array.isArray(pickupMarkers)
+      ? pickupMarkers.filter((p) => {
+        const k = String(p?.kind || '').trim().toLowerCase();
+        return k && k !== 'ammo' && k !== 'health';
+      }).length
+      : 0;
 
     let blockedTiles = 0;
     const obstacleMap = this.worldState?.obstacleMap || null;
@@ -519,7 +554,9 @@ export class UIManager {
       `E ${fmt(explosions, CONFIG.MAX_ACTIVE_EXPLOSIONS)} ` +
       `MF ${fmt(muzzle, CONFIG.MAX_ACTIVE_MUZZLE_FLASHES)} ` +
       `MO ${missionObjects} ` +
-      `OB ${blockedTiles}`;
+      `OB ${blockedTiles} ` +
+      `PU ${pickupTotal}/${toolPickupTotal} ` +
+      `FX Smk${smokeClouds} Dev${devices} Jam${jammed} Bld${blinded} Stn${stunned}`;
   }
 
   updateCrosshairPulse(dt) {
@@ -635,13 +672,28 @@ export class UIManager {
       this.pointerElement.textContent = this.player.input.isPointerLocked() ? 'Locked ✓' : 'Not Locked';
     }
 
-    if (this.inventoryElement && this.gameState?.getInventorySnapshot) {
-      const snap = this.gameState.getInventorySnapshot() || {};
+    const snap = this.gameState?.getInventorySnapshot ? (this.gameState.getInventorySnapshot() || {}) : null;
+    if (this.toolsElement) {
+      const lure = snap ? (Math.max(0, Math.round(Number(snap.lure) || 0))) : 0;
+      const trap = snap ? (Math.max(0, Math.round(Number(snap.trap) || 0))) : 0;
+      const jammer = snap ? (Math.max(0, Math.round(Number(snap.jammer) || 0))) : 0;
+      const sensor = snap ? (Math.max(0, Math.round(Number(snap.sensor) || 0))) : 0;
+      const mine = snap ? (Math.max(0, Math.round(Number(snap.mine) || 0))) : 0;
+      this.toolsElement.textContent = `4 Lure:${lure} | 5 Trap:${trap} | 6 Jammer:${jammer} | 0 Sensor:${sensor} | V Mine:${mine}`;
+    }
+    if (this.throwablesElement) {
+      const decoy = snap ? (Math.max(0, Math.round(Number(snap.decoy) || 0))) : 0;
+      const smoke = snap ? (Math.max(0, Math.round(Number(snap.smoke) || 0))) : 0;
+      const flash = snap ? (Math.max(0, Math.round(Number(snap.flash) || 0))) : 0;
+      this.throwablesElement.textContent = `7 Decoy:${decoy} | 8 Smoke:${smoke} | 9 Flash:${flash}`;
+    }
+
+    if (this.inventoryElement && snap) {
       const keys = Object.keys(snap);
       if (keys.length === 0) {
         this.inventoryElement.textContent = '—';
       } else {
-        const preferred = ['fuse', 'evidence', 'power_on'];
+        const preferred = ['fuse', 'evidence', 'power_on', 'keycard', 'lure', 'trap', 'jammer', 'sensor', 'mine', 'decoy', 'smoke', 'flash'];
         keys.sort((a, b) => {
           const ia = preferred.indexOf(a);
           const ib = preferred.indexOf(b);

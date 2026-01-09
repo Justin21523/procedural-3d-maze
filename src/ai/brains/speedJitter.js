@@ -1,4 +1,5 @@
 import { BaseMonsterBrain } from './baseBrain.js';
+import { canSeePlayer as canSeePlayerGrid } from '../components/perception/vision.js';
 
 /**
  * SpeedJitterBrain
@@ -54,8 +55,15 @@ export class SpeedJitterBrain extends BaseMonsterBrain {
     const playerGrid = this.getPlayerGridPosition();
 
     if (this.followPlayer && playerGrid) {
-      const dist = this.manhattan(monsterGrid, playerGrid);
-      if (dist <= this.visionRange) {
+      const yaw = this.monster?.getYaw?.() ?? this.monster?.yaw;
+      const visionFOV = this.monster?.visionFOV ?? this.monster?.typeConfig?.stats?.visionFOV;
+      const canSee = canSeePlayerGrid(this.worldState, monsterGrid, playerGrid, this.visionRange, {
+        monster: this.monster,
+        monsterYaw: yaw,
+        visionFOV,
+        requireLineOfSight: true
+      });
+      if (canSee) {
         this.mode = 'chase';
         return playerGrid;
       }
@@ -91,4 +99,3 @@ export class SpeedJitterBrain extends BaseMonsterBrain {
     return { move, lookYaw, sprint: false };
   }
 }
-

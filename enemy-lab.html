@@ -58,7 +58,7 @@
 
     .tabs {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
       gap: 8px;
       margin: 10px 0 14px;
     }
@@ -162,6 +162,96 @@
       gap: 8px;
     }
 
+    .studio-tree {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.18);
+      padding: 6px;
+      max-height: 320px;
+      overflow: auto;
+    }
+
+    .studio-tree-item {
+      display: grid;
+      grid-template-columns: 18px 18px 1fr 22px;
+      gap: 6px;
+      align-items: center;
+      padding: 4px 6px;
+      border-radius: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .studio-tree-item:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .studio-tree-item.is-selected {
+      border: 1px solid rgba(122, 162, 255, 0.55);
+      background: rgba(122, 162, 255, 0.14);
+    }
+
+    .studio-tree-toggle {
+      width: 18px;
+      height: 18px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.2);
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    .studio-tree-toggle[disabled] {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .studio-tree-icon {
+      width: 18px;
+      height: 18px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.2);
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      letter-spacing: 0.2px;
+    }
+
+    .studio-tree-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .studio-tree-eye {
+      width: 22px;
+      height: 22px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.2);
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .studio-tree-item.is-hidden .studio-tree-label {
+      opacity: 0.55;
+    }
+
     .section {
       margin: 12px 0;
       padding: 10px;
@@ -263,6 +353,7 @@
 
       <div class="tabs">
         <button class="tab-btn active" data-tab="model" type="button">Model</button>
+        <button class="tab-btn" data-tab="studio" type="button">Studio</button>
         <button class="tab-btn" data-tab="combat" type="button">Combat</button>
         <button class="tab-btn" data-tab="save" type="button">Save</button>
       </div>
@@ -431,6 +522,323 @@
         </div>
       </div>
 
+      <div class="tab-page" data-page="studio">
+        <div class="section">
+          <h3>Studio (Rig / Anim / Material)</h3>
+          <div class="row">
+            <div>
+              <label>Target model</label>
+              <div class="pill" id="studioTargetPill">(spawn a model first)</div>
+            </div>
+            <div style="text-align:right;">
+              <label>&nbsp;</label>
+              <button id="studioRefreshBtn" type="button" class="secondary">Refresh Target</button>
+            </div>
+          </div>
+          <p style="margin:6px 0 0; font-size:12px;">
+            Tip: use <span class="pill">Edit Model</span> mode for picking / gizmo / animation preview. Non-destructive edits
+            (<span class="pill">transform</span>, <span class="pill">visible</span>, <span class="pill">material</span>)
+            are written into <span class="pill">meta.json</span> under <span class="pill">studio</span>.
+          </p>
+        </div>
+
+        <div class="section">
+          <h3>Import to public/models</h3>
+          <div class="grid-2">
+            <div>
+              <label for="studioImportFolder">Folder name</label>
+              <input id="studioImportFolder" type="text" placeholder="e.g. my-new-enemy">
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <label style="display:flex; gap:8px; align-items:center; margin:0; color:var(--muted);">
+                <input id="studioImportOverwrite" type="checkbox">
+                Overwrite existing files
+              </label>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="studioImportFiles">Files (.glb/.gltf/.dae + .bin + textures)</label>
+              <input id="studioImportFiles" type="file" multiple>
+            </div>
+            <div style="text-align:right;">
+              <label>&nbsp;</label>
+              <button id="studioImportBtn" type="button">Import</button>
+            </div>
+          </div>
+          <div class="pill" id="studioImportStatus">(idle)</div>
+        </div>
+
+        <div class="section">
+          <h3>Info</h3>
+          <div class="grid-3">
+            <div>
+              <label>Meshes</label>
+              <div class="pill" id="studioInfoMeshes">—</div>
+            </div>
+            <div>
+              <label>Materials</label>
+              <div class="pill" id="studioInfoMaterials">—</div>
+            </div>
+            <div>
+              <label>Bones</label>
+              <div class="pill" id="studioInfoBones">—</div>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Clips</label>
+              <div class="pill" id="studioInfoClips">—</div>
+            </div>
+            <div style="text-align:right;">
+              <label>&nbsp;</label>
+              <label style="display:flex; gap:8px; align-items:center; justify-content:flex-end; margin:0; color:var(--muted);">
+                <input id="studioDbgSkeleton" type="checkbox">
+                Skeleton
+              </label>
+              <label style="display:flex; gap:8px; align-items:center; justify-content:flex-end; margin:6px 0 0; color:var(--muted);">
+                <input id="studioDbgWireframe" type="checkbox">
+                Wireframe
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Animation</h3>
+          <div class="row">
+            <div>
+              <label for="studioAnimClip">Clip</label>
+              <select id="studioAnimClip"></select>
+            </div>
+            <div style="text-align:right;">
+              <label>&nbsp;</label>
+              <div style="display:flex; gap:8px; justify-content:flex-end;">
+                <button id="studioAnimPlay" type="button">Play</button>
+                <button id="studioAnimPause" type="button" class="secondary">Pause</button>
+                <button id="studioAnimStop" type="button" class="secondary">Stop</button>
+              </div>
+            </div>
+          </div>
+          <div class="grid-2">
+            <div>
+              <label for="studioAnimSpeed">Speed <span class="pill" id="studioAnimSpeedVal">1.00x</span></label>
+              <input id="studioAnimSpeed" type="range" min="0.25" max="2" step="0.05" value="1">
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <label style="display:flex; gap:8px; align-items:center; margin:0; color:var(--muted);">
+                <input id="studioAnimLoop" type="checkbox" checked>
+                Loop
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Tools</h3>
+          <div class="row">
+            <div>
+              <label>Tool</label>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button id="studioToolSelect" type="button" class="secondary">Select (Q)</button>
+                <button id="studioToolMove" type="button">Move (W)</button>
+                <button id="studioToolRotate" type="button" class="secondary">Rotate (E)</button>
+                <button id="studioToolScale" type="button" class="secondary">Scale (R)</button>
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <label>&nbsp;</label>
+              <label style="display:flex; gap:8px; align-items:center; justify-content:flex-end; margin:0; color:var(--muted);">
+                <input id="studioToolSpaceLocal" type="checkbox" checked>
+                Local space (X)
+              </label>
+            </div>
+          </div>
+
+	          <div class="grid-2">
+	            <div>
+	              <label>
+	                <input id="studioToolSnapEnabled" type="checkbox">
+	                Snap (G)
+	              </label>
+              <div class="grid-3">
+                <div>
+                  <label for="studioToolSnapMove">Move step</label>
+                  <input id="studioToolSnapMove" type="number" min="0" step="0.01" value="0.1">
+                </div>
+                <div>
+                  <label for="studioToolSnapRotate">Rotate step (deg)</label>
+                  <input id="studioToolSnapRotate" type="number" min="0" step="1" value="15">
+                </div>
+                <div>
+                  <label for="studioToolSnapScale">Scale step</label>
+                  <input id="studioToolSnapScale" type="number" min="0" step="0.01" value="0.1">
+                </div>
+              </div>
+            </div>
+            <div>
+              <label for="studioToolGizmoSize">Gizmo size <span class="pill" id="studioToolGizmoSizeVal">1.00</span></label>
+              <input id="studioToolGizmoSize" type="range" min="0.5" max="2.5" step="0.05" value="1">
+              <div style="height:8px;"></div>
+	              <label for="studioToolNudge">Nudge step (Arrows)</label>
+	              <input id="studioToolNudge" type="number" min="0" step="0.01" value="0.05">
+	            </div>
+	          </div>
+	          <div class="row" style="margin-top:10px;">
+	            <div>
+	              <label>Editing</label>
+	              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+	                <button id="studioUndoBtn" type="button" class="secondary">Undo (Ctrl/Cmd+Z)</button>
+	                <button id="studioRedoBtn" type="button" class="secondary">Redo (Shift+Ctrl/Cmd+Z)</button>
+	                <button id="studioDuplicateBtn" type="button" class="secondary">Duplicate (Ctrl/Cmd+D)</button>
+	                <button id="studioDeleteBtn" type="button" class="secondary">Delete (Del)</button>
+	              </div>
+	              <p style="margin:8px 0 0; font-size:12px; color:var(--muted);">
+	                Note: Duplicate/Delete are export-only (not written to meta.json).
+	              </p>
+	            </div>
+	          </div>
+	        </div>
+
+        <div class="section">
+          <h3>Hierarchy</h3>
+          <div class="row">
+            <div>
+              <label for="studioHierarchySearch">Search</label>
+              <input id="studioHierarchySearch" type="text" placeholder="Type to filter nodes…">
+            </div>
+            <div style="text-align:right;">
+              <label>&nbsp;</label>
+              <div class="pill" id="studioHierarchyCount">0 nodes</div>
+            </div>
+          </div>
+          <div id="studioHierarchyTree" class="studio-tree"></div>
+        </div>
+
+        <div class="section">
+          <h3>Inspector</h3>
+          <div class="pill" id="studioInspectorEmpty">(select an object)</div>
+          <div id="studioInspectorContent" style="margin-top:10px;" hidden>
+            <div class="grid-2">
+              <div>
+                <label>Name</label>
+                <div class="pill" id="studioInspectorName">—</div>
+              </div>
+              <div>
+                <label>Type</label>
+                <div class="pill" id="studioInspectorType">—</div>
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>
+                  <input id="studioInspectorVisible" type="checkbox" checked>
+                  Visible (meta)
+                </label>
+              </div>
+              <div style="text-align:right;">
+                <label>&nbsp;</label>
+                <button id="studioFrameBtn" type="button" class="secondary">Frame (F)</button>
+              </div>
+            </div>
+
+            <div class="section" style="margin:10px 0 0; padding:10px;">
+              <h3 style="margin:0 0 10px;">Transform (meta)</h3>
+              <div class="grid-3">
+                <div>
+                  <label for="studioPosX">Pos X</label>
+                  <input id="studioPosX" type="number" step="0.01">
+                </div>
+                <div>
+                  <label for="studioPosY">Pos Y</label>
+                  <input id="studioPosY" type="number" step="0.01">
+                </div>
+                <div>
+                  <label for="studioPosZ">Pos Z</label>
+                  <input id="studioPosZ" type="number" step="0.01">
+                </div>
+              </div>
+              <div class="grid-3" style="margin-top:8px;">
+                <div>
+                  <label for="studioRotX">Rot X (deg)</label>
+                  <input id="studioRotX" type="number" step="1">
+                </div>
+                <div>
+                  <label for="studioRotY">Rot Y (deg)</label>
+                  <input id="studioRotY" type="number" step="1">
+                </div>
+                <div>
+                  <label for="studioRotZ">Rot Z (deg)</label>
+                  <input id="studioRotZ" type="number" step="1">
+                </div>
+              </div>
+              <div class="grid-3" style="margin-top:8px;">
+                <div>
+                  <label for="studioScaleX">Scale X</label>
+                  <input id="studioScaleX" type="number" step="0.01">
+                </div>
+                <div>
+                  <label for="studioScaleY">Scale Y</label>
+                  <input id="studioScaleY" type="number" step="0.01">
+                </div>
+                <div>
+                  <label for="studioScaleZ">Scale Z</label>
+                  <input id="studioScaleZ" type="number" step="0.01">
+                </div>
+              </div>
+            </div>
+
+            <div class="section" style="margin:10px 0 0; padding:10px;">
+              <h3 style="margin:0 0 10px;">Material (meta)</h3>
+              <div class="pill" id="studioMaterialHint">(select a mesh)</div>
+              <div id="studioMaterialControls" style="margin-top:10px;" hidden>
+                <div class="row" style="margin-top:0;">
+                  <div>
+                    <label for="studioMaterialSlot">Slot</label>
+                    <select id="studioMaterialSlot"></select>
+                  </div>
+                  <div style="text-align:right;">
+                    <label>&nbsp;</label>
+                    <div class="pill" id="studioMaterialType">(—)</div>
+                  </div>
+                </div>
+                <div class="grid-2">
+                  <div>
+                    <label for="studioMaterialColor">Color</label>
+                    <input id="studioMaterialColor" type="color" value="#ffffff">
+                  </div>
+                  <div>
+                    <label for="studioMaterialMetalness">Metalness <span class="pill" id="studioMaterialMetalnessVal">0.00</span></label>
+                    <input id="studioMaterialMetalness" type="range" min="0" max="1" step="0.01" value="0">
+                    <label for="studioMaterialRoughness" style="margin-top:8px;">Roughness <span class="pill" id="studioMaterialRoughnessVal">0.00</span></label>
+                    <input id="studioMaterialRoughness" type="range" min="0" max="1" step="0.01" value="0.5">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Export (GLB)</h3>
+          <div class="row">
+            <div>
+              <label>
+                <input id="studioExportIncludeAnims" type="checkbox" checked>
+                Include animations
+              </label>
+            </div>
+            <div style="text-align:right;">
+              <label>&nbsp;</label>
+              <button id="studioExportBtn" type="button">Export GLB</button>
+            </div>
+          </div>
+          <div class="pill">(destructive edits should be done via export)</div>
+        </div>
+      </div>
+
       <div class="tab-page" data-page="combat">
         <div class="section">
           <h3>Ranged Combat (meta.combat.ranged)</h3>
@@ -562,15 +970,17 @@
   </div>
 
   <script type="module" src="/src/ui/toolNav.js"></script>
-  <script type="module">
-    import * as THREE from 'three';
-    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-    import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+	  <script type="module">
+	    import * as THREE from 'three';
+	    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+	    import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+	    import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+	    import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 
-    import { CONFIG } from '/src/core/config.js';
-    import { EventBus } from '/src/core/eventBus.js';
-    import { GameState } from '/src/core/gameState.js';
-    import { CombatSystem } from '/src/core/combatSystem.js';
+	    import { CONFIG } from '/src/core/config.js';
+	    import { EventBus } from '/src/core/eventBus.js';
+	    import { GameState } from '/src/core/gameState.js';
+	    import { CombatSystem } from '/src/core/combatSystem.js';
 
     import { SceneManager } from '/src/rendering/scene.js';
     import { FirstPersonCamera } from '/src/rendering/camera.js';
@@ -590,9 +1000,9 @@
     import { MonsterTypes } from '/src/ai/monsterTypes.js';
     import { getCandidateMetaUrls } from '/src/ai/enemyCatalog.js';
 
-    const ui = {
-      tabButtons: Array.from(document.querySelectorAll('.tab-btn')),
-      tabPages: Array.from(document.querySelectorAll('.tab-page')),
+	    const ui = {
+	      tabButtons: Array.from(document.querySelectorAll('.tab-btn')),
+	      tabPages: Array.from(document.querySelectorAll('.tab-page')),
 
       modeSelect: document.getElementById('modeSelect'),
 
@@ -632,13 +1042,79 @@
       hitRadius: document.getElementById('hitRadius'),
       previewYaw: document.getElementById('previewYaw'),
       autoRotate: document.getElementById('autoRotate'),
-      autoRotateSpeed: document.getElementById('autoRotateSpeed'),
-      autoRotateSpeedVal: document.getElementById('autoRotateSpeedVal'),
+	      autoRotateSpeed: document.getElementById('autoRotateSpeed'),
+	      autoRotateSpeedVal: document.getElementById('autoRotateSpeedVal'),
 
-      rangedEnabled: document.getElementById('rangedEnabled'),
-      rangedKind: document.getElementById('rangedKind'),
-      rangedDamage: document.getElementById('rangedDamage'),
-      rangedRange: document.getElementById('rangedRange'),
+	      studioTargetPill: document.getElementById('studioTargetPill'),
+	      studioRefreshBtn: document.getElementById('studioRefreshBtn'),
+	      studioImportFolder: document.getElementById('studioImportFolder'),
+	      studioImportOverwrite: document.getElementById('studioImportOverwrite'),
+	      studioImportFiles: document.getElementById('studioImportFiles'),
+	      studioImportBtn: document.getElementById('studioImportBtn'),
+	      studioImportStatus: document.getElementById('studioImportStatus'),
+	      studioInfoMeshes: document.getElementById('studioInfoMeshes'),
+	      studioInfoMaterials: document.getElementById('studioInfoMaterials'),
+	      studioInfoBones: document.getElementById('studioInfoBones'),
+	      studioInfoClips: document.getElementById('studioInfoClips'),
+	      studioDbgSkeleton: document.getElementById('studioDbgSkeleton'),
+	      studioDbgWireframe: document.getElementById('studioDbgWireframe'),
+	      studioAnimClip: document.getElementById('studioAnimClip'),
+	      studioAnimPlay: document.getElementById('studioAnimPlay'),
+	      studioAnimPause: document.getElementById('studioAnimPause'),
+	      studioAnimStop: document.getElementById('studioAnimStop'),
+	      studioAnimSpeed: document.getElementById('studioAnimSpeed'),
+	      studioAnimSpeedVal: document.getElementById('studioAnimSpeedVal'),
+	      studioAnimLoop: document.getElementById('studioAnimLoop'),
+	      studioToolSelect: document.getElementById('studioToolSelect'),
+	      studioToolMove: document.getElementById('studioToolMove'),
+	      studioToolRotate: document.getElementById('studioToolRotate'),
+	      studioToolScale: document.getElementById('studioToolScale'),
+	      studioToolSpaceLocal: document.getElementById('studioToolSpaceLocal'),
+	      studioToolSnapEnabled: document.getElementById('studioToolSnapEnabled'),
+	      studioToolSnapMove: document.getElementById('studioToolSnapMove'),
+	      studioToolSnapRotate: document.getElementById('studioToolSnapRotate'),
+	      studioToolSnapScale: document.getElementById('studioToolSnapScale'),
+		      studioToolGizmoSize: document.getElementById('studioToolGizmoSize'),
+		      studioToolGizmoSizeVal: document.getElementById('studioToolGizmoSizeVal'),
+		      studioToolNudge: document.getElementById('studioToolNudge'),
+		      studioUndoBtn: document.getElementById('studioUndoBtn'),
+		      studioRedoBtn: document.getElementById('studioRedoBtn'),
+		      studioDuplicateBtn: document.getElementById('studioDuplicateBtn'),
+		      studioDeleteBtn: document.getElementById('studioDeleteBtn'),
+		      studioHierarchySearch: document.getElementById('studioHierarchySearch'),
+	      studioHierarchyCount: document.getElementById('studioHierarchyCount'),
+	      studioHierarchyTree: document.getElementById('studioHierarchyTree'),
+	      studioInspectorEmpty: document.getElementById('studioInspectorEmpty'),
+	      studioInspectorContent: document.getElementById('studioInspectorContent'),
+	      studioInspectorName: document.getElementById('studioInspectorName'),
+	      studioInspectorType: document.getElementById('studioInspectorType'),
+	      studioInspectorVisible: document.getElementById('studioInspectorVisible'),
+	      studioFrameBtn: document.getElementById('studioFrameBtn'),
+	      studioPosX: document.getElementById('studioPosX'),
+	      studioPosY: document.getElementById('studioPosY'),
+	      studioPosZ: document.getElementById('studioPosZ'),
+	      studioRotX: document.getElementById('studioRotX'),
+	      studioRotY: document.getElementById('studioRotY'),
+	      studioRotZ: document.getElementById('studioRotZ'),
+	      studioScaleX: document.getElementById('studioScaleX'),
+	      studioScaleY: document.getElementById('studioScaleY'),
+	      studioScaleZ: document.getElementById('studioScaleZ'),
+	      studioMaterialHint: document.getElementById('studioMaterialHint'),
+	      studioMaterialControls: document.getElementById('studioMaterialControls'),
+	      studioMaterialSlot: document.getElementById('studioMaterialSlot'),
+	      studioMaterialType: document.getElementById('studioMaterialType'),
+	      studioMaterialColor: document.getElementById('studioMaterialColor'),
+	      studioMaterialMetalness: document.getElementById('studioMaterialMetalness'),
+	      studioMaterialMetalnessVal: document.getElementById('studioMaterialMetalnessVal'),
+	      studioMaterialRoughness: document.getElementById('studioMaterialRoughness'),
+	      studioMaterialRoughnessVal: document.getElementById('studioMaterialRoughnessVal'),
+	      studioExportIncludeAnims: document.getElementById('studioExportIncludeAnims'),
+	      studioExportBtn: document.getElementById('studioExportBtn'),
+
+	      rangedEnabled: document.getElementById('rangedEnabled'),
+	      rangedKind: document.getElementById('rangedKind'),
+	      rangedDamage: document.getElementById('rangedDamage'),
+	      rangedRange: document.getElementById('rangedRange'),
       rangedMinRange: document.getElementById('rangedMinRange'),
       rangedFireChance: document.getElementById('rangedFireChance'),
       rangedSpread: document.getElementById('rangedSpread'),
@@ -684,21 +1160,34 @@
     const DEG2RAD = Math.PI / 180;
     const RAD2DEG = 180 / Math.PI;
 
-    function setStatus(text, kind = 'ok') {
-      ui.statusPill.textContent = text;
-      ui.statusPill.classList.toggle('status-ok', kind === 'ok');
-      ui.statusPill.classList.toggle('status-bad', kind === 'bad');
-      ui.statusPill.classList.toggle('status-warn', kind === 'warn');
-    }
+	    function setStatus(text, kind = 'ok') {
+	      ui.statusPill.textContent = text;
+	      ui.statusPill.classList.toggle('status-ok', kind === 'ok');
+	      ui.statusPill.classList.toggle('status-bad', kind === 'bad');
+	      ui.statusPill.classList.toggle('status-warn', kind === 'warn');
+	    }
 
-    function setActiveTab(key) {
-      ui.tabButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === key));
-      ui.tabPages.forEach((page) => page.classList.toggle('active', page.dataset.page === key));
-    }
+	    let activeTab = 'model'; // model | studio | combat | save
 
-    ui.tabButtons.forEach((btn) => {
-      btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
-    });
+	    function setActiveTab(key) {
+	      const next =
+	        key === 'model' || key === 'studio' || key === 'combat' || key === 'save'
+	          ? key
+	          : 'model';
+	      const prev = activeTab;
+	      activeTab = next;
+
+	      ui.tabButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === next));
+	      ui.tabPages.forEach((page) => page.classList.toggle('active', page.dataset.page === next));
+
+	      if (prev !== next) {
+	        onActiveTabChanged(next, prev);
+	      }
+	    }
+
+	    ui.tabButtons.forEach((btn) => {
+	      btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+	    });
 
     function createArenaWorldState(size = 17) {
       const ws = new WorldState();
@@ -896,8 +1385,8 @@
       ui.spawnDistanceVal.textContent = String(Math.round(toNum(ui.spawnDistance.value, 8)));
     }
 
-    function buildMetaFromUI(baseMeta) {
-      const next = deepClone(baseMeta || {});
+	    function buildMetaFromUI(baseMeta) {
+	      const next = deepClone(baseMeta || {});
 
       next.scaleMultiplier = clamp(toNum(ui.scaleMultiplier.value, 1), 0.01, 100);
       next.groundOffset = clamp(toNum(ui.groundOffset.value, 0.02), -10, 10);
@@ -946,11 +1435,15 @@
         turnSpeed: Math.max(0.1, toNum(ui.rangedTurnSpeed.value, 6.5))
       };
 
-      combat.ranged = ranged;
-      next.combat = combat;
+	      combat.ranged = ranged;
+	      next.combat = combat;
 
-      return next;
-    }
+	      const studio = studioBuildMetaForSave();
+	      if (studio) next.studio = studio;
+	      else delete next.studio;
+
+	      return next;
+	    }
 
     function buildRuntimeMeta(metaSave) {
       const meta = deepClone(metaSave || {});
@@ -1033,40 +1526,269 @@
       orbitControls.screenSpacePanning = true;
     }
 
-    const transformControls = rendererEl
-      ? new TransformControls(cameraController.getCamera(), rendererEl)
-      : null;
-    if (transformControls) {
-      transformControls.enabled = false;
-      transformControls.visible = false;
-      sceneManager.getScene().add(transformControls);
-      transformControls.addEventListener('dragging-changed', (e) => {
-        if (orbitControls) orbitControls.enabled = !e?.value;
-      });
-      transformControls.addEventListener('objectChange', () => {
-        if (labMode !== 'edit') return;
-        if (isPullingFromGizmo) return;
-        pullMetaFromLiveMonster();
-      });
-    }
+	    const transformControls = rendererEl
+	      ? new TransformControls(cameraController.getCamera(), rendererEl)
+	      : null;
+	    let isTransformDragging = false;
+		    if (transformControls) {
+		      transformControls.enabled = false;
+		      transformControls.visible = false;
+		      sceneManager.getScene().add(transformControls);
+		      transformControls.addEventListener('dragging-changed', (e) => {
+		        isTransformDragging = !!e?.value;
+		        if (orbitControls) orbitControls.enabled = !isTransformDragging;
+		      });
+			      transformControls.addEventListener('mouseDown', () => {
+			        if (labMode !== 'edit') return;
+			        if (!isStudioTabActive()) return;
+			        if (studioState.toolMode === 'select') return;
+			        studioState.gizmoDragObject = null;
+			        studioState.gizmoDragBefore = null;
+			        if (transformControls.object === studioState.selectionProxy) {
+			          studioBeginProxyDrag();
+			          return;
+			        }
+
+			        const sel = studioState.selection;
+			        if (sel && transformControls.object === sel) {
+			          studioState.gizmoDragObject = sel;
+			          studioState.gizmoDragBefore = studioSnapshotLocalTransform(sel);
+			        }
+			      });
+			      transformControls.addEventListener('mouseUp', () => {
+			        if (!isStudioTabActive()) return;
+			        if (studioState.proxyDragActive) {
+			          const before = Array.isArray(studioState.proxyDragBefore) ? studioState.proxyDragBefore : [];
+			          const targets = Array.isArray(studioState.proxyDragObjects) ? studioState.proxyDragObjects : [];
+			          const after = targets.map((obj) => ({
+			            object: obj,
+			            ...studioSnapshotLocalTransform(obj)
+			          }));
+
+			          studioState.proxyDragActive = false;
+			          studioState.proxyDragObjects = [];
+			          studioState.proxyDragBefore = [];
+			          studioState.proxyDragObjectStartWorld = [];
+
+			          let wrote = false;
+			          for (const obj of targets) {
+			            if (studioCommitObjectTransform(obj)) wrote = true;
+			          }
+			          if (wrote) updateMetaOutput(currentModelPath, baseMeta);
+
+			          const changed = before.some((b, i) => studioTransformChanged(b, after[i]));
+			          if (changed) {
+			            studioPushCommand({
+			              undo: () => {
+			                let wroteUndo = false;
+			                for (let i = 0; i < before.length; i++) {
+			                  const entry = before[i];
+			                  if (!entry?.object) continue;
+			                  studioApplyLocalTransform(entry.object, entry);
+			                  if (studioCommitObjectTransform(entry.object)) wroteUndo = true;
+			                }
+			                if (wroteUndo) updateMetaOutput(currentModelPath, baseMeta);
+			              },
+			              redo: () => {
+			                let wroteRedo = false;
+			                for (let i = 0; i < after.length; i++) {
+			                  const entry = after[i];
+			                  if (!entry?.object) continue;
+			                  studioApplyLocalTransform(entry.object, entry);
+			                  if (studioCommitObjectTransform(entry.object)) wroteRedo = true;
+			                }
+			                if (wroteRedo) updateMetaOutput(currentModelPath, baseMeta);
+			              }
+			            });
+			          }
+
+			          studioSyncInspector();
+			          return;
+			        }
+
+			        const obj = studioState.gizmoDragObject;
+			        const before = studioState.gizmoDragBefore;
+			        studioState.gizmoDragObject = null;
+			        studioState.gizmoDragBefore = null;
+			        if (!obj || !before) return;
+			        const after = studioSnapshotLocalTransform(obj);
+			        if (!studioTransformChanged(before, after)) return;
+			        studioPushCommand({
+			          undo: () => {
+			            studioApplyLocalTransform(obj, before);
+			            if (studioCommitObjectTransform(obj)) updateMetaOutput(currentModelPath, baseMeta);
+			          },
+			          redo: () => {
+			            studioApplyLocalTransform(obj, after);
+			            if (studioCommitObjectTransform(obj)) updateMetaOutput(currentModelPath, baseMeta);
+			          }
+			        });
+			      });
+		      transformControls.addEventListener('objectChange', () => {
+		        if (labMode !== 'edit') return;
+		        if (isPullingFromGizmo) return;
+		        onTransformControlsObjectChange();
+		      });
+		    }
+
+	    if (rendererEl) {
+	      rendererEl.addEventListener('pointerdown', (e) => {
+	        if (labMode !== 'edit') return;
+	        if (!isStudioTabActive()) return;
+	        if (e.button !== 0) return;
+	        studioPointerDownX = e.clientX;
+	        studioPointerDownY = e.clientY;
+	        studioPointerDownButton = e.button;
+	        studioPointerMoved = false;
+	      });
+
+	      rendererEl.addEventListener('pointermove', (e) => {
+	        if (studioPointerDownButton !== 0) return;
+	        if (studioPointerMoved) return;
+	        const dx = e.clientX - studioPointerDownX;
+	        const dy = e.clientY - studioPointerDownY;
+	        if (Math.hypot(dx, dy) > studioClickTolerancePx) {
+	          studioPointerMoved = true;
+	        }
+	      });
+
+	      const end = (e) => {
+	        if (studioPointerDownButton !== 0) {
+	          studioPointerDownButton = -1;
+	          studioPointerMoved = false;
+	          return;
+	        }
+	        studioPointerDownButton = -1;
+
+	        if (labMode !== 'edit') return;
+	        if (!isStudioTabActive()) return;
+	        if (studioPointerMoved) {
+	          studioPointerMoved = false;
+	          return;
+	        }
+	        studioPointerMoved = false;
+	        if (isTransformDragging) return;
+		        const toggle = !!(e?.ctrlKey || e?.metaKey);
+		        const additive = !!e?.shiftKey;
+		        studioPickFromViewport(e.clientX, e.clientY, { toggle, additive });
+		      };
+
+	      rendererEl.addEventListener('pointerup', end);
+	      rendererEl.addEventListener('pointercancel', end);
+	    }
 
     let aiEnabled = true;
     let baseMeta = {};
     let currentModelPath = null;
-    let baseCorrectionRotation = null; // {x,y,z} degrees from auto-upright
-    let baseInnerPosition = null; // {x,y,z} from wrapped __monsterInner
-    let labMode = 'play'; // play | edit
-    let editorOp = 'rotate'; // rotate | translate
-    let editorSpace = 'local'; // local | world
-    let isPullingFromGizmo = false;
-    let cachedPlayYaw = 0;
-    let cachedPlayPitch = 0;
-    const lockOverlay = document.getElementById('lock-overlay');
+	    let baseCorrectionRotation = null; // {x,y,z} degrees from auto-upright
+	    let baseInnerPosition = null; // {x,y,z} from wrapped __monsterInner
+	    let labMode = 'play'; // play | edit
+	    let editorOp = 'rotate'; // rotate | translate
+	    let editorSpace = 'local'; // local | world
+	    let isPullingFromGizmo = false;
+	    let cachedPlayYaw = 0;
+	    let cachedPlayPitch = 0;
+	    const lockOverlay = document.getElementById('lock-overlay');
 
-    function resetPlayer() {
-      const sp = worldState.getSpawnPoint();
-      const tileSize = CONFIG.TILE_SIZE || 1;
-      const x = (sp.x + 0.5) * tileSize;
+		    const studioState = {
+		      modelRoot: null,
+		      innerRoot: null,
+		      animations: [],
+		      selection: null, // primary selection
+		      selectionList: [],
+		      selectionSet: new Set(),
+		      selectionHelper: null,
+		      skeletonHelper: null,
+		      wireframeEnabled: false,
+
+		      toolMode: 'move', // select | move | rotate | scale
+	      localSpace: true,
+	      snapEnabled: false,
+	      snapMove: 0.1,
+	      snapRotateDeg: 15,
+	      snapScale: 0.1,
+	      gizmoSize: 1,
+	      nudgeStep: 0.05,
+
+		      hierarchyRoot: null,
+		      hierarchyExpanded: new Set(['0']),
+		      uuidToRow: new Map(),
+
+		      studioObjectsByKey: new Map(),
+		      studioMaterialsByKey: new Map(),
+
+		      selectionProxy: new THREE.Object3D(),
+		      proxyDragActive: false,
+		      proxyDragObjects: [],
+		      proxyDragBefore: [],
+		      proxyDragStartWorld: new THREE.Matrix4(),
+		      proxyDragObjectStartWorld: [],
+		      tmpMat4a: new THREE.Matrix4(),
+		      tmpMat4b: new THREE.Matrix4(),
+		      tmpMat4c: new THREE.Matrix4(),
+		      tmpBox: new THREE.Box3(),
+		      tmpBox2: new THREE.Box3(),
+		      tmpVec3: new THREE.Vector3(),
+
+		      historyUndo: [],
+		      historyRedo: [],
+			      historyMax: 120,
+			      gizmoDragObject: null,
+			      gizmoDragBefore: null,
+			      gizmoDragBeforeMetaKey: null,
+			      gizmoDragBeforeMeta: null,
+			      proxyDragMetaBefore: null,
+			      materialDragObject: null,
+			      materialDragSlot: 0,
+			      materialDragBefore: null,
+
+		      mixer: null,
+		      activeAction: null,
+		      playState: 'stopped', // stopped | playing | paused
+		      selectedClipIndex: 0,
+	      speed: 1,
+	      loop: true
+	    };
+
+	    function isStudioTabActive() {
+	      return activeTab === 'studio';
+	    }
+
+	    function onActiveTabChanged(next, prev) {
+	      if (prev === 'studio' && next !== 'studio') {
+	        studioDisposeSelectionHelper();
+	        studioDisposeSkeletonHelper();
+	      }
+		      if (next === 'studio') {
+		        if (ui.modeSelect?.value !== 'edit') {
+		          ui.modeSelect.value = 'edit';
+		        }
+		        setLabMode('edit');
+		        studioBindToLiveModel();
+		        studioRenderHierarchy();
+		        studioSyncInspector();
+		        studioUpdateHistoryButtons();
+		      }
+
+	      refreshEditorAttachment();
+	    }
+
+		    function onTransformControlsObjectChange() {
+		      if (isStudioTabActive()) {
+		        if (studioState.proxyDragActive) {
+		          studioApplyProxyDrag();
+		        } else {
+		          studioCommitSelectionTransform();
+		        }
+		      } else {
+		        pullMetaFromLiveMonster();
+		      }
+		    }
+
+	    function resetPlayer() {
+	      const sp = worldState.getSpawnPoint();
+	      const tileSize = CONFIG.TILE_SIZE || 1;
+	      const x = (sp.x + 0.5) * tileSize;
       const z = (sp.y + 0.5) * tileSize;
       player.setPosition(x, CONFIG.PLAYER_HEIGHT ?? 1.7, z);
       cameraController.setYawPitch(0, 0);
@@ -1125,66 +1847,1591 @@
       return tag === 'input' || tag === 'textarea' || tag === 'select' || !!target.isContentEditable;
     }
 
-    function getLiveNodes() {
-      const monster = getCurrentMonster();
-      if (!monster) return null;
-      const model = monster.getModel?.() || monster.model || null;
-      const correction = model?.getObjectByName?.('__monsterCorrection') || null;
-      const inner = model?.getObjectByName?.('__monsterInner') || null;
-      return { monster, model, correction, inner };
-    }
+	    function getLiveNodes() {
+	      const monster = getCurrentMonster();
+	      if (!monster) return null;
+	      const model = monster.getModel?.() || monster.model || null;
+	      const correction = model?.getObjectByName?.('__monsterCorrection') || null;
+	      const inner = model?.getObjectByName?.('__monsterInner') || null;
+	      return { monster, model, correction, inner };
+	    }
 
-    function refreshEditorAttachment() {
-      if (!transformControls) return;
-      if (labMode !== 'edit') {
-        transformControls.detach();
-        transformControls.enabled = false;
-        transformControls.visible = false;
-        if (orbitControls) orbitControls.enabled = false;
-        return;
-      }
+	    // --- Studio: meta state + editing helpers (RigView3D-inspired) ---
+	    const studioRaycaster = new THREE.Raycaster();
+	    const studioPointerNdc = new THREE.Vector2();
+	    const studioTmpWorldPos = new THREE.Vector3();
+	    const studioTmpDelta = new THREE.Vector3();
+	    let studioPointerDownX = 0;
+	    let studioPointerDownY = 0;
+	    let studioPointerDownButton = -1;
+	    let studioPointerMoved = false;
+	    const studioClickTolerancePx = 6;
+	    let studioIsSyncingInspector = false;
 
-      transformControls.enabled = true;
-      transformControls.visible = true;
-      transformControls.setSpace(editorSpace);
+	    function studioNormalizePath(path) {
+	      if (!Array.isArray(path) || path.length === 0) return null;
+	      const cleaned = [];
+	      for (const seg of path) {
+	        if (!seg || typeof seg !== 'object') return null;
+	        const i = Math.trunc(Number(seg.i));
+	        if (!Number.isFinite(i) || i < 0 || i > 100000) return null;
+	        const next = { i };
+	        const name = typeof seg.name === 'string' ? seg.name.trim() : '';
+	        if (name) next.name = name.slice(0, 200);
+	        cleaned.push(next);
+	      }
+	      return cleaned.length > 0 ? cleaned : null;
+	    }
 
-      const nodes = getLiveNodes();
-      const correction = nodes?.correction || null;
-      const inner = nodes?.inner || null;
+	    function studioPathKey(path) {
+	      if (!Array.isArray(path)) return '';
+	      return path.map((seg) => String(seg?.i ?? 'x')).join('.');
+	    }
+
+		    function studioIsReservedNode(object) {
+		      const name = object?.name || '';
+		      return name === '__monsterYaw' || name === '__monsterCorrection' || name === '__monsterInner';
+		    }
+
+		    function studioIsEphemeralNode(object) {
+		      return !!object?.userData?.__studioEphemeral;
+		    }
+
+		    function studioGetPathForObject(object) {
+		      const root = studioState.modelRoot;
+		      if (!root || !object) return null;
+		      if (object === root) return null;
+		      const cached = object?.userData?.__studioPath || null;
+		      const cachedPath = studioNormalizePath(cached);
+		      if (cachedPath) return cachedPath;
+		      const path = [];
+		      let current = object;
+		      while (current && current !== root) {
+		        const parent = current.parent;
+		        if (!parent) return null;
+	        const idx = Array.isArray(parent.children) ? parent.children.indexOf(current) : -1;
+	        if (idx < 0) return null;
+	        const seg = { i: idx };
+	        const name = typeof current.name === 'string' ? current.name.trim() : '';
+	        if (name) seg.name = name.slice(0, 200);
+	        path.push(seg);
+	        current = parent;
+		      }
+		      if (current !== root) return null;
+		      path.reverse();
+		      const out = path.length > 0 ? path : null;
+		      if (out) {
+		        object.userData = object.userData || {};
+		        object.userData.__studioPath = deepClone(out);
+		      }
+		      return out;
+		    }
+
+		    function studioStampStablePaths() {
+		      const root = studioState.modelRoot;
+		      if (!root?.traverse) return;
+		      root.traverse((obj) => {
+		        if (!obj) return;
+		        if (obj === root) return;
+		        if (studioNormalizePath(obj?.userData?.__studioPath)) return;
+		        void studioGetPathForObject(obj);
+		      });
+		    }
+
+	    function studioLoadOverridesFromMeta(metaStudio) {
+	      studioState.studioObjectsByKey.clear();
+	      studioState.studioMaterialsByKey.clear();
+
+	      const studio = metaStudio && typeof metaStudio === 'object' ? metaStudio : null;
+	      if (!studio || studio.version !== 1) return;
+
+	      const objects = Array.isArray(studio.objects) ? studio.objects : [];
+	      for (const entry of objects) {
+	        if (!entry || typeof entry !== 'object') continue;
+	        const path = studioNormalizePath(entry.path);
+	        if (!path) continue;
+	        const key = studioPathKey(path);
+	        if (!key) continue;
+
+	        const next = { path };
+	        if (typeof entry.visible === 'boolean') next.visible = entry.visible;
+
+	        const t = entry.transform && typeof entry.transform === 'object' ? entry.transform : null;
+	        const transform = {};
+	        if (t && Array.isArray(t.position) && t.position.length === 3) {
+	          const p = t.position.map(Number);
+	          if (p.every(Number.isFinite)) transform.position = p;
+	        }
+	        if (t && Array.isArray(t.quaternion) && t.quaternion.length === 4) {
+	          const q = t.quaternion.map(Number);
+	          if (q.every(Number.isFinite)) transform.quaternion = q;
+	        }
+	        if (t && Array.isArray(t.scale) && t.scale.length === 3) {
+	          const s = t.scale.map(Number);
+	          if (s.every(Number.isFinite)) transform.scale = s;
+	        }
+	        if (Object.keys(transform).length > 0) next.transform = transform;
+
+	        if (Object.keys(next).length > 1) {
+	          studioState.studioObjectsByKey.set(key, deepClone(next));
+	        }
+	      }
+
+	      const materials = Array.isArray(studio.materials) ? studio.materials : [];
+	      for (const entry of materials) {
+	        if (!entry || typeof entry !== 'object') continue;
+	        const path = studioNormalizePath(entry.path);
+	        if (!path) continue;
+	        const slot = Math.trunc(Number(entry.slot));
+	        if (!Number.isFinite(slot) || slot < 0 || slot > 256) continue;
+
+	        const standard = entry.standard && typeof entry.standard === 'object' ? entry.standard : null;
+	        if (!standard) continue;
+
+	        const nextStandard = {};
+	        if (typeof standard.color === 'string') {
+	          const c = standard.color.trim();
+	          if (/^#[0-9a-fA-F]{6}$/.test(c)) nextStandard.color = c;
+	        }
+	        if (Number.isFinite(Number(standard.metalness))) nextStandard.metalness = clamp(toNum(standard.metalness, 0), 0, 1);
+	        if (Number.isFinite(Number(standard.roughness))) nextStandard.roughness = clamp(toNum(standard.roughness, 0), 0, 1);
+	        if (Object.keys(nextStandard).length === 0) continue;
+
+	        const key = `${studioPathKey(path)}|${slot}`;
+	        studioState.studioMaterialsByKey.set(key, deepClone({ path, slot, standard: nextStandard }));
+	      }
+	    }
+
+	    function studioBuildMetaForSave() {
+	      const objects = Array.from(studioState.studioObjectsByKey.entries())
+	        .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+	        .map(([, entry]) => deepClone(entry));
+
+	      const materials = Array.from(studioState.studioMaterialsByKey.entries())
+	        .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+	        .map(([, entry]) => deepClone(entry));
+
+	      if (objects.length === 0 && materials.length === 0) return null;
+	      return { version: 1, objects, materials };
+	    }
+
+	    function studioUpdateTargetPill() {
+	      ui.studioTargetPill.textContent = currentModelPath ? `Target: ${currentModelPath}` : 'Target: (none)';
+	    }
+
+	    function studioDisposeSelectionHelper() {
+	      const helper = studioState.selectionHelper;
+	      if (!helper) return;
+	      try {
+	        sceneManager.getScene().remove(helper);
+	        helper.geometry?.dispose?.();
+	        const mat = helper.material;
+	        if (Array.isArray(mat)) mat.forEach((m) => m?.dispose?.());
+	        else mat?.dispose?.();
+	      } catch (err) {
+	        void err;
+	      }
+	      studioState.selectionHelper = null;
+	    }
+
+		    function studioDisposeSkeletonHelper() {
+		      const helper = studioState.skeletonHelper;
+		      if (!helper) return;
+	      try {
+	        sceneManager.getScene().remove(helper);
+	        helper.geometry?.dispose?.();
+	        const mat = helper.material;
+	        if (Array.isArray(mat)) mat.forEach((m) => m?.dispose?.());
+	        else mat?.dispose?.();
+	      } catch (err) {
+	        void err;
+	      }
+		      studioState.skeletonHelper = null;
+		    }
+
+			    function studioPushCommand(command) {
+			      studioState.historyUndo.push(command);
+			      studioState.historyRedo.length = 0;
+			      const max = Math.max(1, Math.trunc(toNum(studioState.historyMax, 120)));
+			      if (studioState.historyUndo.length > max) {
+			        studioState.historyUndo.splice(0, studioState.historyUndo.length - max);
+			      }
+			      studioUpdateHistoryButtons();
+			    }
+
+			    function studioUndo() {
+			      const cmd = studioState.historyUndo.pop();
+			      if (!cmd) return;
+			      cmd.undo?.();
+			      studioState.historyRedo.push(cmd);
+			      studioUpdateHistoryButtons();
+			      studioAfterHistoryMutation();
+			    }
+
+			    function studioRedo() {
+			      const cmd = studioState.historyRedo.pop();
+			      if (!cmd) return;
+			      cmd.redo?.();
+			      studioState.historyUndo.push(cmd);
+			      studioUpdateHistoryButtons();
+			      studioAfterHistoryMutation();
+			    }
+
+			    function studioClearHistory() {
+			      studioState.historyUndo.length = 0;
+			      studioState.historyRedo.length = 0;
+			      studioUpdateHistoryButtons();
+			    }
+
+			    function studioAfterHistoryMutation() {
+			      updateMetaOutput(currentModelPath, baseMeta);
+			      studioUpdateInfoCounts();
+			      studioRenderHierarchy();
+			      refreshEditorAttachment();
+			      studioSyncInspector();
+			      studioUpdateHierarchySelectionStyles();
+			    }
+
+			    function studioUpdateHistoryButtons() {
+			      if (ui.studioUndoBtn) ui.studioUndoBtn.disabled = studioState.historyUndo.length === 0;
+			      if (ui.studioRedoBtn) ui.studioRedoBtn.disabled = studioState.historyRedo.length === 0;
+			    }
+
+		    function studioEnsureSelectionHelper(target) {
+		      if (!target) return;
+		      if (!studioState.selectionHelper) {
+		        const helper = new THREE.BoxHelper(target, 0xffd54a);
+		        helper.renderOrder = 10;
+		        sceneManager.getScene().add(helper);
+		        studioState.selectionHelper = helper;
+		        return;
+		      }
+		      studioState.selectionHelper.setFromObject?.(target);
+		    }
+
+		    function studioClearSelection() {
+		      studioState.selection = null;
+		      studioState.selectionList.length = 0;
+		      studioState.selectionSet.clear();
+		      studioDisposeSelectionHelper();
+		      refreshEditorAttachment();
+		      studioSyncInspector();
+		      studioUpdateHierarchySelectionStyles();
+		    }
+
+			    function studioSelectObject(object, options = {}) {
+		      const target = object || null;
+		      const additive = !!options.additive;
+		      const toggle = !!options.toggle;
+
+		      if (!target) {
+		        if (!additive && !toggle) studioClearSelection();
+		        return;
+		      }
+
+		      const alreadySelected = studioState.selectionSet.has(target);
+
+		      if (toggle) {
+		        if (alreadySelected) {
+		          studioState.selectionSet.delete(target);
+		          studioState.selectionList = studioState.selectionList.filter((o) => o !== target);
+		          if (studioState.selection === target) {
+		            studioState.selection = studioState.selectionList.length > 0
+		              ? studioState.selectionList[studioState.selectionList.length - 1]
+		              : null;
+		          }
+		        } else {
+		          studioState.selectionSet.add(target);
+		          studioState.selectionList.push(target);
+		          studioState.selection = target;
+		        }
+		      } else if (additive) {
+		        if (!alreadySelected) {
+		          studioState.selectionSet.add(target);
+		          studioState.selectionList.push(target);
+		        }
+		        studioState.selection = target;
+		      } else {
+		        studioState.selectionSet.clear();
+		        studioState.selectionSet.add(target);
+		        studioState.selectionList = [target];
+		        studioState.selection = target;
+		      }
+
+		      studioDisposeSelectionHelper();
+		      if (studioState.selection) {
+		        studioEnsureSelectionHelper(studioState.selection);
+		      }
+
+		      refreshEditorAttachment();
+		      studioSyncInspector();
+		      studioUpdateHierarchySelectionStyles();
+			    }
+
+			    function studioReplaceSelection(list) {
+			      studioState.selectionSet.clear();
+			      studioState.selectionList.length = 0;
+			      for (const obj of Array.isArray(list) ? list : []) {
+			        if (!obj) continue;
+			        studioState.selectionSet.add(obj);
+			        studioState.selectionList.push(obj);
+			      }
+			      studioState.selection = studioState.selectionList.length > 0
+			        ? studioState.selectionList[studioState.selectionList.length - 1]
+			        : null;
+
+			      studioDisposeSelectionHelper();
+			      if (studioState.selection) {
+			        studioEnsureSelectionHelper(studioState.selection);
+			      }
+			    }
+
+			    function studioUpdateHierarchySelectionStyles() {
+			      for (const row of studioState.uuidToRow.values()) {
+			        row.classList.remove('is-selected');
+			      }
+			      for (const obj of studioState.selectionList) {
+			        studioState.uuidToRow.get(obj.uuid)?.classList.add('is-selected');
+			      }
+			    }
+
+			    function studioGetTopLevelSelection(list) {
+			      const root = studioState.hierarchyRoot || studioState.modelRoot;
+			      const selection = Array.isArray(list) ? list.filter(Boolean) : [];
+			      if (selection.length === 0) return [];
+			      const set = new Set(selection);
+			      return selection.filter((obj) => {
+			        if (!obj) return false;
+			        if (obj === root) return false;
+			        let p = obj.parent;
+			        while (p) {
+			          if (set.has(p)) return false;
+			          if (p === root) break;
+			          p = p.parent;
+			        }
+			        return true;
+			      });
+			    }
+
+			    function studioGetTransformTargets() {
+			      const top = studioGetTopLevelSelection(studioState.selectionList);
+			      return top.filter((obj) => obj && !studioIsReservedNode(obj));
+			    }
+
+			    function studioEnsureSelectionProxyInScene() {
+			      const proxy = studioState.selectionProxy;
+			      if (!proxy) return null;
+			      if (!proxy.parent) {
+			        proxy.name = proxy.name || '__studioSelectionProxy';
+			        sceneManager.getScene().add(proxy);
+			      }
+			      return proxy;
+			    }
+
+			    function studioUpdateSelectionProxyFromSelection() {
+			      const targets = studioGetTransformTargets();
+			      if (targets.length < 2) return;
+			      const proxy = studioEnsureSelectionProxyInScene();
+			      if (!proxy) return;
+
+			      studioState.tmpBox.makeEmpty();
+			      for (const obj of targets) {
+			        studioState.tmpBox2.setFromObject(obj);
+			        studioState.tmpBox.union(studioState.tmpBox2);
+			      }
+
+			      if (studioState.tmpBox.isEmpty()) {
+			        targets[0].getWorldPosition(studioState.tmpVec3);
+			      } else {
+			        studioState.tmpBox.getCenter(studioState.tmpVec3);
+			      }
+			      proxy.position.copy(studioState.tmpVec3);
+
+			      if (studioState.localSpace && studioState.selection?.getWorldQuaternion) {
+			        studioState.selection.updateMatrixWorld(true);
+			        studioState.selection.getWorldQuaternion(proxy.quaternion);
+			      } else {
+			        proxy.quaternion.identity();
+			      }
+			      proxy.scale.set(1, 1, 1);
+			      proxy.updateMatrixWorld(true);
+			    }
+
+			    function studioSnapshotLocalTransform(object) {
+			      const obj = object || null;
+			      if (!obj) return null;
+			      return {
+			        position: [obj.position.x, obj.position.y, obj.position.z],
+			        quaternion: [obj.quaternion.x, obj.quaternion.y, obj.quaternion.z, obj.quaternion.w],
+			        scale: [obj.scale.x, obj.scale.y, obj.scale.z]
+			      };
+			    }
+
+			    function studioApplyLocalTransform(object, snapshot) {
+			      const obj = object || null;
+			      if (!obj || !snapshot) return;
+			      const p = Array.isArray(snapshot.position) ? snapshot.position : null;
+			      const q = Array.isArray(snapshot.quaternion) ? snapshot.quaternion : null;
+			      const s = Array.isArray(snapshot.scale) ? snapshot.scale : null;
+			      if (p && p.length === 3) obj.position.set(p[0], p[1], p[2]);
+			      if (q && q.length === 4) obj.quaternion.set(q[0], q[1], q[2], q[3]);
+			      if (s && s.length === 3) obj.scale.set(s[0], s[1], s[2]);
+			      obj.updateMatrixWorld(true);
+			    }
+
+			    function studioTransformChanged(a, b, eps = 1e-6) {
+			      if (!a || !b) return true;
+			      const ap = a.position || [];
+			      const bp = b.position || [];
+			      const aq = a.quaternion || [];
+			      const bq = b.quaternion || [];
+			      const as = a.scale || [];
+			      const bs = b.scale || [];
+			      for (let i = 0; i < 3; i++) {
+			        if (Math.abs((ap[i] ?? 0) - (bp[i] ?? 0)) > eps) return true;
+			        if (Math.abs((as[i] ?? 0) - (bs[i] ?? 0)) > eps) return true;
+			      }
+			      for (let i = 0; i < 4; i++) {
+			        if (Math.abs((aq[i] ?? 0) - (bq[i] ?? 0)) > eps) return true;
+			      }
+			      return false;
+			    }
+
+			    function studioBeginProxyDrag() {
+			      const targets = studioGetTransformTargets();
+			      if (targets.length < 2) return false;
+			      const proxy = studioEnsureSelectionProxyInScene();
+			      if (!proxy) return false;
+			      studioState.modelRoot?.updateMatrixWorld?.(true);
+			      studioUpdateSelectionProxyFromSelection();
+
+			      studioState.proxyDragActive = true;
+			      studioState.proxyDragObjects = targets;
+			      studioState.proxyDragBefore = targets.map((obj) => ({
+			        object: obj,
+			        ...studioSnapshotLocalTransform(obj)
+			      }));
+			      studioState.proxyDragStartWorld.copy(proxy.matrixWorld);
+			      studioState.proxyDragObjectStartWorld = targets.map((obj) => new THREE.Matrix4().copy(obj.matrixWorld));
+			      return true;
+			    }
+
+			    function studioApplyProxyDrag() {
+			      if (!studioState.proxyDragActive) return;
+			      const proxy = studioState.selectionProxy;
+			      if (!proxy) return;
+			      const targets = studioState.proxyDragObjects || [];
+			      if (targets.length === 0) return;
+
+			      proxy.updateMatrixWorld(true);
+			      const invStart = studioState.tmpMat4b.copy(studioState.proxyDragStartWorld).invert();
+			      const delta = studioState.tmpMat4a.copy(proxy.matrixWorld).multiply(invStart);
+
+			      for (let i = 0; i < targets.length; i++) {
+			        const obj = targets[i];
+			        const startWorld = studioState.proxyDragObjectStartWorld[i];
+			        if (!obj || !startWorld) continue;
+
+			        const nextWorld = studioState.tmpMat4c.copy(delta).multiply(startWorld);
+			        const parent = obj.parent;
+			        if (parent) {
+			          parent.updateMatrixWorld(true);
+			          const invParent = studioState.tmpMat4b.copy(parent.matrixWorld).invert();
+			          invParent.multiply(nextWorld);
+			          invParent.decompose(obj.position, obj.quaternion, obj.scale);
+			        } else {
+			          nextWorld.decompose(obj.position, obj.quaternion, obj.scale);
+			        }
+			        obj.updateMatrixWorld(true);
+			      }
+			    }
+
+		    function findFirstSkinnedMesh(root) {
+		      let found = null;
+		      root?.traverse?.((obj) => {
+		        if (found) return;
+	        if (obj?.isSkinnedMesh) found = obj;
+	      });
+	      return found;
+	    }
+
+	    function studioSetSkeletonVisible(visible) {
+	      if (!visible) {
+	        studioDisposeSkeletonHelper();
+	        return;
+	      }
+
+	      if (!studioState.modelRoot) return;
+	      if (studioState.skeletonHelper) return;
+
+	      const skinned = findFirstSkinnedMesh(studioState.modelRoot);
+	      if (!skinned) return;
+
+	      const helper = new THREE.SkeletonHelper(skinned);
+	      helper.visible = true;
+	      helper.renderOrder = 11;
+	      sceneManager.getScene().add(helper);
+	      studioState.skeletonHelper = helper;
+	    }
+
+	    function setMaterialWireframe(material, enabled) {
+	      if (!material) return;
+	      if ('wireframe' in material) {
+	        material.wireframe = enabled;
+	        material.needsUpdate = true;
+	      }
+	    }
+
+	    function studioApplyWireframe(root, enabled) {
+	      root?.traverse?.((obj) => {
+	        if (!obj?.isMesh && !obj?.isSkinnedMesh) return;
+	        const mat = obj.material;
+	        if (Array.isArray(mat)) mat.forEach((m) => setMaterialWireframe(m, enabled));
+	        else setMaterialWireframe(mat, enabled);
+	      });
+	    }
+
+	    function studioSetWireframeEnabled(enabled) {
+	      studioState.wireframeEnabled = !!enabled;
+	      if (studioState.modelRoot) {
+	        studioApplyWireframe(studioState.modelRoot, studioState.wireframeEnabled);
+	      }
+	    }
+
+	    function studioStopAnimator() {
+	      if (!studioState.mixer) return;
+	      studioSelectClip(studioState.selectedClipIndex, true);
+	      studioState.playState = 'stopped';
+	      studioState.mixer.timeScale = 0;
+	      ui.studioAnimPause.textContent = 'Pause';
+	    }
+
+	    function studioSetAnimationSource(root, clips) {
+	      if (studioState.mixer) {
+	        try {
+	          studioState.mixer.stopAllAction();
+	        } catch (err) {
+	          void err;
+	        }
+	      }
+
+	      studioState.mixer = null;
+	      studioState.activeAction = null;
+	      studioState.selectedClipIndex = 0;
+	      studioState.playState = 'stopped';
+
+	      if (!root || !Array.isArray(clips) || clips.length === 0) {
+	        ui.studioAnimClip.innerHTML = '<option value="-1">(no clips)</option>';
+	        ui.studioAnimClip.disabled = true;
+	        ui.studioAnimPlay.disabled = true;
+	        ui.studioAnimPause.disabled = true;
+	        ui.studioAnimStop.disabled = true;
+	        ui.studioInfoClips.textContent = '0';
+	        return;
+	      }
+
+	      ui.studioAnimClip.innerHTML = '';
+	      for (let i = 0; i < clips.length; i++) {
+	        const clip = clips[i];
+	        const opt = document.createElement('option');
+	        opt.value = String(i);
+	        opt.textContent = clip?.name ? `${clip.name}` : `Clip ${i + 1}`;
+	        ui.studioAnimClip.appendChild(opt);
+	      }
+	      ui.studioAnimClip.disabled = false;
+	      ui.studioAnimPlay.disabled = false;
+	      ui.studioAnimPause.disabled = false;
+	      ui.studioAnimStop.disabled = false;
+	      ui.studioInfoClips.textContent = String(clips.length);
+
+	      studioState.mixer = new THREE.AnimationMixer(root);
+	      studioState.mixer.timeScale = 0;
+	      studioSelectClip(0, true);
+	    }
+
+	    function studioSelectClip(index, force = false) {
+	      const clips = studioState.animations;
+	      if (!Array.isArray(clips) || clips.length === 0) return;
+	      const next = Math.max(0, Math.min(clips.length - 1, Math.trunc(toNum(index, 0))));
+	      if (!force && next === studioState.selectedClipIndex) return;
+
+	      studioState.selectedClipIndex = next;
+	      ui.studioAnimClip.value = String(next);
+
+	      if (!studioState.mixer) return;
+	      if (studioState.activeAction) {
+	        try {
+	          studioState.activeAction.stop();
+	        } catch (err) {
+	          void err;
+	        }
+	      }
+
+	      const clip = clips[next];
+	      const action = studioState.mixer.clipAction(clip);
+	      action.enabled = true;
+	      action.reset();
+	      action.clampWhenFinished = !studioState.loop;
+	      action.setLoop(studioState.loop ? THREE.LoopRepeat : THREE.LoopOnce, studioState.loop ? Infinity : 0);
+	      studioState.activeAction = action;
+
+	      studioState.mixer.timeScale = 0;
+	      action.play();
+	      studioState.playState = 'stopped';
+	      ui.studioAnimPause.textContent = 'Pause';
+	    }
+
+	    function studioPlayAnimator() {
+	      if (!studioState.mixer || !studioState.activeAction) return;
+	      studioState.speed = clamp(toNum(ui.studioAnimSpeed.value, 1), 0.05, 10);
+	      studioState.mixer.timeScale = studioState.speed;
+	      studioState.playState = 'playing';
+	      ui.studioAnimSpeedVal.textContent = `${studioState.speed.toFixed(2)}x`;
+	    }
+
+	    function studioTogglePauseAnimator() {
+	      if (!studioState.mixer) return;
+	      if (studioState.playState === 'stopped') return;
+
+	      if (studioState.playState === 'playing') {
+	        studioState.mixer.timeScale = 0;
+	        studioState.playState = 'paused';
+	        ui.studioAnimPause.textContent = 'Resume';
+	        return;
+	      }
+
+	      studioState.speed = clamp(toNum(ui.studioAnimSpeed.value, 1), 0.05, 10);
+	      studioState.mixer.timeScale = studioState.speed;
+	      studioState.playState = 'playing';
+	      ui.studioAnimPause.textContent = 'Pause';
+	    }
+
+		    function studioCommitObjectVisible(object, options = {}) {
+		      const target = object || studioState.selection;
+		      const silent = !!options.silent;
+		      if (!target) return false;
+		      if (studioIsReservedNode(target)) {
+		        if (!silent) studioRenderHierarchy();
+		        return false;
+		      }
+		      if (studioIsEphemeralNode(target)) {
+		        if (!silent) studioRenderHierarchy();
+		        return false;
+		      }
+
+		      const path = studioGetPathForObject(target);
+		      if (!path) return false;
+		      const key = studioPathKey(path);
+		      if (!key) return false;
+
+		      const existing = studioState.studioObjectsByKey.get(key) || { path };
+		      existing.path = path;
+		      existing.visible = !!target.visible;
+		      studioState.studioObjectsByKey.set(key, existing);
+
+		      if (!silent) {
+		        updateMetaOutput(currentModelPath, baseMeta);
+		        studioRenderHierarchy();
+		      }
+		      return true;
+		    }
+
+		    function roundFloat(value, digits = 6) {
+		      if (!Number.isFinite(value)) return value;
+		      const m = Math.pow(10, digits);
+		      return Math.round(value * m) / m;
+		    }
+
+		    function studioCommitObjectTransform(object) {
+		      const target = object || null;
+		      if (!target) return false;
+		      if (studioIsReservedNode(target)) return false;
+		      if (studioIsEphemeralNode(target)) return false;
+
+		      const path = studioGetPathForObject(target);
+		      if (!path) return false;
+		      const key = studioPathKey(path);
+		      if (!key) return false;
+
+		      const existing = studioState.studioObjectsByKey.get(key) || { path };
+		      existing.path = path;
+		      existing.transform = {
+		        position: [
+		          roundFloat(target.position.x),
+		          roundFloat(target.position.y),
+		          roundFloat(target.position.z)
+		        ],
+		        quaternion: [
+		          roundFloat(target.quaternion.x),
+		          roundFloat(target.quaternion.y),
+		          roundFloat(target.quaternion.z),
+		          roundFloat(target.quaternion.w)
+		        ],
+		        scale: [
+		          roundFloat(target.scale.x),
+		          roundFloat(target.scale.y),
+		          roundFloat(target.scale.z)
+		        ]
+		      };
+		      studioState.studioObjectsByKey.set(key, existing);
+		      return true;
+		    }
+
+		    function studioCommitSelectionTransform() {
+		      if (!isStudioTabActive()) return;
+		      const sel = studioState.selection;
+		      if (!sel) return;
+		      const wrote = studioCommitObjectTransform(sel);
+		      if (!studioIsSyncingInspector) studioSyncInspector();
+		      if (wrote) updateMetaOutput(currentModelPath, baseMeta);
+		    }
+
+		    function studioCommitMaterialOverrideFor(mesh, slot) {
+		      const sel = mesh || null;
+		      if (!sel || !(sel.isMesh || sel.isSkinnedMesh)) return false;
+		      if (studioIsReservedNode(sel)) return false;
+		      if (studioIsEphemeralNode(sel)) return false;
+
+		      const mat = Array.isArray(sel.material) ? sel.material[slot] : (slot === 0 ? sel.material : null);
+		      if (!mat || !mat.isMeshStandardMaterial) return false;
+
+		      const path = studioGetPathForObject(sel);
+		      if (!path) return false;
+		      const baseKey = studioPathKey(path);
+		      if (!baseKey) return false;
+		      const key = `${baseKey}|${slot}`;
+
+		      const standard = {
+		        color: `#${mat.color.getHexString()}`,
+		        metalness: clamp(mat.metalness, 0, 1),
+		        roughness: clamp(mat.roughness, 0, 1)
+		      };
+
+		      studioState.studioMaterialsByKey.set(key, { path, slot, standard });
+		      return true;
+		    }
+
+		    function studioCommitMaterialOverride(options = {}) {
+		      const sel = studioState.selection;
+		      if (!sel || !(sel.isMesh || sel.isSkinnedMesh)) return false;
+
+		      const slot = Math.max(0, Math.trunc(toNum(ui.studioMaterialSlot.value, 0)));
+		      const wrote = studioCommitMaterialOverrideFor(sel, slot);
+		      if (wrote && !options.silent) {
+		        updateMetaOutput(currentModelPath, baseMeta);
+		      }
+		      return wrote;
+		    }
+
+		    function studioGetMeshStandardMaterial(mesh, slot) {
+		      const sel = mesh || null;
+		      if (!sel || !(sel.isMesh || sel.isSkinnedMesh)) return null;
+		      const idx = Math.max(0, Math.trunc(Number(slot)));
+		      const mat = Array.isArray(sel.material) ? sel.material[idx] : (idx === 0 ? sel.material : null);
+		      if (!mat || !mat.isMeshStandardMaterial) return null;
+		      return mat;
+		    }
+
+		    function studioSnapshotMeshStandardMaterial(mesh, slot) {
+		      const mat = studioGetMeshStandardMaterial(mesh, slot);
+		      if (!mat) return null;
+		      return {
+		        color: `#${mat.color.getHexString()}`,
+		        metalness: clamp(mat.metalness, 0, 1),
+		        roughness: clamp(mat.roughness, 0, 1)
+		      };
+		    }
+
+		    function studioApplyMeshStandardMaterial(mesh, slot, snapshot) {
+		      const mat = studioGetMeshStandardMaterial(mesh, slot);
+		      const src = snapshot && typeof snapshot === 'object' ? snapshot : null;
+		      if (!mat || !src) return;
+		      if (typeof src.color === 'string') mat.color.set(src.color);
+		      if (Number.isFinite(Number(src.metalness))) mat.metalness = clamp(toNum(src.metalness, mat.metalness), 0, 1);
+		      if (Number.isFinite(Number(src.roughness))) mat.roughness = clamp(toNum(src.roughness, mat.roughness), 0, 1);
+		      mat.needsUpdate = true;
+		    }
+
+		    function studioStandardMaterialChanged(a, b, eps = 1e-6) {
+		      if (!a || !b) return true;
+		      if (String(a.color || '') !== String(b.color || '')) return true;
+		      if (Math.abs((a.metalness ?? 0) - (b.metalness ?? 0)) > eps) return true;
+		      if (Math.abs((a.roughness ?? 0) - (b.roughness ?? 0)) > eps) return true;
+		      return false;
+		    }
+
+		    function studioSyncInspector() {
+		      const sel = studioState.selection;
+		      const selectionCount = studioState.selectionList.length;
+		      if (!sel) {
+		        ui.studioInspectorEmpty.hidden = false;
+		        ui.studioInspectorContent.hidden = true;
+		        ui.studioInspectorEmpty.textContent = '(select an object)';
+		        return;
+		      }
+
+		      ui.studioInspectorEmpty.hidden = true;
+		      ui.studioInspectorContent.hidden = false;
+		      ui.studioInspectorName.textContent = selectionCount > 1
+		        ? `(${selectionCount} selected)`
+		        : (sel.name?.trim() || '(unnamed)');
+		      ui.studioInspectorType.textContent = selectionCount > 1 ? '(multiple)' : (sel.type || '(unknown)');
+
+		      studioIsSyncingInspector = true;
+		      try {
+		        const transformDisabled = selectionCount > 1;
+		        for (const el of [
+		          ui.studioPosX, ui.studioPosY, ui.studioPosZ,
+		          ui.studioRotX, ui.studioRotY, ui.studioRotZ,
+		          ui.studioScaleX, ui.studioScaleY, ui.studioScaleZ
+		        ]) {
+		          el.disabled = transformDisabled;
+		        }
+
+		        ui.studioInspectorVisible.indeterminate = false;
+		        ui.studioInspectorVisible.disabled = false;
+		        if (selectionCount > 1) {
+		          const targets = studioGetTopLevelSelection(studioState.selectionList)
+		            .filter((obj) => obj && !studioIsReservedNode(obj));
+		          let anyVisible = false;
+		          let anyHidden = false;
+		          for (const obj of targets) {
+		            if (obj.visible) anyVisible = true;
+		            else anyHidden = true;
+		          }
+		          ui.studioInspectorVisible.indeterminate = anyVisible && anyHidden;
+		          ui.studioInspectorVisible.checked = anyVisible && !anyHidden;
+		          ui.studioInspectorVisible.disabled = targets.length === 0;
+		        } else {
+		          ui.studioInspectorVisible.checked = !!sel.visible;
+		        }
+
+		        ui.studioPosX.value = format(sel.position.x, 3);
+		        ui.studioPosY.value = format(sel.position.y, 3);
+		        ui.studioPosZ.value = format(sel.position.z, 3);
+
+		        ui.studioRotX.value = format(sel.rotation.x * RAD2DEG, 1);
+		        ui.studioRotY.value = format(sel.rotation.y * RAD2DEG, 1);
+		        ui.studioRotZ.value = format(sel.rotation.z * RAD2DEG, 1);
+
+		        ui.studioScaleX.value = format(sel.scale.x, 3);
+		        ui.studioScaleY.value = format(sel.scale.y, 3);
+		        ui.studioScaleZ.value = format(sel.scale.z, 3);
+
+		        studioSyncMaterialUi();
+		      } finally {
+		        studioIsSyncingInspector = false;
+		      }
+		    }
+
+		    function studioSyncMaterialUi() {
+		      if (studioState.selectionList.length > 1) {
+		        ui.studioMaterialHint.hidden = false;
+		        ui.studioMaterialControls.hidden = true;
+		        ui.studioMaterialHint.textContent = '(multiple selected)';
+		        return;
+		      }
+		      const sel = studioState.selection;
+		      const isMesh = !!(sel && (sel.isMesh || sel.isSkinnedMesh));
+		      if (!isMesh) {
+		        ui.studioMaterialHint.hidden = false;
+		        ui.studioMaterialControls.hidden = true;
+	        ui.studioMaterialHint.textContent = '(select a mesh to edit materials)';
+	        return;
+	      }
+
+	      const mesh = sel;
+	      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material].filter(Boolean);
+	      if (materials.length === 0) {
+	        ui.studioMaterialHint.hidden = false;
+	        ui.studioMaterialControls.hidden = true;
+	        ui.studioMaterialHint.textContent = '(no material)';
+	        return;
+	      }
+
+	      ui.studioMaterialHint.hidden = true;
+	      ui.studioMaterialControls.hidden = false;
+
+	      ui.studioMaterialSlot.innerHTML = '';
+	      for (let i = 0; i < materials.length; i++) {
+	        const mat = materials[i];
+	        const opt = document.createElement('option');
+	        opt.value = String(i);
+	        opt.textContent = `Slot ${i}`;
+	        ui.studioMaterialSlot.appendChild(opt);
+	      }
+
+	      const slot = Math.max(0, Math.min(materials.length - 1, Math.trunc(toNum(ui.studioMaterialSlot.value, 0))));
+	      ui.studioMaterialSlot.value = String(slot);
+
+	      const mat = materials[slot];
+	      ui.studioMaterialType.textContent = mat?.type || '(material)';
+
+	      if (mat && mat.isMeshStandardMaterial) {
+	        ui.studioMaterialColor.disabled = false;
+	        ui.studioMaterialMetalness.disabled = false;
+	        ui.studioMaterialRoughness.disabled = false;
+
+	        ui.studioMaterialColor.value = `#${mat.color.getHexString()}`;
+	        ui.studioMaterialMetalness.value = String(clamp(mat.metalness, 0, 1));
+	        ui.studioMaterialMetalnessVal.textContent = clamp(mat.metalness, 0, 1).toFixed(2);
+	        ui.studioMaterialRoughness.value = String(clamp(mat.roughness, 0, 1));
+	        ui.studioMaterialRoughnessVal.textContent = clamp(mat.roughness, 0, 1).toFixed(2);
+	      } else {
+	        ui.studioMaterialColor.disabled = true;
+	        ui.studioMaterialMetalness.disabled = true;
+	        ui.studioMaterialRoughness.disabled = true;
+	      }
+	    }
+
+	    function studioUpdateInfoCounts() {
+	      const root = studioState.hierarchyRoot;
+	      if (!root) {
+	        ui.studioInfoMeshes.textContent = '—';
+	        ui.studioInfoMaterials.textContent = '—';
+	        ui.studioInfoBones.textContent = '—';
+	        ui.studioInfoClips.textContent = String(studioState.animations.length || 0);
+	        return;
+	      }
+
+	      let meshes = 0;
+	      let bones = 0;
+	      const materialSet = new Set();
+	      root.traverse((obj) => {
+	        if (obj?.isBone) bones++;
+	        if (obj?.isMesh || obj?.isSkinnedMesh) {
+	          meshes++;
+	          const mat = obj.material;
+	          if (Array.isArray(mat)) {
+	            mat.forEach((m) => {
+	              if (!m) return;
+	              materialSet.add(m.uuid || m.id || m);
+	            });
+	          } else if (mat) {
+	            materialSet.add(mat.uuid || mat.id || mat);
+	          }
+	        }
+	      });
+
+	      ui.studioInfoMeshes.textContent = String(meshes);
+	      ui.studioInfoMaterials.textContent = String(materialSet.size);
+	      ui.studioInfoBones.textContent = String(bones);
+	      ui.studioInfoClips.textContent = String(studioState.animations.length || 0);
+	    }
+
+	    function studioBindToLiveModel() {
+	      studioUpdateTargetPill();
+	      const nodes = getLiveNodes();
+	      const nextRoot = nodes?.model || null;
+	      const nextInner = nodes?.inner || null;
+
+	      const rootChanged = studioState.modelRoot && nextRoot && studioState.modelRoot.uuid !== nextRoot.uuid;
+
+	      if (!nextRoot) {
+	        studioState.modelRoot = null;
+	        studioState.innerRoot = null;
+	        studioState.hierarchyRoot = null;
+	        studioClearSelection();
+	        studioStopAnimator();
+	        studioDisposeSkeletonHelper();
+	        studioUpdateInfoCounts();
+	        studioRenderHierarchy();
+	        return;
+	      }
+
+		      studioState.modelRoot = nextRoot;
+		      studioState.innerRoot = nextInner;
+		      studioState.hierarchyRoot = nextInner || nextRoot;
+		      studioStampStablePaths();
+
+		      if (rootChanged) {
+		        studioClearSelection();
+		        studioStopAnimator();
+		        studioDisposeSkeletonHelper();
+		        studioClearHistory();
+		      }
+
+	      studioUpdateInfoCounts();
+
+	      studioSetWireframeEnabled(ui.studioDbgWireframe.checked);
+	      studioSetSkeletonVisible(ui.studioDbgSkeleton.checked);
+
+	      studioState.animations = Array.isArray(studioState.animations) ? studioState.animations : [];
+	      studioSetAnimationSource(studioState.modelRoot, studioState.animations);
+	    }
+
+	    function studioBuildVisibleNodes(root, filter, expandedKeys) {
+	      const q = String(filter || '').trim().toLowerCase();
+	      const ignoreCollapse = q.length > 0;
+
+	      const labelFor = (obj) => (obj.name?.trim() || obj.type || '(node)');
+
+	      const build = (obj, key, depth) => {
+	        const label = labelFor(obj).toLowerCase();
+	        const selfMatches = q.length === 0 || label.includes(q);
+
+	        const childResults = (obj.children || []).map((child, index) =>
+	          build(child, `${key}/${index}`, depth + 1)
+	        );
+	        const visibleChildren = childResults.filter((r) => r.visible);
+	        const anyChildVisible = visibleChildren.length > 0;
+	        const visible = selfMatches || anyChildVisible;
+	        if (!visible) return { rows: [], visible: false };
+
+	        const hasChildren = anyChildVisible;
+	        const expanded = ignoreCollapse || expandedKeys.has(key);
+	        const childRows = ignoreCollapse || expanded ? visibleChildren.flatMap((r) => r.rows) : [];
+
+	        return {
+	          rows: [{ object: obj, key, depth, hasChildren, expanded }, ...childRows],
+	          visible: true
+	        };
+	      };
+
+	      return build(root, '0', 0).rows;
+	    }
+
+	    function studioRenderHierarchy() {
+	      const root = studioState.hierarchyRoot;
+	      const tree = ui.studioHierarchyTree;
+	      studioState.uuidToRow.clear();
+	      tree.innerHTML = '';
+
+	      if (!root) {
+	        ui.studioHierarchyCount.textContent = '0 nodes';
+	        const empty = document.createElement('div');
+	        empty.className = 'muted';
+	        empty.textContent = 'No model loaded.';
+	        tree.appendChild(empty);
+	        return;
+	      }
+
+	      const filter = ui.studioHierarchySearch.value || '';
+	      const rows = studioBuildVisibleNodes(root, filter, studioState.hierarchyExpanded);
+	      ui.studioHierarchyCount.textContent = `${rows.length} nodes`;
+
+	      for (const row of rows) {
+	        const obj = row.object;
+	        const el = document.createElement('div');
+	        el.className = 'studio-tree-item';
+	        el.style.paddingLeft = `${row.depth * 12}px`;
+	        if (!obj.visible) el.classList.add('is-hidden');
+
+	        const toggle = document.createElement('button');
+	        toggle.type = 'button';
+	        toggle.className = 'studio-tree-toggle';
+	        toggle.textContent = row.hasChildren ? (row.expanded ? '▾' : '▸') : '';
+	        toggle.disabled = !row.hasChildren;
+	        if (!row.hasChildren) toggle.style.visibility = 'hidden';
+	        toggle.addEventListener('click', (e) => {
+	          e.stopPropagation();
+	          if (!row.hasChildren) return;
+	          if (studioState.hierarchyExpanded.has(row.key)) studioState.hierarchyExpanded.delete(row.key);
+	          else studioState.hierarchyExpanded.add(row.key);
+	          studioRenderHierarchy();
+	        });
+
+	        const eye = document.createElement('button');
+	        eye.type = 'button';
+	        eye.className = 'studio-tree-eye';
+	        eye.textContent = obj.visible ? '👁' : '🚫';
+	        eye.addEventListener('click', (e) => {
+	          e.stopPropagation();
+	          obj.visible = !obj.visible;
+	          studioCommitObjectVisible(obj);
+	          if (studioState.selection?.uuid === obj.uuid) studioSyncInspector();
+	        });
+
+	        const label = document.createElement('div');
+	        label.className = 'studio-tree-label';
+	        label.textContent = obj.name?.trim() || obj.type || '(node)';
+
+	        el.appendChild(toggle);
+	        el.appendChild(eye);
+	        el.appendChild(label);
+		        el.addEventListener('click', (e) => {
+		          const toggle = !!(e?.ctrlKey || e?.metaKey);
+		          const additive = !!e?.shiftKey;
+		          studioSelectObject(obj, { toggle, additive });
+		        });
+
+	        studioState.uuidToRow.set(obj.uuid, el);
+	        tree.appendChild(el);
+	      }
+
+	      studioUpdateHierarchySelectionStyles();
+	    }
+
+	    function studioSetToolMode(mode) {
+	      const next =
+	        mode === 'select' || mode === 'move' || mode === 'rotate' || mode === 'scale'
+	          ? mode
+	          : 'move';
+	      studioState.toolMode = next;
+
+	      ui.studioToolSelect.classList.toggle('secondary', next !== 'select');
+	      ui.studioToolMove.classList.toggle('secondary', next !== 'move');
+	      ui.studioToolRotate.classList.toggle('secondary', next !== 'rotate');
+	      ui.studioToolScale.classList.toggle('secondary', next !== 'scale');
+
+	      refreshEditorAttachment();
+	    }
+
+	    function studioToggleLocalSpace() {
+	      studioState.localSpace = !studioState.localSpace;
+	      ui.studioToolSpaceLocal.checked = studioState.localSpace;
+	      refreshEditorAttachment();
+	    }
+
+	    function studioToggleSnap() {
+	      studioState.snapEnabled = !studioState.snapEnabled;
+	      ui.studioToolSnapEnabled.checked = studioState.snapEnabled;
+	      refreshEditorAttachment();
+	    }
+
+		    function studioFrameSelectionOrModel() {
+		      const sel = studioState.selection;
+		      if (sel) {
+		        frameObject(sel);
+		        return;
+		      }
+		      frameCurrentMonster();
+		    }
+
+		    function studioMarkEphemeralSubtree(root) {
+		      const node = root || null;
+		      if (!node) return;
+		      node.traverse?.((obj) => {
+		        if (!obj) return;
+		        obj.userData = obj.userData || {};
+		        obj.userData.__studioEphemeral = true;
+		        if (obj.userData.__studioPath) delete obj.userData.__studioPath;
+		      });
+		    }
+
+		    function studioInsertChildAt(parent, child, index) {
+		      if (!parent || !child) return;
+		      parent.add(child);
+		      const children = Array.isArray(parent.children) ? parent.children : [];
+		      const current = children.indexOf(child);
+		      if (current < 0) return;
+		      const next = Math.max(0, Math.min(children.length - 1, Math.trunc(toNum(index, current))));
+		      if (current === next) return;
+		      children.splice(current, 1);
+		      children.splice(next, 0, child);
+		    }
+
+		    function studioInsertChildAfter(parent, child, afterChild) {
+		      if (!parent || !child) return;
+		      const children = Array.isArray(parent.children) ? parent.children : [];
+		      const afterIndex = afterChild ? children.indexOf(afterChild) : -1;
+		      const next = afterIndex >= 0 ? afterIndex + 1 : children.length;
+		      studioInsertChildAt(parent, child, next);
+		    }
+
+		    function studioDeleteSelection() {
+		      const root = studioState.hierarchyRoot || studioState.modelRoot;
+		      const selected = studioGetTopLevelSelection(studioState.selectionList)
+		        .filter((obj) => obj && obj.parent && obj !== root && !studioIsReservedNode(obj));
+		      if (selected.length === 0) return;
+
+		      const prevSelection = studioState.selectionList.slice();
+		      const entries = selected.map((obj) => ({
+		        object: obj,
+		        parent: obj.parent,
+		        index: Array.isArray(obj.parent?.children) ? obj.parent.children.indexOf(obj) : -1
+		      })).filter((e) => e.parent && e.index >= 0);
+		      if (entries.length === 0) return;
+
+		      entries.sort((a, b) => {
+		        const ap = a.parent?.uuid || '';
+		        const bp = b.parent?.uuid || '';
+		        if (ap !== bp) return ap.localeCompare(bp);
+		        return a.index - b.index;
+		      });
+
+		      const cmd = {
+		        undo: () => {
+		          for (const entry of entries) {
+		            studioInsertChildAt(entry.parent, entry.object, entry.index);
+		          }
+		          studioReplaceSelection(prevSelection);
+		        },
+		        redo: () => {
+		          for (const entry of entries) {
+		            entry.parent?.remove?.(entry.object);
+		          }
+		          studioReplaceSelection([]);
+		        }
+		      };
+
+		      cmd.redo();
+		      studioPushCommand(cmd);
+		      studioUpdateInfoCounts();
+		      studioRenderHierarchy();
+		      refreshEditorAttachment();
+		      studioSyncInspector();
+		    }
+
+		    function studioDuplicateSelection() {
+		      const root = studioState.hierarchyRoot || studioState.modelRoot;
+		      const selected = studioGetTopLevelSelection(studioState.selectionList)
+		        .filter((obj) => obj && obj.parent && obj !== root && !studioIsReservedNode(obj));
+		      if (selected.length === 0) return;
+
+		      const prevSelection = studioState.selectionList.slice();
+		      const entries = [];
+		      const clones = [];
+
+		      for (const obj of selected) {
+		        const parent = obj.parent;
+		        if (!parent) continue;
+		        const clone = hasSkinnedMesh(obj) ? cloneSkeleton(obj) : obj.clone(true);
+		        studioMarkEphemeralSubtree(clone);
+		        studioInsertChildAfter(parent, clone, obj);
+		        entries.push({ parent, after: obj, clone });
+		        clones.push(clone);
+		      }
+
+		      if (entries.length === 0) return;
+		      studioReplaceSelection(clones);
+
+		      const cmd = {
+		        undo: () => {
+		          for (const entry of entries) {
+		            entry.clone?.parent?.remove?.(entry.clone);
+		          }
+		          studioReplaceSelection(prevSelection);
+		        },
+		        redo: () => {
+		          for (const entry of entries) {
+		            const parent = entry.after?.parent || entry.parent;
+		            studioInsertChildAfter(parent, entry.clone, entry.after);
+		          }
+		          studioReplaceSelection(clones);
+		        }
+		      };
+
+		      studioPushCommand(cmd);
+		      studioUpdateInfoCounts();
+		      studioRenderHierarchy();
+		      refreshEditorAttachment();
+		      studioSyncInspector();
+		    }
+
+			    function studioPickFromViewport(clientX, clientY, options = {}) {
+		      if (!rendererEl) return;
+		      const root = studioState.hierarchyRoot;
+		      if (!root) return;
+
+	      const rect = rendererEl.getBoundingClientRect();
+	      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+
+	      studioPointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+	      studioPointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+	      studioRaycaster.setFromCamera(studioPointerNdc, cameraController.getCamera());
+
+	      const hits = studioRaycaster.intersectObject(root, true);
+	      const hit = hits && hits.length > 0 ? hits[0] : null;
+		      const picked = hit?.object || null;
+		      if (picked) studioSelectObject(picked, options);
+		      else if (!options?.additive && !options?.toggle) studioClearSelection();
+		    }
+
+	    function studioUpdate(dt) {
+	      if (!isStudioTabActive() || labMode !== 'edit') return;
+	      if (studioState.mixer) {
+	        try {
+	          studioState.mixer.update(dt);
+	        } catch (err) {
+	          void err;
+	        }
+	      }
+	      studioState.skeletonHelper?.update?.();
+	      studioState.selectionHelper?.update?.();
+	    }
+
+	    function normalizeImportSegment(value, fallback = '') {
+	      const raw = String(value || '').trim();
+	      const cleaned = raw || fallback;
+	      if (!cleaned) return null;
+	      if (!/^[a-zA-Z0-9._-]+$/.test(cleaned)) return null;
+	      if (cleaned === '.' || cleaned === '..') return null;
+	      return cleaned;
+	    }
+
+	    function pickMainImportFile(files) {
+	      const list = Array.isArray(files) ? files : [];
+	      const byExt = (ext) =>
+	        list.find((f) => typeof f?.name === 'string' && f.name.toLowerCase().endsWith(ext));
+	      return byExt('.glb') || byExt('.gltf') || byExt('.dae') || null;
+	    }
+
+	    async function studioImportSelectedFiles() {
+	      const files = Array.from(ui.studioImportFiles.files || []);
+	      if (files.length === 0) {
+	        ui.studioImportStatus.textContent = 'Pick files first';
+	        ui.studioImportStatus.classList.add('status-bad');
+	        return;
+	      }
+
+	      const main = pickMainImportFile(files);
+	      if (!main) {
+	        ui.studioImportStatus.textContent = 'Missing .glb/.gltf/.dae';
+	        ui.studioImportStatus.classList.add('status-bad');
+	        return;
+	      }
+
+	      const mainName = normalizeImportSegment(main.name);
+	      if (!mainName) {
+	        ui.studioImportStatus.textContent = `Invalid filename: ${main.name}`;
+	        ui.studioImportStatus.classList.add('status-bad');
+	        return;
+	      }
+
+	      const baseFolder = main.name.replace(/\.[^/.]+$/, '');
+	      const folder = normalizeImportSegment(ui.studioImportFolder.value, baseFolder) || `Imported-${Date.now()}`;
+	      const overwrite = !!ui.studioImportOverwrite.checked;
+
+	      ui.studioImportBtn.disabled = true;
+	      ui.studioImportStatus.textContent = `Uploading ${files.length} file(s)…`;
+	      ui.studioImportStatus.classList.remove('status-bad');
+	      ui.studioImportStatus.classList.add('status-warn');
+
+	      try {
+	        for (const file of files) {
+	          const name = normalizeImportSegment(file?.name);
+	          if (!name) {
+	            throw new Error(`Invalid filename: ${file?.name || '(unknown)'}`);
+	          }
+	          const res = await fetch('/api/models-import', {
+	            method: 'POST',
+	            headers: {
+	              'x-model-folder': folder,
+	              'x-file-name': name,
+	              'x-overwrite': overwrite ? 'true' : 'false'
+	            },
+	            body: file
+	          });
+	          const json = await res.json().catch(() => ({}));
+	          if (!res.ok || !json?.ok) {
+	            throw new Error(json?.error || `Upload failed (${res.status})`);
+	          }
+	        }
+
+	        ui.studioImportStatus.textContent = `Imported → /models/${folder}/`;
+	        ui.studioImportStatus.classList.remove('status-warn');
+	        ui.studioImportStatus.classList.add('status-ok');
+
+	        const { generatedAt, models } = await fetchManifest();
+	        allModels = models;
+	        ui.manifestStamp.textContent = generatedAt ? `manifest: ${generatedAt}` : 'manifest: (unknown)';
+	        repopulateModels(buildModelList(allModels, ui.modelFilter.value || ''), null);
+
+	        const modelUrl = `/models/${folder}/${mainName}`;
+	        if (modelUrl) {
+	          const hasOption = Array.from(ui.modelSelect.options).some((opt) => opt.value === modelUrl);
+	          if (!hasOption) {
+	            const opt = document.createElement('option');
+	            opt.value = modelUrl;
+	            opt.textContent = modelUrl;
+	            ui.modelSelect.appendChild(opt);
+	          }
+	          ui.modelSelect.value = modelUrl;
+	          ui.modelSelect.dispatchEvent(new Event('change'));
+	        }
+	      } catch (err) {
+	        console.error(err);
+	        ui.studioImportStatus.textContent = `Import failed: ${err?.message || err}`;
+	        ui.studioImportStatus.classList.remove('status-warn');
+	        ui.studioImportStatus.classList.add('status-bad');
+	      } finally {
+	        ui.studioImportBtn.disabled = false;
+	      }
+	    }
+
+	    function downloadArrayBuffer(data, fileName) {
+	      const blob = new Blob([data], { type: 'model/gltf-binary' });
+	      const url = URL.createObjectURL(blob);
+	      const a = document.createElement('a');
+	      a.href = url;
+	      a.download = fileName;
+	      document.body.appendChild(a);
+	      a.click();
+	      a.remove();
+	      URL.revokeObjectURL(url);
+	    }
+
+	    function hasSkinnedMesh(root) {
+	      let found = false;
+	      root?.traverse?.((obj) => {
+	        if (found) return;
+	        if (obj?.isSkinnedMesh) found = true;
+	      });
+	      return found;
+	    }
+
+	    async function studioExportGlb() {
+	      const nodes = getLiveNodes();
+	      const model = nodes?.model || null;
+	      const inner = nodes?.inner || null;
+	      if (!model || !inner) return;
+
+	      ui.studioExportBtn.disabled = true;
+	      const prevLabel = ui.studioExportBtn.textContent;
+	      ui.studioExportBtn.textContent = 'Exporting…';
+
+	      try {
+	        const yaw = model.getObjectByName?.('__monsterYaw') || null;
+	        const prevYaw = yaw ? yaw.rotation.y : 0;
+	        if (yaw) yaw.rotation.y = 0;
+	        model.updateMatrixWorld(true);
+
+	        const inv = new THREE.Matrix4().copy(model.matrixWorld).invert();
+	        const rel = new THREE.Matrix4().multiplyMatrices(inv, inner.matrixWorld);
+	        const pos = new THREE.Vector3();
+	        const quat = new THREE.Quaternion();
+	        const scl = new THREE.Vector3();
+	        rel.decompose(pos, quat, scl);
+
+	        if (yaw) yaw.rotation.y = prevYaw;
+	        model.updateMatrixWorld(true);
+
+	        const clone = hasSkinnedMesh(inner) ? cloneSkeleton(inner) : inner.clone(true);
+	        clone.position.copy(pos);
+	        clone.quaternion.copy(quat);
+	        clone.scale.copy(scl);
+	        clone.updateMatrixWorld(true);
+
+	        const exporter = new GLTFExporter();
+	        const animations = ui.studioExportIncludeAnims.checked ? (studioState.animations || []) : [];
+	        const arrayBuffer = await exporter.parseAsync(clone, {
+	          binary: true,
+	          animations
+	        });
+
+	        const base = (currentModelPath || 'enemy')
+	          .split('/')
+	          .pop()
+	          .replace(/\.(glb|gltf|dae)$/i, '')
+	          .trim();
+	        const outName = `${base || 'enemy'}-edited.glb`;
+	        downloadArrayBuffer(arrayBuffer, outName);
+	      } catch (err) {
+	        console.error(err);
+	        setStatus(`Export failed: ${err?.message || err}`, 'bad');
+	      } finally {
+	        ui.studioExportBtn.textContent = prevLabel;
+	        ui.studioExportBtn.disabled = false;
+	      }
+	    }
+
+	    function refreshEditorAttachment() {
+	      if (!transformControls) return;
+	      if (labMode !== 'edit') {
+	        transformControls.detach();
+	        transformControls.enabled = false;
+	        transformControls.visible = false;
+	        if (orbitControls) orbitControls.enabled = false;
+	        return;
+	      }
+
+	      if (activeTab !== 'model' && activeTab !== 'studio') {
+	        transformControls.detach();
+	        transformControls.enabled = false;
+	        transformControls.visible = false;
+	        if (orbitControls) orbitControls.enabled = !isTransformDragging;
+	        return;
+	      }
+
+		      if (activeTab === 'studio') {
+		        const selection = studioState.selection || null;
+		        const tool = studioState.toolMode;
+		        const targets = studioGetTransformTargets();
+		        const useProxy = targets.length > 1;
+		        if (useProxy) studioUpdateSelectionProxyFromSelection();
+		        const attachTarget = useProxy ? studioState.selectionProxy : selection;
+
+		        if (!attachTarget || tool === 'select') {
+		          transformControls.detach();
+		          transformControls.enabled = false;
+		          transformControls.visible = false;
+		          if (orbitControls) orbitControls.enabled = !isTransformDragging;
+		          return;
+		        }
+		        if (!useProxy && studioIsReservedNode(attachTarget)) {
+		          transformControls.detach();
+		          transformControls.enabled = false;
+		          transformControls.visible = false;
+		          if (orbitControls) orbitControls.enabled = !isTransformDragging;
+		          return;
+		        }
+
+		        transformControls.enabled = true;
+		        transformControls.visible = true;
+		        transformControls.setSpace(studioState.localSpace ? 'local' : 'world');
+		        transformControls.setSize(studioState.gizmoSize);
+		        transformControls.setMode(tool === 'move' ? 'translate' : tool);
+
+	        if (studioState.snapEnabled) {
+	          transformControls.setTranslationSnap(Math.max(0, toNum(studioState.snapMove, 0)));
+	          transformControls.setRotationSnap(Math.max(0, toNum(studioState.snapRotateDeg, 0)) * DEG2RAD);
+	          transformControls.setScaleSnap(Math.max(0, toNum(studioState.snapScale, 0)));
+	        } else {
+	          transformControls.setTranslationSnap(null);
+	          transformControls.setRotationSnap(null);
+	          transformControls.setScaleSnap(null);
+	        }
+
+		        transformControls.attach(attachTarget);
+		        if (orbitControls) orbitControls.enabled = !isTransformDragging;
+		        return;
+		      }
+
+	      transformControls.enabled = true;
+	      transformControls.visible = true;
+	      transformControls.setSpace(editorSpace);
+
+	      const nodes = getLiveNodes();
+	      const correction = nodes?.correction || null;
+	      const inner = nodes?.inner || null;
 
       if (editorOp === 'translate') {
         transformControls.setMode('translate');
         if (inner) transformControls.attach(inner);
         else transformControls.detach();
-      } else {
-        transformControls.setMode('rotate');
-        if (correction) transformControls.attach(correction);
-        else transformControls.detach();
-      }
+	      } else {
+	        transformControls.setMode('rotate');
+	        if (correction) transformControls.attach(correction);
+	        else transformControls.detach();
+	      }
 
-      if (orbitControls) orbitControls.enabled = true;
-    }
+	      if (orbitControls) orbitControls.enabled = !isTransformDragging;
+	    }
 
-    function frameCurrentMonster() {
-      if (!orbitControls) return;
-      const nodes = getLiveNodes();
-      const object = nodes?.model || null;
-      if (!object) return;
+	    function frameObject(object) {
+	      if (!orbitControls) return;
+	      if (!object) return;
 
-      const box = new THREE.Box3().setFromObject(object);
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-      if (!Number.isFinite(center.x) || !Number.isFinite(center.y) || !Number.isFinite(center.z)) return;
+	      const box = new THREE.Box3().setFromObject(object);
+	      const center = box.getCenter(new THREE.Vector3());
+	      const size = box.getSize(new THREE.Vector3());
+	      if (!Number.isFinite(center.x) || !Number.isFinite(center.y) || !Number.isFinite(center.z)) return;
 
-      const radius = Math.max(0.6, Math.max(size.x, size.y, size.z) * 0.6);
-      orbitControls.target.copy(center);
+	      const radius = Math.max(0.6, Math.max(size.x, size.y, size.z) * 0.6);
+	      orbitControls.target.copy(center);
 
-      const cam = cameraController.getCamera();
-      const dir = new THREE.Vector3(1, 0.6, 1).normalize();
-      cam.position.copy(center).add(dir.multiplyScalar(radius * 3.2));
-      cam.lookAt(center);
-      orbitControls.update();
-    }
+	      const cam = cameraController.getCamera();
+	      const dir = new THREE.Vector3(1, 0.6, 1).normalize();
+	      cam.position.copy(center).add(dir.multiplyScalar(radius * 3.2));
+	      cam.lookAt(center);
+	      orbitControls.update();
+	    }
+
+	    function frameCurrentMonster() {
+	      const nodes = getLiveNodes();
+	      frameObject(nodes?.model || null);
+	    }
 
     function pullMetaFromLiveMonster() {
       const nodes = getLiveNodes();
@@ -1303,12 +3550,13 @@
       monsterManager.clear();
 
       // Capture auto-upright base rotation for UI. (We read it from the freshly loaded model.)
-      try {
-        const { model, animations } = await monsterManager.modelLoader.loadModelWithAnimations(modelPath);
-        baseCorrectionRotation = computeBaseCorrectionRotationDegreesFromModel(model);
-        baseInnerPosition = computeBaseInnerPositionFromModel(model);
-        updateBaseRotUI(baseCorrectionRotation);
-        updateBasePosUI(baseInnerPosition);
+	      try {
+	        const { model, animations } = await monsterManager.modelLoader.loadModelWithAnimations(modelPath);
+	        baseCorrectionRotation = computeBaseCorrectionRotationDegreesFromModel(model);
+	        baseInnerPosition = computeBaseInnerPositionFromModel(model);
+	        studioState.animations = Array.isArray(animations) ? animations : [];
+	        updateBaseRotUI(baseCorrectionRotation);
+	        updateBasePosUI(baseInnerPosition);
 
         const typeKey = ui.typeSelect.value || 'HUNTER';
         const baseType = deepClone(MonsterTypes[typeKey] || MonsterTypes.HUNTER || {});
@@ -1343,13 +3591,18 @@
         if (firstPos && labMode === 'play') {
           setPlayerLookAt(player, cameraController, firstPos);
         }
-        if (labMode === 'edit') {
-          frameCurrentMonster();
-        }
-        refreshEditorAttachment();
+	        if (labMode === 'edit') {
+	          frameCurrentMonster();
+	        }
+	        refreshEditorAttachment();
+	        if (isStudioTabActive()) {
+	          studioBindToLiveModel();
+	          studioRenderHierarchy();
+	          studioSyncInspector();
+	        }
 
-        setStatus('Ready', 'ok');
-      } catch (err) {
+	        setStatus('Ready', 'ok');
+	      } catch (err) {
         console.error(err);
         setStatus(`Spawn failed: ${err?.message || err}`, 'bad');
       }
@@ -1427,20 +3680,442 @@
     }
 
     // UI hooks
-    ui.modeSelect.value = labMode;
-    ui.modeSelect.addEventListener('change', () => {
-      setLabMode(ui.modeSelect.value);
-    });
+	    ui.modeSelect.value = labMode;
+	    ui.modeSelect.addEventListener('change', () => {
+	      setLabMode(ui.modeSelect.value);
+	      if (isStudioTabActive()) {
+	        studioBindToLiveModel();
+	        studioRenderHierarchy();
+	        studioSyncInspector();
+	      }
+	    });
 
-    window.addEventListener('keydown', (e) => {
-      if (labMode !== 'edit') return;
-      if (isTypingTarget(e.target)) return;
+	    // Studio UI hooks
+	    studioUpdateTargetPill();
+	    studioState.localSpace = !!ui.studioToolSpaceLocal.checked;
+	    studioState.snapEnabled = !!ui.studioToolSnapEnabled.checked;
+	    studioState.snapMove = toNum(ui.studioToolSnapMove.value, studioState.snapMove);
+	    studioState.snapRotateDeg = toNum(ui.studioToolSnapRotate.value, studioState.snapRotateDeg);
+	    studioState.snapScale = toNum(ui.studioToolSnapScale.value, studioState.snapScale);
+	    studioState.gizmoSize = clamp(toNum(ui.studioToolGizmoSize.value, 1), 0.1, 5);
+	    studioState.nudgeStep = clamp(toNum(ui.studioToolNudge.value, studioState.nudgeStep), 0, 10);
+	    ui.studioToolGizmoSizeVal.textContent = studioState.gizmoSize.toFixed(2);
+	    ui.studioAnimSpeedVal.textContent = `${toNum(ui.studioAnimSpeed.value, 1).toFixed(2)}x`;
+	    studioSetToolMode(studioState.toolMode);
 
-      if (e.code === 'KeyW') {
-        e.preventDefault();
-        setEditorOp('translate');
-        return;
-      }
+	    ui.studioRefreshBtn.addEventListener('click', async () => {
+	      if (!currentModelPath) return;
+	      setStatus('Reloading meta…', 'warn');
+	      const { url, json } = await fetchExistingMeta(currentModelPath);
+	      baseMeta = json || {};
+	      studioLoadOverridesFromMeta(baseMeta?.studio);
+	      setMetaHint(currentModelPath, url && json ? url : null);
+	      applyMetaToUI(baseMeta);
+	      updateMetaOutput(currentModelPath, baseMeta);
+	      setStatus('Meta reloaded', 'ok');
+	      void spawnMonsters();
+	    });
+
+	    ui.studioDbgSkeleton.addEventListener('change', () => {
+	      studioSetSkeletonVisible(ui.studioDbgSkeleton.checked);
+	    });
+
+	    ui.studioDbgWireframe.addEventListener('change', () => {
+	      studioSetWireframeEnabled(ui.studioDbgWireframe.checked);
+	      studioRenderHierarchy();
+	    });
+
+	    ui.studioAnimClip.addEventListener('change', () => {
+	      if (studioIsSyncingInspector) return;
+	      studioSelectClip(ui.studioAnimClip.value, true);
+	    });
+	    ui.studioAnimPlay.addEventListener('click', () => studioPlayAnimator());
+	    ui.studioAnimPause.addEventListener('click', () => studioTogglePauseAnimator());
+	    ui.studioAnimStop.addEventListener('click', () => studioStopAnimator());
+	    ui.studioAnimSpeed.addEventListener('input', () => {
+	      const speed = clamp(toNum(ui.studioAnimSpeed.value, 1), 0.05, 10);
+	      ui.studioAnimSpeedVal.textContent = `${speed.toFixed(2)}x`;
+	      studioState.speed = speed;
+	      if (studioState.mixer && studioState.playState === 'playing') {
+	        studioState.mixer.timeScale = speed;
+	      }
+	    });
+	    ui.studioAnimLoop.addEventListener('change', () => {
+	      studioState.loop = !!ui.studioAnimLoop.checked;
+	      if (studioState.activeAction) {
+	        studioState.activeAction.clampWhenFinished = !studioState.loop;
+	        studioState.activeAction.setLoop(studioState.loop ? THREE.LoopRepeat : THREE.LoopOnce, studioState.loop ? Infinity : 0);
+	      }
+	    });
+
+	    ui.studioToolSelect.addEventListener('click', () => studioSetToolMode('select'));
+	    ui.studioToolMove.addEventListener('click', () => studioSetToolMode('move'));
+	    ui.studioToolRotate.addEventListener('click', () => studioSetToolMode('rotate'));
+	    ui.studioToolScale.addEventListener('click', () => studioSetToolMode('scale'));
+
+	    ui.studioToolSpaceLocal.addEventListener('change', () => {
+	      studioState.localSpace = !!ui.studioToolSpaceLocal.checked;
+	      refreshEditorAttachment();
+	    });
+
+	    ui.studioToolSnapEnabled.addEventListener('change', () => {
+	      studioState.snapEnabled = !!ui.studioToolSnapEnabled.checked;
+	      refreshEditorAttachment();
+	    });
+	    ui.studioToolSnapMove.addEventListener('change', () => {
+	      studioState.snapMove = Math.max(0, toNum(ui.studioToolSnapMove.value, studioState.snapMove));
+	      refreshEditorAttachment();
+	    });
+	    ui.studioToolSnapRotate.addEventListener('change', () => {
+	      studioState.snapRotateDeg = Math.max(0, toNum(ui.studioToolSnapRotate.value, studioState.snapRotateDeg));
+	      refreshEditorAttachment();
+	    });
+	    ui.studioToolSnapScale.addEventListener('change', () => {
+	      studioState.snapScale = Math.max(0, toNum(ui.studioToolSnapScale.value, studioState.snapScale));
+	      refreshEditorAttachment();
+	    });
+	    ui.studioToolGizmoSize.addEventListener('input', () => {
+	      studioState.gizmoSize = clamp(toNum(ui.studioToolGizmoSize.value, 1), 0.1, 5);
+	      ui.studioToolGizmoSizeVal.textContent = studioState.gizmoSize.toFixed(2);
+	      refreshEditorAttachment();
+	    });
+		    ui.studioToolNudge.addEventListener('change', () => {
+		      studioState.nudgeStep = clamp(toNum(ui.studioToolNudge.value, studioState.nudgeStep), 0, 10);
+		    });
+		    ui.studioUndoBtn.addEventListener('click', () => studioUndo());
+		    ui.studioRedoBtn.addEventListener('click', () => studioRedo());
+		    ui.studioDuplicateBtn.addEventListener('click', () => studioDuplicateSelection());
+		    ui.studioDeleteBtn.addEventListener('click', () => studioDeleteSelection());
+
+		    ui.studioHierarchySearch.addEventListener('input', () => studioRenderHierarchy());
+
+		    ui.studioInspectorVisible.addEventListener('change', () => {
+		      const sel = studioState.selection;
+		      if (!sel) return;
+		      const targets = studioState.selectionList.length > 1
+		        ? studioGetTopLevelSelection(studioState.selectionList).filter((obj) => obj && !studioIsReservedNode(obj))
+		        : [sel];
+		      if (targets.length === 0) return;
+
+		      const next = !!ui.studioInspectorVisible.checked;
+		      const before = targets.map((obj) => ({ object: obj, visible: !!obj.visible }));
+		      const changed = before.some((entry) => entry.visible !== next);
+
+		      for (const obj of targets) {
+		        obj.visible = next;
+		      }
+		      let wrote = false;
+		      for (const obj of targets) {
+		        if (studioCommitObjectVisible(obj, { silent: true })) wrote = true;
+		      }
+		      if (wrote) updateMetaOutput(currentModelPath, baseMeta);
+		      studioRenderHierarchy();
+		      studioSyncInspector();
+
+		      if (!changed) return;
+		      studioPushCommand({
+		        undo: () => {
+		          for (const entry of before) {
+		            if (!entry?.object) continue;
+		            entry.object.visible = entry.visible;
+		            studioCommitObjectVisible(entry.object, { silent: true });
+		          }
+		        },
+		        redo: () => {
+		          for (const obj of targets) {
+		            if (!obj) continue;
+		            obj.visible = next;
+		            studioCommitObjectVisible(obj, { silent: true });
+		          }
+		        }
+		      });
+		    });
+
+	    ui.studioFrameBtn.addEventListener('click', () => studioFrameSelectionOrModel());
+
+		    const applyInspectorTransform = () => {
+		      const sel = studioState.selection;
+		      if (!sel) return;
+		      if (studioState.selectionList.length > 1) return;
+		      const before = studioSnapshotLocalTransform(sel);
+		      const px = toNum(ui.studioPosX.value, sel.position.x);
+		      const py = toNum(ui.studioPosY.value, sel.position.y);
+		      const pz = toNum(ui.studioPosZ.value, sel.position.z);
+	      const rx = toNum(ui.studioRotX.value, sel.rotation.x * RAD2DEG) * DEG2RAD;
+	      const ry = toNum(ui.studioRotY.value, sel.rotation.y * RAD2DEG) * DEG2RAD;
+	      const rz = toNum(ui.studioRotZ.value, sel.rotation.z * RAD2DEG) * DEG2RAD;
+	      const sx = Math.max(0.001, toNum(ui.studioScaleX.value, sel.scale.x));
+	      const sy = Math.max(0.001, toNum(ui.studioScaleY.value, sel.scale.y));
+	      const sz = Math.max(0.001, toNum(ui.studioScaleZ.value, sel.scale.z));
+
+		      sel.position.set(px, py, pz);
+		      sel.rotation.set(rx, ry, rz);
+		      sel.scale.set(sx, sy, sz);
+		      sel.updateMatrixWorld(true);
+		      studioCommitSelectionTransform();
+		      refreshEditorAttachment();
+		      const after = studioSnapshotLocalTransform(sel);
+		      if (!studioTransformChanged(before, after)) return;
+		      studioPushCommand({
+		        undo: () => {
+		          studioApplyLocalTransform(sel, before);
+		          studioCommitObjectTransform(sel);
+		        },
+		        redo: () => {
+		          studioApplyLocalTransform(sel, after);
+		          studioCommitObjectTransform(sel);
+		        }
+		      });
+		    };
+
+	    for (const el of [
+	      ui.studioPosX, ui.studioPosY, ui.studioPosZ,
+	      ui.studioRotX, ui.studioRotY, ui.studioRotZ,
+	      ui.studioScaleX, ui.studioScaleY, ui.studioScaleZ
+	    ]) {
+	      el.addEventListener('change', () => {
+	        if (studioIsSyncingInspector) return;
+	        applyInspectorTransform();
+	      });
+	    }
+
+		    ui.studioMaterialSlot.addEventListener('change', () => studioSyncMaterialUi());
+		    const beginMaterialDrag = () => {
+		      if (studioIsSyncingInspector) return;
+		      if (studioState.selectionList.length > 1) return;
+		      const sel = studioState.selection;
+		      if (!sel || !(sel.isMesh || sel.isSkinnedMesh)) return;
+		      const slot = Math.max(0, Math.trunc(toNum(ui.studioMaterialSlot.value, 0)));
+		      const before = studioSnapshotMeshStandardMaterial(sel, slot);
+		      if (!before) return;
+		      studioState.materialDragObject = sel;
+		      studioState.materialDragSlot = slot;
+		      studioState.materialDragBefore = before;
+		    };
+		    const endMaterialDrag = () => {
+		      if (studioIsSyncingInspector) return;
+		      const sel = studioState.materialDragObject;
+		      const slot = studioState.materialDragSlot;
+		      const before = studioState.materialDragBefore;
+		      studioState.materialDragObject = null;
+		      studioState.materialDragBefore = null;
+		      if (!sel || !before) return;
+		      const after = studioSnapshotMeshStandardMaterial(sel, slot);
+		      if (!after) return;
+		      if (!studioStandardMaterialChanged(before, after)) return;
+		      studioPushCommand({
+		        undo: () => {
+		          studioApplyMeshStandardMaterial(sel, slot, before);
+		          studioCommitMaterialOverrideFor(sel, slot);
+		        },
+		        redo: () => {
+		          studioApplyMeshStandardMaterial(sel, slot, after);
+		          studioCommitMaterialOverrideFor(sel, slot);
+		        }
+		      });
+		    };
+		    for (const el of [
+		      ui.studioMaterialColor,
+		      ui.studioMaterialMetalness,
+		      ui.studioMaterialRoughness
+		    ]) {
+		      el.addEventListener('pointerdown', beginMaterialDrag);
+		      el.addEventListener('focus', beginMaterialDrag);
+		      el.addEventListener('change', endMaterialDrag);
+		    }
+		    ui.studioMaterialColor.addEventListener('input', () => {
+		      if (studioIsSyncingInspector) return;
+		      const sel = studioState.selection;
+		      if (!sel || !(sel.isMesh || sel.isSkinnedMesh)) return;
+		      if (!studioState.materialDragBefore || studioState.materialDragObject !== sel) beginMaterialDrag();
+		      const slot = Math.max(0, Math.trunc(toNum(ui.studioMaterialSlot.value, 0)));
+		      const mat = Array.isArray(sel.material) ? sel.material[slot] : (slot === 0 ? sel.material : null);
+		      if (!mat || !mat.isMeshStandardMaterial) return;
+		      mat.color.set(ui.studioMaterialColor.value);
+		      mat.needsUpdate = true;
+		      studioCommitMaterialOverride();
+		      studioSyncMaterialUi();
+		    });
+		    ui.studioMaterialMetalness.addEventListener('input', () => {
+		      if (studioIsSyncingInspector) return;
+		      const sel = studioState.selection;
+		      if (!sel || !(sel.isMesh || sel.isSkinnedMesh)) return;
+		      if (!studioState.materialDragBefore || studioState.materialDragObject !== sel) beginMaterialDrag();
+		      const slot = Math.max(0, Math.trunc(toNum(ui.studioMaterialSlot.value, 0)));
+		      const mat = Array.isArray(sel.material) ? sel.material[slot] : (slot === 0 ? sel.material : null);
+		      if (!mat || !mat.isMeshStandardMaterial) return;
+		      mat.metalness = clamp(toNum(ui.studioMaterialMetalness.value, mat.metalness), 0, 1);
+		      mat.needsUpdate = true;
+		      studioCommitMaterialOverride();
+		      studioSyncMaterialUi();
+		    });
+		    ui.studioMaterialRoughness.addEventListener('input', () => {
+		      if (studioIsSyncingInspector) return;
+		      const sel = studioState.selection;
+		      if (!sel || !(sel.isMesh || sel.isSkinnedMesh)) return;
+		      if (!studioState.materialDragBefore || studioState.materialDragObject !== sel) beginMaterialDrag();
+		      const slot = Math.max(0, Math.trunc(toNum(ui.studioMaterialSlot.value, 0)));
+		      const mat = Array.isArray(sel.material) ? sel.material[slot] : (slot === 0 ? sel.material : null);
+		      if (!mat || !mat.isMeshStandardMaterial) return;
+		      mat.roughness = clamp(toNum(ui.studioMaterialRoughness.value, mat.roughness), 0, 1);
+	      mat.needsUpdate = true;
+	      studioCommitMaterialOverride();
+	      studioSyncMaterialUi();
+	    });
+
+	    ui.studioImportBtn.addEventListener('click', () => void studioImportSelectedFiles());
+	    ui.studioExportBtn.addEventListener('click', () => void studioExportGlb());
+
+	    window.addEventListener('keydown', (e) => {
+	      if (labMode !== 'edit') return;
+	      if (isTypingTarget(e.target)) return;
+
+		      if (activeTab === 'studio') {
+		        const mod = !!(e.ctrlKey || e.metaKey);
+		        if (mod && e.code === 'KeyZ') {
+		          e.preventDefault();
+		          if (e.shiftKey) studioRedo();
+		          else studioUndo();
+		          return;
+		        }
+		        if (mod && e.code === 'KeyY') {
+		          e.preventDefault();
+		          studioRedo();
+		          return;
+		        }
+		        if (mod && e.code === 'KeyD') {
+		          e.preventDefault();
+		          studioDuplicateSelection();
+		          return;
+		        }
+		        if (e.code === 'Delete' || e.code === 'Backspace') {
+		          e.preventDefault();
+		          studioDeleteSelection();
+		          return;
+		        }
+		        if (e.code === 'Escape') {
+		          e.preventDefault();
+		          studioClearSelection();
+		          return;
+		        }
+	        if (e.code === 'KeyQ') {
+	          e.preventDefault();
+	          studioSetToolMode('select');
+	          return;
+	        }
+	        if (e.code === 'KeyW') {
+	          e.preventDefault();
+	          studioSetToolMode('move');
+	          return;
+	        }
+	        if (e.code === 'KeyE') {
+	          e.preventDefault();
+	          studioSetToolMode('rotate');
+	          return;
+	        }
+	        if (e.code === 'KeyR') {
+	          e.preventDefault();
+	          studioSetToolMode('scale');
+	          return;
+	        }
+	        if (e.code === 'KeyX') {
+	          e.preventDefault();
+	          studioToggleLocalSpace();
+	          return;
+	        }
+	        if (e.code === 'KeyG') {
+	          e.preventDefault();
+	          studioToggleSnap();
+	          return;
+	        }
+	        if (e.code === 'KeyF') {
+	          e.preventDefault();
+	          studioFrameSelectionOrModel();
+	          return;
+	        }
+
+		        if (
+		          e.code === 'ArrowLeft' ||
+		          e.code === 'ArrowRight' ||
+		          e.code === 'ArrowUp' ||
+		          e.code === 'ArrowDown' ||
+		          e.code === 'PageUp' ||
+		          e.code === 'PageDown'
+		        ) {
+		          const targets = studioGetTransformTargets();
+		          if (targets.length === 0) return;
+		          e.preventDefault();
+
+		          let step = clamp(toNum(ui.studioToolNudge.value, studioState.nudgeStep), 0, 10);
+		          if (e.shiftKey) step *= 10;
+		          if (step <= 0) return;
+
+		          studioTmpDelta.set(0, 0, 0);
+		          if (e.code === 'ArrowLeft') studioTmpDelta.x = -step;
+		          if (e.code === 'ArrowRight') studioTmpDelta.x = step;
+		          if (e.code === 'ArrowUp') studioTmpDelta.z = -step;
+		          if (e.code === 'ArrowDown') studioTmpDelta.z = step;
+		          if (e.code === 'PageUp') studioTmpDelta.y = step;
+		          if (e.code === 'PageDown') studioTmpDelta.y = -step;
+
+		          const before = targets.map((obj) => ({
+		            object: obj,
+		            ...studioSnapshotLocalTransform(obj)
+		          }));
+
+		          for (const obj of targets) {
+		            if (!obj) continue;
+		            obj.updateMatrixWorld(true);
+		            obj.getWorldPosition(studioTmpWorldPos);
+		            studioTmpWorldPos.add(studioTmpDelta);
+		            if (obj.parent) {
+		              obj.parent.worldToLocal(studioTmpWorldPos);
+		              obj.position.copy(studioTmpWorldPos);
+		            } else {
+		              obj.position.copy(studioTmpWorldPos);
+		            }
+		            obj.updateMatrixWorld(true);
+		          }
+
+		          let wrote = false;
+		          for (const obj of targets) {
+		            if (studioCommitObjectTransform(obj)) wrote = true;
+		          }
+		          if (wrote) updateMetaOutput(currentModelPath, baseMeta);
+		          studioSyncInspector();
+		          refreshEditorAttachment();
+
+		          const after = targets.map((obj) => ({
+		            object: obj,
+		            ...studioSnapshotLocalTransform(obj)
+		          }));
+		          const changed = before.some((b, i) => studioTransformChanged(b, after[i]));
+		          if (!changed) return;
+		          studioPushCommand({
+		            undo: () => {
+		              for (const entry of before) {
+		                if (!entry?.object) continue;
+		                studioApplyLocalTransform(entry.object, entry);
+		                studioCommitObjectTransform(entry.object);
+		              }
+		            },
+		            redo: () => {
+		              for (const entry of after) {
+		                if (!entry?.object) continue;
+		                studioApplyLocalTransform(entry.object, entry);
+		                studioCommitObjectTransform(entry.object);
+		              }
+		            }
+		          });
+		        }
+		        return;
+		      }
+
+	      if (e.code === 'KeyW') {
+	        e.preventDefault();
+	        setEditorOp('translate');
+	        return;
+	      }
       if (e.code === 'KeyE') {
         e.preventDefault();
         setEditorOp('rotate');
@@ -1594,25 +4269,29 @@
 	      }
 	    });
 
-    ui.modelSelect.addEventListener('change', async () => {
-      const modelPath = ui.modelSelect.value || null;
-      currentModelPath = modelPath;
-      baseMeta = {};
-      baseCorrectionRotation = null;
-      baseInnerPosition = null;
-      updateBaseRotUI(null);
-      updateBasePosUI(null);
+	    ui.modelSelect.addEventListener('change', async () => {
+	      const modelPath = ui.modelSelect.value || null;
+	      currentModelPath = modelPath;
+	      baseMeta = {};
+	      studioState.animations = [];
+	      studioLoadOverridesFromMeta(null);
+	      baseCorrectionRotation = null;
+	      baseInnerPosition = null;
+	      updateBaseRotUI(null);
+	      updateBasePosUI(null);
 
       if (!modelPath) return;
       setStatus('Loading meta…', 'warn');
-      const { url, json } = await fetchExistingMeta(modelPath);
-      baseMeta = json || {};
-      setMetaHint(modelPath, url && json ? url : null);
-      applyMetaToUI(baseMeta);
-      updateMetaOutput(modelPath, baseMeta);
-      setStatus('Ready', 'ok');
-      void spawnMonsters();
-    });
+	      const { url, json } = await fetchExistingMeta(modelPath);
+	      baseMeta = json || {};
+	      studioLoadOverridesFromMeta(baseMeta?.studio);
+	      setMetaHint(modelPath, url && json ? url : null);
+	      applyMetaToUI(baseMeta);
+	      updateMetaOutput(modelPath, baseMeta);
+	      studioUpdateTargetPill();
+	      setStatus('Ready', 'ok');
+	      void spawnMonsters();
+	    });
 
     ui.modelFilter.addEventListener('input', async () => {
       const filter = ui.modelFilter.value || '';
@@ -1672,36 +4351,39 @@
       }
     });
 
-    // Main loop
-    let lastMs = performance.now();
-    function frame(nowMs) {
-      const dt = Math.min(0.05, Math.max(0, (nowMs - lastMs) / 1000));
-      lastMs = nowMs;
+	    // Main loop
+	    let lastMs = performance.now();
+	    function frame(nowMs) {
+	      const dt = Math.min(0.05, Math.max(0, (nowMs - lastMs) / 1000));
+	      lastMs = nowMs;
+	      const studioActive = labMode === 'edit' && activeTab === 'studio';
 
-      ui.lockState.textContent = input.isPointerLocked() ? 'Mouse: locked' : 'Mouse: unlocked';
+	      ui.lockState.textContent = input.isPointerLocked() ? 'Mouse: locked' : 'Mouse: unlocked';
 
-      if (labMode === 'play') {
-        // Player only updates while pointer-locked (by design)
-        player.update(dt, false, null);
-        gun.update(dt, null, false);
-      } else {
-        orbitControls?.update?.();
-      }
-      projectileManager.update(dt);
+	      if (labMode === 'play') {
+	        // Player only updates while pointer-locked (by design)
+	        player.update(dt, false, null);
+	        gun.update(dt, null, false);
+	      } else {
+	        orbitControls?.update?.();
+	      }
+	      projectileManager.update(dt);
 
-      if (aiEnabled) {
-        const playerPos = player.getPosition();
-        monsterManager.update(dt, playerPos);
-      }
+	      if (studioActive) {
+	        studioUpdate(dt);
+	      } else if (aiEnabled) {
+	        const playerPos = player.getPosition();
+	        monsterManager.update(dt, playerPos);
+	      }
 
-      sceneManager.update(dt);
-      sceneManager.render();
+	      sceneManager.update(dt);
+	      sceneManager.render();
 
-      if (labMode === 'edit' && ui.autoRotate?.checked) {
-        const speed = clamp(toNum(ui.autoRotateSpeed?.value, 45), 0, 720);
-        const cur = toNum(ui.previewYaw?.value, 0);
-        const next = (cur + speed * dt) % 360;
-        ui.previewYaw.value = String(next);
+	      if (labMode === 'edit' && activeTab === 'model' && ui.autoRotate?.checked) {
+	        const speed = clamp(toNum(ui.autoRotateSpeed?.value, 45), 0, 720);
+	        const cur = toNum(ui.previewYaw?.value, 0);
+	        const next = (cur + speed * dt) % 360;
+	        ui.previewYaw.value = String(next);
         applyPreviewYaw();
       }
 
@@ -1711,24 +4393,29 @@
       const total = monsters.length;
       const proj = projectileManager?.projectiles?.length || 0;
       const impacts = projectileManager?.impacts?.length || 0;
-      const explosions = projectileManager?.explosions?.length || 0;
-      const hp = gameState?.currentHealth ?? 0;
+	      const explosions = projectileManager?.explosions?.length || 0;
+	      const hp = gameState?.currentHealth ?? 0;
 
-      ui.hud.textContent =
-        `Pointer lock: ${input.isPointerLocked() ? 'ON' : 'OFF'}\n` +
-        `Mode: ${labMode === 'edit' ? 'Edit (Orbit + Gizmo)' : 'Play (First-person)'}\n` +
-        `Health: ${hp}\n` +
-        `Monsters: ${alive}/${total}\n` +
-        `Projectiles: ${proj} | Impacts: ${impacts} | Explosions: ${explosions}\n` +
-        `AI: ${aiEnabled ? 'ON' : 'OFF'}\n` +
-        (
-          labMode === 'edit'
-            ? `Editor: ${editorOp} (${editorSpace}) | W/E/Q/F + Arrow keys + PgUp/PgDn`
-            : `Controls: click "Lock Mouse" → WASD move, Mouse look, LMB fire, ESC unlock`
-        );
+	      ui.hud.textContent =
+	        `Pointer lock: ${input.isPointerLocked() ? 'ON' : 'OFF'}\n` +
+	        `Mode: ${labMode === 'edit' ? 'Edit (Orbit + Gizmo)' : 'Play (First-person)'}\n` +
+	        `Tab: ${activeTab}\n` +
+	        `Health: ${hp}\n` +
+	        `Monsters: ${alive}/${total}\n` +
+	        `Projectiles: ${proj} | Impacts: ${impacts} | Explosions: ${explosions}\n` +
+	        `AI: ${aiEnabled ? 'ON' : 'OFF'}\n` +
+	        (
+	          labMode === 'edit'
+	            ? (
+	                activeTab === 'studio'
+	                  ? `Studio: ${studioState.toolMode} (${studioState.localSpace ? 'local' : 'world'}) | Q/W/E/R + X/G/F + Arrows`
+	                  : `Editor: ${editorOp} (${editorSpace}) | W/E/Q/F + Arrow keys + PgUp/PgDn`
+	              )
+	            : `Controls: click "Lock Mouse" → WASD move, Mouse look, LMB fire, ESC unlock`
+	        );
 
-      requestAnimationFrame(frame);
-    }
+	      requestAnimationFrame(frame);
+	    }
 
     requestAnimationFrame(frame);
   </script>

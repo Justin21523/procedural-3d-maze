@@ -9,6 +9,7 @@ import { EVENTS } from './events.js';
 import { updateLighting } from '../rendering/lighting.js';
 import { VisualEffects } from '../rendering/visualEffects.js';
 import { SystemRegistry } from './systemRegistry.js';
+import { PlayerToolAISystem } from './playerToolAISystem.js';
 
 export class GameLoop {
   /**
@@ -22,7 +23,7 @@ export class GameLoop {
    * @param {GameState} gameState - Game state manager (optional)
    * @param {ExitPoint} exitPoint - Exit point (optional)
    */
-  constructor(sceneManager, player, minimap = null, monsterManager = null, lights = null, worldState = null, gameState = null, exitPoint = null, missionPoints = [], autopilot = null, projectileManager = null, gun = null, spawnDirector = null, uiManager = null, interactableSystem = null, missionDirector = null) {
+  constructor(sceneManager, player, minimap = null, monsterManager = null, lights = null, worldState = null, gameState = null, exitPoint = null, missionPoints = [], autopilot = null, projectileManager = null, gun = null, spawnDirector = null, toolSystem = null, uiManager = null, interactableSystem = null, missionDirector = null) {
     this.sceneManager = sceneManager;
     this.player = player;
     this.minimap = minimap;
@@ -31,9 +32,19 @@ export class GameLoop {
     this.projectileManager = projectileManager;
     this.gun = gun;
     this.spawnDirector = spawnDirector;
+    this.toolSystem = toolSystem;
     this.uiManager = uiManager;
     this.interactableSystem = interactableSystem;
     this.missionDirector = missionDirector;
+    this.worldMarkerSystem = null;
+    this.playerToolAISystem = new PlayerToolAISystem({
+      player,
+      toolSystem,
+      monsterManager,
+      worldState,
+      gameState,
+      missionDirector
+    });
 
     this.worldState = worldState;
     this.gameState = gameState;
@@ -248,6 +259,19 @@ export class GameLoop {
       this.gun?.update?.(dt, ctx?.externalCommand || null, !!ctx?.autopilotActive);
     }, { order: 30 });
 
+    systems.add('playerToolAI', (dt, ctx) => {
+      if (this.gameState?.gameOver) return;
+      this.playerToolAISystem?.setRefs?.({
+        player: this.player,
+        toolSystem: this.toolSystem,
+        monsterManager: this.monsterManager,
+        worldState: this.worldState,
+        gameState: this.gameState,
+        missionDirector: this.missionDirector
+      });
+      this.playerToolAISystem?.update?.(dt, ctx);
+    }, { order: 35 });
+
     systems.add('projectiles', (dt) => {
       if (this.gameState?.gameOver) return;
       this.projectileManager?.update?.(dt);
@@ -257,6 +281,16 @@ export class GameLoop {
       if (this.gameState?.gameOver) return;
       this.spawnDirector?.update?.(dt);
     }, { order: 50 });
+
+    systems.add('tools', (dt) => {
+      if (this.gameState?.gameOver) return;
+      this.toolSystem?.update?.(dt);
+    }, { order: 55 });
+
+    systems.add('worldMarkers', (dt, ctx) => {
+      if (this.gameState?.gameOver) return;
+      this.worldMarkerSystem?.update?.(dt, ctx);
+    }, { order: 57 });
 
     systems.add('monsters', (dt, ctx) => {
       if (this.gameState?.gameOver) return;
@@ -270,7 +304,11 @@ export class GameLoop {
       if (!this.player?.getPosition) return;
 
       let playerPos = this.player.getPosition();
-      this.separatePlayerFromMonsters(playerPos);
+      // If the player is intentionally idle (silent), do not let monsters "push" the player around.
+      // Monster movement should resolve around the player instead.
+      if (ctx?.autopilotActive || ctx?.hasPlayerMove) {
+        this.separatePlayerFromMonsters(playerPos, dt);
+      }
       playerPos = this.player.getPosition();
       this.separatePlayerFromWalls(playerPos);
       ctx.playerPos = this.player.getPosition();
@@ -427,13 +465,32 @@ export class GameLoop {
 
     // Render minimap if available
     if (this.minimap) {
+      const dt = this.frameContext?.dt ?? 0;
+      this.minimapAccumulator = (this.minimapAccumulator || 0) + Math.max(0, dt);
+      const interval = Math.max(0, this.minimapInterval ?? 0);
+      if (interval > 0 && this.minimapAccumulator < interval) {
+        return;
+      }
+      if (interval > 0) {
+        // Keep leftover time to reduce drift on low FPS.
+        this.minimapAccumulator = this.minimapAccumulator % interval;
+      }
       const playerGridPos = this.player.getGridPosition();
       const monsterPositions = this.monsterManager ? this.monsterManager.getMonsterPositions() : [];
       const exitPosition = this.exitPoint ? this.exitPoint.getGridPosition() : null;
       const missionPositions = this.missionDirector?.getAutopilotTargets
         ? this.missionDirector.getAutopilotTargets().map(t => t.gridPos)
         : [];
-      this.minimap.render(playerGridPos, monsterPositions, exitPosition, missionPositions);
+      const pickupPositions = this.spawnDirector?.pickupManager?.getPickupMarkers
+        ? this.spawnDirector.pickupManager.getPickupMarkers()
+        : [];
+      const devicePositions = this.toolSystem?.getDeviceMarkers
+        ? this.toolSystem.getDeviceMarkers()
+        : [];
+      this.minimap.render(playerGridPos, monsterPositions, exitPosition, missionPositions, {
+        pickupPositions,
+        devicePositions,
+      });
     }
   }
 
@@ -519,51 +576,98 @@ export class GameLoop {
   /**
    * Continuously push player away from overlapping monsters to avoid sticking
    */
-  separatePlayerFromMonsters(playerPos) {
+  separatePlayerFromMonsters(playerPos, dt = 1 / (CONFIG.TARGET_FPS || 60)) {
     if (!this.monsterManager || !this.player) return;
+    if (typeof this.player?.isHidden === 'function' && this.player.isHidden()) return;
     const monsters = this.monsterManager.getMonsters ? this.monsterManager.getMonsters() : [];
-    const minDist = (CONFIG.TILE_SIZE || 1) * 0.6;
+    if (!monsters || monsters.length === 0) return;
 
-    for (const m of monsters) {
-      const mPos = m.getWorldPosition ? m.getWorldPosition() : null;
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    // Only separate if actually overlapping; monsters already treat the player as a solid obstacle.
+    const playerRadius = CONFIG.PLAYER_RADIUS ?? 0.35;
+    const monsterRadius = (CONFIG.PLAYER_RADIUS ?? 0.35) * 0.9;
+    const minDist = Math.max(0.01, playerRadius + monsterRadius + 0.05);
+    const px = playerPos.x;
+    const pz = playerPos.z;
+
+    // Accumulate overlaps into a single push vector to avoid oscillation from sequential teleports.
+    let pushX = 0;
+    let pushZ = 0;
+    let hits = 0;
+
+    for (let i = 0; i < monsters.length; i++) {
+      const monster = monsters[i];
+      const mPos = monster?.getWorldPosition ? monster.getWorldPosition() : null;
       if (!mPos) continue;
 
-      const delta = new THREE.Vector3().subVectors(playerPos, mPos).setY(0);
-      const dist = delta.length();
-      if (dist <= 0.0001 || dist >= minDist) continue;
+      const dx = px - mPos.x;
+      const dz = pz - mPos.z;
+      const dist = Math.hypot(dx, dz);
+      if (!Number.isFinite(dist) || dist >= minDist) continue;
 
-      const pushDir = delta.normalize();
-      const pushMag = (minDist - dist) * 0.6; // soften push
-      const pushVec = pushDir.clone().multiplyScalar(pushMag);
-      let targetPos = playerPos.clone().add(pushVec);
-
-      const canMoveTo = (x, z) => {
-        if (typeof this.player?.canMoveTo === 'function') return this.player.canMoveTo(x, z);
-        if (this.worldState && this.worldState.isWalkable) {
-          const gx = Math.floor(x / (CONFIG.TILE_SIZE || 1));
-          const gy = Math.floor(z / (CONFIG.TILE_SIZE || 1));
-          return this.worldState.isWalkable(gx, gy);
-        }
-        return true;
-      };
-
-      if (!canMoveTo(targetPos.x, targetPos.z)) {
-        // Try axis-only pushes to avoid corner tunneling.
-        const posX = playerPos.clone().add(new THREE.Vector3(pushVec.x, 0, 0));
-        const posZ = playerPos.clone().add(new THREE.Vector3(0, 0, pushVec.z));
-        if (canMoveTo(posX.x, posX.z)) {
-          targetPos = posX;
-        } else if (canMoveTo(posZ.x, posZ.z)) {
-          targetPos = posZ;
-        } else {
-          continue;
-        }
+      if (dist <= 0.0001) {
+        // Rare degenerate overlap: nudge in a stable direction based on index.
+        const angle = (i * 2.399963229728653) % (Math.PI * 2);
+        pushX += Math.cos(angle) * minDist;
+        pushZ += Math.sin(angle) * minDist;
+        hits++;
+        continue;
       }
 
-      this.player.setPosition(targetPos.x, targetPos.y, targetPos.z);
-      // Update playerPos reference for subsequent monsters in the same frame
-      playerPos = this.player.getPosition();
+      const overlap = minDist - dist;
+      const inv = 1 / dist;
+      pushX += dx * inv * overlap;
+      pushZ += dz * inv * overlap;
+      hits++;
     }
+
+    if (hits <= 0) return;
+
+    // Soften and clamp the push to avoid visible "jump tiles" on narrow corridors.
+    const soften = 0.55;
+    pushX *= soften;
+    pushZ *= soften;
+
+    const mag = Math.hypot(pushX, pushZ);
+    if (!Number.isFinite(mag) || mag <= 1e-8) return;
+
+    const baseFrame = 1 / (CONFIG.TARGET_FPS || 60);
+    const dtScale = Math.max(0.5, Math.min(2.0, dt / baseFrame));
+    const maxPush = tileSize * 0.14 * dtScale;
+    if (mag > maxPush) {
+      pushX = (pushX / mag) * maxPush;
+      pushZ = (pushZ / mag) * maxPush;
+    }
+
+    if (typeof this.player.applyDisplacement === 'function') {
+      this.player.applyDisplacement(pushX, pushZ, { separateFromWalls: false });
+      return;
+    }
+
+    // Fallback: best-effort nudge without triggering large relocation.
+    const canMoveTo = (x, z) => {
+      if (typeof this.player?.canMoveTo === 'function') return this.player.canMoveTo(x, z);
+      if (this.worldState && this.worldState.isWalkable) {
+        const gx = Math.floor(x / tileSize);
+        const gy = Math.floor(z / tileSize);
+        return this.worldState.isWalkable(gx, gy);
+      }
+      return true;
+    };
+
+    let tx = px + pushX;
+    let tz = pz + pushZ;
+    if (!canMoveTo(tx, tz)) {
+      if (canMoveTo(px + pushX, pz)) {
+        tz = pz;
+      } else if (canMoveTo(px, pz + pushZ)) {
+        tx = px;
+      } else {
+        return;
+      }
+    }
+
+    this.player.setPosition(tx, playerPos.y, tz);
   }
 
   /**

@@ -20,6 +20,22 @@ function getVisionRange(brain) {
   return Number.isFinite(v) ? v : null;
 }
 
+function getVisionFov(brain) {
+  const f =
+    (Number.isFinite(brain?.visionFOV) ? brain.visionFOV : null) ??
+    (Number.isFinite(brain?.config?.visionFOV) ? brain.config.visionFOV : null) ??
+    (Number.isFinite(brain?.monster?.visionFOV) ? brain.monster.visionFOV : null) ??
+    (Number.isFinite(brain?.monster?.typeConfig?.stats?.visionFOV) ? brain.monster.typeConfig.stats.visionFOV : null);
+  return Number.isFinite(f) ? f : null;
+}
+
+function getMonsterYaw(brain) {
+  const fromGetter = brain?.monster?.getYaw?.();
+  if (Number.isFinite(fromGetter)) return fromGetter;
+  const fromField = brain?.monster?.yaw;
+  return Number.isFinite(fromField) ? fromField : null;
+}
+
 function normalizeModules(modules) {
   if (!modules) return null;
   if (Array.isArray(modules)) {
@@ -109,7 +125,11 @@ export function applyBrainModules(brain, options = {}) {
       const playerGrid = brain.getPlayerGridPosition?.() || null;
 
       const visionRange = getVisionRange(brain);
-      const canSee = playerGrid ? canSeePlayer(worldState, monsterGrid, playerGrid, visionRange) : false;
+      const visionFOV = getVisionFov(brain);
+      const yaw = getMonsterYaw(brain);
+      const canSee = playerGrid
+        ? canSeePlayer(worldState, monsterGrid, playerGrid, visionRange, { monsterYaw: yaw, visionFOV, monster: brain.monster })
+        : false;
 
       if (brain.__squadCoordination?.getDirective) {
         const directive = brain.__squadCoordination.getDirective({

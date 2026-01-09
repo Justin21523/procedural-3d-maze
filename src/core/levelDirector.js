@@ -413,7 +413,7 @@ export class LevelDirector {
     this.recipes = Array.isArray(recipes)
       ? recipes.map((r, idx) => normalizeLevelRecipe(r, idx)).filter(Boolean)
       : [];
-    this.generated = [];
+    this.generated = new Map(); // levelIndex -> config (avoid huge sparse arrays for endless mode)
     this.lastDifficulty = 1;
   }
 
@@ -476,7 +476,7 @@ export class LevelDirector {
     const base = Math.max(this.lastDifficulty + 0.05, 1 + index * 0.15); // monotonic climb
     const perf = this.scorePerformance(stats, outcome);
     const adjustment = (perf - 0.55) * 0.9;
-    const diff = clamp(base + adjustment, 0.8, 15);
+    const diff = Math.max(0.8, base + adjustment);
     this.lastDifficulty = Math.max(this.lastDifficulty, diff);
     return diff;
   }
@@ -491,16 +491,14 @@ export class LevelDirector {
       return tuned;
     }
 
-    const dynamic = this.generated[index - this.baseLevels.length];
-    if (dynamic) {
-      return dynamic;
-    }
+    const cached = this.generated.get(index);
+    if (cached) return cached;
 
     const difficulty = this.difficultyForLevel(index, stats, outcome);
     const config = this.recipes.length > 0
       ? this.buildRecipeConfig(index, difficulty)
       : this.buildDynamicConfig(index, difficulty);
-    this.generated[index - this.baseLevels.length] = config;
+    this.generated.set(index, config);
     return config;
   }
 
@@ -612,6 +610,17 @@ export class LevelDirector {
       exit: { requires: exitRequires }
     };
 
+    if (!isPlainObject(level.pickups)) level.pickups = {};
+    if (!isPlainObject(level.pickups.tools)) {
+      const weights = { lure: 0.35, trap: 0.25, jammer: 0.15, decoy: 0.1, smoke: 0.08, flash: 0.06, sensor: 0.06, mine: 0.05 };
+      const chance = clamp(0.06 + difficulty * 0.002, 0.04, 0.12);
+      level.pickups.tools = {
+        maxDevices: 6,
+        start: { lure: 1, trap: 1, jammer: 1, decoy: 1, smoke: 1, flash: 1, sensor: 1, mine: 1 },
+        drop: { enabled: true, chance, ttl: 45, weights }
+      };
+    }
+
     return normalizeLevelConfig(level, index);
   }
 
@@ -635,8 +644,8 @@ export class LevelDirector {
     const baseHeight = CONFIG.MAZE_HEIGHT || 31;
     const jitter = () => (Math.random() * 3 - 1.5);
 
-    const width = ensureOdd(baseWidth + difficulty * 3 + jitter());
-    const height = ensureOdd(baseHeight + difficulty * 2.5 + jitter());
+    const width = clamp(ensureOdd(baseWidth + difficulty * 3 + jitter()), 11, 201);
+    const height = clamp(ensureOdd(baseHeight + difficulty * 2.5 + jitter()), 11, 201);
 
     const roomDensity = clamp(3.5 + difficulty * 0.45, 3, 12);
     const extraConnectionChance = clamp(0.18 + difficulty * 0.02, 0.18, 0.48);
@@ -648,7 +657,7 @@ export class LevelDirector {
     const speedMultiplier = clamp(1 + difficulty * 0.05, 1, 1.8);
     const visionMultiplier = clamp(1 + difficulty * 0.04, 1, 2);
 
-    const missions = 3 + Math.floor(difficulty * 0.4);
+    const missions = clamp(3 + Math.floor(difficulty * 0.4), 3, 12);
     const required = clamp(missions - 1, 2, missions);
 
     const typeWeights = {
@@ -761,6 +770,10 @@ export class LevelDirector {
 
     const timeLimitSec = difficulty >= 6 ? clamp(480 - difficulty * 12, 240, 520) : 0;
 
+    const pickupMaxActive = clamp(Math.round(18 + difficulty * 0.6), 18, 30);
+    const toolDropChance = clamp(0.06 + difficulty * 0.002, 0.04, 0.12);
+    const toolWeights = { lure: 0.35, trap: 0.25, jammer: 0.15, decoy: 0.1, smoke: 0.08, flash: 0.06, sensor: 0.06, mine: 0.05 };
+
     return {
       id: index + 1,
       name: `Endless-${index + 1}`,
@@ -777,6 +790,14 @@ export class LevelDirector {
         deadEndPasses: 3
       },
       rooms: { typeWeights },
+      pickups: {
+        maxActive: pickupMaxActive,
+        tools: {
+          maxDevices: 6,
+          start: { lure: 1, trap: 1, jammer: 1, decoy: 1, smoke: 1, flash: 1, sensor: 1, mine: 1 },
+          drop: { enabled: true, chance: toolDropChance, ttl: 45, weights: toolWeights }
+        }
+      },
       monsters: {
         count: monsterCount,
         speedMultiplier,
@@ -807,6 +828,6 @@ export class LevelDirector {
    * For UI: how many levels can we jump to (soft cap).
    */
   getMaxJump() {
-    return Math.max(200, this.baseLevels.length);
+    return null;
   }
 }

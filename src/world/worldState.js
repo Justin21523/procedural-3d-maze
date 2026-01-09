@@ -22,6 +22,7 @@ export class WorldState {
     this.spawnPoint = null;
     this.monsterSpawns = [];
     this.missionPoints = [];
+    this.smokeClouds = [];
   }
 
   /**
@@ -29,6 +30,7 @@ export class WorldState {
    * Uses DFS-based maze generation algorithm
    */
   initialize(levelConfig = null) {
+    this.smokeClouds = [];
     // Generate maze using DFS algorithm
     const mazeCfg = levelConfig?.maze || {};
     const width = mazeCfg.width ?? CONFIG.MAZE_WIDTH;
@@ -211,6 +213,10 @@ export class WorldState {
    */
   getRooms() {
     return Array.isArray(this.rooms) ? this.rooms : [];
+  }
+
+  getSmokeClouds() {
+    return Array.isArray(this.smokeClouds) ? this.smokeClouds : [];
   }
 
   /**

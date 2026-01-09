@@ -17,6 +17,12 @@ export class Minimap {
     this.worldState = worldState;
     this.zoom = 1.1;
     this.showObstacles = false;
+    this.baseCanvas = null;
+    this.baseCtx = null;
+    this.baseKey = '';
+    this._lastGridRef = null;
+    this._lastRoomMapRef = null;
+    this._lastObstacleMapRef = null;
 
     // Colors
     this.colors = {
@@ -26,6 +32,17 @@ export class Minimap {
       monster: '#ff1493',
       exit: '#00ff00',  // Bright green for exit
       mission: '#ffa726', // 任務點顏色（橙色）
+      pickupAmmo: '#66aaff',
+      pickupHealth: '#66ff99',
+      pickupLure: '#ff7043',
+      pickupTrap: '#42a5f5',
+      pickupJammer: '#ba68c8',
+      pickupDecoy: '#ff5252',
+      pickupSmoke: '#b0bec5',
+      pickupFlash: '#fff59d',
+      pickupSensor: '#4dd0e1',
+      pickupMine: '#ff1744',
+      device: '#ffffff',
       background: '#000000',
     };
 
@@ -49,22 +66,31 @@ export class Minimap {
     this.updateScale();
   }
 
+  invalidateBase() {
+    this.baseKey = '';
+  }
+
   /**
    * Toggle obstacleMap overlay rendering.
    * @param {boolean} enabled
    */
   setShowObstacles(enabled) {
     this.showObstacles = !!enabled;
+    this.invalidateBase();
   }
 
   /**
    * Resize canvas and recalc scale.
-   * @param {number} size
+   * @param {number} width
+   * @param {number} height
    */
-  resize(size) {
-    this.canvas.width = size;
-    this.canvas.height = size;
+  resize(width, height = width) {
+    const w = Math.max(1, Math.round(Number(width) || 0));
+    const h = Math.max(1, Math.round(Number(height) || 0));
+    this.canvas.width = w;
+    this.canvas.height = h;
     this.updateScale();
+    this.invalidateBase();
   }
 
   /**
@@ -86,16 +112,93 @@ export class Minimap {
     const width = grid[0].length;
     const height = grid.length;
 
-    // Calculate pixel size for each tile
-    const base = Math.min(
-      this.canvas.width / width,
-      this.canvas.height / height
-    );
-    this.tileSize = Math.max(1, Math.floor(base * this.zoom));
+    // Always fit the entire maze in the minimap canvas.
+    // Zoom is handled as marker scaling so we never crop the full map thumbnail.
+    const base = Math.min(this.canvas.width / width, this.canvas.height / height);
+    if (!Number.isFinite(base) || base <= 0) return;
+    this.tileSize = base;
 
     // Calculate offsets to center the maze
     this.offsetX = (this.canvas.width - width * this.tileSize) / 2;
     this.offsetY = (this.canvas.height - height * this.tileSize) / 2;
+  }
+
+  ensureBase(grid, roomMap) {
+    if (!grid || !this.canvas) return;
+
+    const gridW = grid[0]?.length || 0;
+    const gridH = grid.length || 0;
+    if (gridW <= 0 || gridH <= 0) return;
+
+    if (!this.baseCanvas) {
+      this.baseCanvas = document.createElement('canvas');
+      this.baseCtx = this.baseCanvas.getContext('2d');
+    }
+    if (!this.baseCtx || !this.baseCanvas) return;
+
+    const obstacleMap = this.worldState?.obstacleMap || null;
+    const key = `${gridW}x${gridH}:${this.canvas.width}x${this.canvas.height}:obs${this.showObstacles ? 1 : 0}:rm${roomMap ? 1 : 0}`;
+
+    const needsRebuild =
+      key !== this.baseKey ||
+      this._lastGridRef !== grid ||
+      this._lastRoomMapRef !== roomMap ||
+      this._lastObstacleMapRef !== obstacleMap ||
+      this.baseCanvas.width !== this.canvas.width ||
+      this.baseCanvas.height !== this.canvas.height;
+
+    if (!needsRebuild) return;
+
+    this.baseKey = key;
+    this._lastGridRef = grid;
+    this._lastRoomMapRef = roomMap;
+    this._lastObstacleMapRef = obstacleMap;
+
+    this.baseCanvas.width = this.canvas.width;
+    this.baseCanvas.height = this.canvas.height;
+
+    const ctx = this.baseCtx;
+    ctx.fillStyle = this.colors.background;
+    ctx.fillRect(0, 0, this.baseCanvas.width, this.baseCanvas.height);
+
+    for (let y = 0; y < gridH; y++) {
+      for (let x = 0; x < gridW; x++) {
+        const px = this.offsetX + x * this.tileSize;
+        const py = this.offsetY + y * this.tileSize;
+
+        if (grid[y][x] === TILE_TYPES.WALL) {
+          ctx.fillStyle = this.colors.wall;
+        } else if (roomMap && roomMap[y] && roomMap[y][x] !== undefined) {
+          const roomType = roomMap[y][x];
+          ctx.fillStyle = this.roomColors[roomType] || this.colors.floor;
+        } else {
+          ctx.fillStyle = this.colors.floor;
+        }
+
+        ctx.fillRect(px, py, this.tileSize, this.tileSize);
+
+        if (this.showObstacles && obstacleMap?.[y]?.[x] && grid[y][x] !== TILE_TYPES.WALL) {
+          ctx.fillStyle = 'rgba(255, 0, 0, 0.32)';
+          ctx.fillRect(px, py, this.tileSize, this.tileSize);
+
+          if (this.tileSize >= 8) {
+            ctx.strokeStyle = 'rgba(255, 0, 0, 0.55)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(px + 1, py + 1);
+            ctx.lineTo(px + this.tileSize - 1, py + this.tileSize - 1);
+            ctx.moveTo(px + this.tileSize - 1, py + 1);
+            ctx.lineTo(px + 1, py + this.tileSize - 1);
+            ctx.stroke();
+          }
+        }
+
+        if (this.tileSize > 4) {
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+          ctx.strokeRect(px, py, this.tileSize, this.tileSize);
+        }
+      }
+    }
   }
 
   /**
@@ -103,8 +206,11 @@ export class Minimap {
    * @param {Array} monsters - Array of monster positions (optional)
    * @param {Object} exitPosition - Exit grid position {x, y} (optional)
    * @param {Array} missionPositions - Array of mission grid positions (optional)
+   * @param {Object} options
+   * @param {Array} options.pickupPositions - Array of pickup grid positions (optional)
+   * @param {Array} options.devicePositions - Array of deployed device grid positions (optional)
    */
-  render(playerPosition, monsters = [], exitPosition = null, missionPositions = []) {
+  render(playerPosition, monsters = [], exitPosition = null, missionPositions = [], options = {}) {
     // Recompute scale each draw to reflect any size/zoom changes
     this.updateScale();
 
@@ -153,71 +259,26 @@ export class Minimap {
       this.hasRendered = true;
     }
 
-    // Clear canvas
-    ctx.fillStyle = this.colors.background;
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-    // Draw grid
-    const obstacleMap = this.worldState?.obstacleMap || null;
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const px = this.offsetX + x * this.tileSize;
-        const py = this.offsetY + y * this.tileSize;
-
-        // Draw tile
-        if (grid[y][x] === TILE_TYPES.WALL) {
-          ctx.fillStyle = this.colors.wall;
-        } else {
-          // Use room color if available
-          if (roomMap && roomMap[y] && roomMap[y][x] !== undefined) {
-            const roomType = roomMap[y][x];
-            const color = this.roomColors[roomType];
-            if (color) {
-              ctx.fillStyle = color;
-            } else {
-              console.warn(`No color for room type ${roomType} at (${x},${y})`);
-              ctx.fillStyle = this.colors.floor;
-            }
-          } else {
-            // No room map - use default floor color
-            ctx.fillStyle = this.colors.floor;
-          }
-        }
-
-        ctx.fillRect(px, py, this.tileSize, this.tileSize);
-
-        // Optional obstacleMap overlay (tiles blocked by environment/props)
-        if (this.showObstacles && obstacleMap?.[y]?.[x] && grid[y][x] !== TILE_TYPES.WALL) {
-          ctx.fillStyle = 'rgba(255, 0, 0, 0.32)';
-          ctx.fillRect(px, py, this.tileSize, this.tileSize);
-
-          if (this.tileSize >= 8) {
-            ctx.strokeStyle = 'rgba(255, 0, 0, 0.55)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(px + 1, py + 1);
-            ctx.lineTo(px + this.tileSize - 1, py + this.tileSize - 1);
-            ctx.moveTo(px + this.tileSize - 1, py + 1);
-            ctx.lineTo(px + 1, py + this.tileSize - 1);
-            ctx.stroke();
-          }
-        }
-
-        // Draw grid lines (optional, for better visibility)
-        if (this.tileSize > 4) {
-          ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
-          ctx.strokeRect(px, py, this.tileSize, this.tileSize);
-        }
-      }
+    this.ensureBase(grid, roomMap);
+    if (this.baseCanvas) {
+      ctx.drawImage(this.baseCanvas, 0, 0);
+    } else {
+      ctx.fillStyle = this.colors.background;
+      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
 
-    const unit = this.tileSize;
-    const playerRadius = Math.max(3, Math.min(unit * 0.4, 7));
-    const playerIndicator = Math.max(3, Math.min(unit * 0.5, 10));
-    const monsterRadius = Math.max(3, Math.min(unit * 0.35, 6));
-    const missionRadius = Math.max(2, Math.min(unit * 0.25, 5));
-    const exitOuterRadius = Math.max(5, Math.min(unit * 0.5, 10));
-    const exitInnerRadius = Math.max(3, Math.min(exitOuterRadius * 0.5, 6));
+    const clampPx = (v, minPx, maxPx) => Math.max(minPx, Math.min(maxPx, v));
+    const unit = Number(this.tileSize) || 1;
+    const markerScale = clampPx(Number(this.zoom) || 1, 0.75, 3.0);
+
+    const playerRadius = clampPx(unit * 0.42 * markerScale, 1.2, 7);
+    const playerIndicator = clampPx(unit * 0.55 * markerScale, 1.8, 10);
+    const monsterRadius = clampPx(unit * 0.38 * markerScale, 1.2, 6.5);
+    const missionRadius = clampPx(unit * 0.28 * markerScale, 1.0, 5);
+    const pickupRadius = clampPx(unit * 0.25 * markerScale, 0.9, 4);
+    const deviceRadius = clampPx(unit * 0.3 * markerScale, 1.1, 6);
+    const exitOuterRadius = clampPx(unit * 0.55 * markerScale, 2.0, 10);
+    const exitInnerRadius = clampPx(exitOuterRadius * 0.5, 1.1, 6);
 
     // Draw monsters
     if (!this.monstersLoggedOnce && monsters.length > 0) {
@@ -244,7 +305,7 @@ export class Minimap {
 
         // Add white border for better visibility
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = clampPx(monsterRadius * 0.35, 0.75, 2);
         ctx.stroke();
       }
     });
@@ -284,7 +345,7 @@ export class Minimap {
       // Draw star shape
       ctx.fillStyle = this.colors.exit;
       ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = clampPx(exitOuterRadius * 0.22, 0.8, 2);
       ctx.beginPath();
       const starPoints = 5;
       const outerRadius = exitOuterRadius;
@@ -329,7 +390,73 @@ export class Minimap {
 
         // 白色邊框讓顏色更明顯
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1;
+        ctx.lineWidth = clampPx(missionRadius * 0.35, 0.6, 1.2);
+        ctx.stroke();
+      });
+    }
+
+    const pickupPositions = Array.isArray(options?.pickupPositions) ? options.pickupPositions : [];
+    if (pickupPositions.length > 0) {
+      const colorForPickup = (kind) => {
+        const k = String(kind || '').toLowerCase();
+        if (k === 'health') return this.colors.pickupHealth;
+        if (k === 'ammo') return this.colors.pickupAmmo;
+        if (k === 'lure') return this.colors.pickupLure;
+        if (k === 'trap') return this.colors.pickupTrap;
+        if (k === 'jammer') return this.colors.pickupJammer;
+        if (k === 'decoy') return this.colors.pickupDecoy;
+        if (k === 'smoke') return this.colors.pickupSmoke;
+        if (k === 'flash') return this.colors.pickupFlash;
+        if (k === 'sensor') return this.colors.pickupSensor;
+        if (k === 'mine') return this.colors.pickupMine;
+        return '#ffffff';
+      };
+
+      pickupPositions.forEach(p => {
+        if (!p || p.x === undefined || p.y === undefined) return;
+        const px = this.offsetX + p.x * this.tileSize;
+        const py = this.offsetY + p.y * this.tileSize;
+        const cx = px + this.tileSize / 2;
+        const cy = py + this.tileSize / 2;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = colorForPickup(p.kind);
+        ctx.fillRect(-pickupRadius, -pickupRadius, pickupRadius * 2, pickupRadius * 2);
+        ctx.restore();
+      });
+    }
+
+    const devicePositions = Array.isArray(options?.devicePositions) ? options.devicePositions : [];
+    if (devicePositions.length > 0) {
+      const colorForDevice = (kind) => {
+        const k = String(kind || '').toLowerCase();
+        if (k === 'lure') return this.colors.pickupLure;
+        if (k === 'trap') return this.colors.pickupTrap;
+        if (k === 'jammer') return this.colors.pickupJammer;
+        if (k === 'sensor') return this.colors.pickupSensor;
+        if (k === 'mine') return this.colors.pickupMine;
+        return this.colors.device;
+      };
+
+      devicePositions.forEach(d => {
+        if (!d || d.x === undefined || d.y === undefined) return;
+        const px = this.offsetX + d.x * this.tileSize;
+        const py = this.offsetY + d.y * this.tileSize;
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = clampPx(deviceRadius * 0.35, 0.75, 2);
+        ctx.fillStyle = colorForDevice(d.kind);
+        ctx.beginPath();
+        ctx.arc(
+          px + this.tileSize / 2,
+          py + this.tileSize / 2,
+          deviceRadius,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
         ctx.stroke();
       });
     }
@@ -353,7 +480,7 @@ export class Minimap {
 
       // Player direction indicator (small line)
       ctx.strokeStyle = this.colors.player;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = clampPx(playerRadius * 0.35, 0.8, 2);
       ctx.beginPath();
       ctx.moveTo(px + this.tileSize / 2, py + this.tileSize / 2);
       ctx.lineTo(
@@ -362,16 +489,5 @@ export class Minimap {
       );
       ctx.stroke();
     }
-  }
-
-  /**
-   * Update canvas size
-   * @param {number} width - New width
-   * @param {number} height - New height
-   */
-  resize(width, height) {
-    this.canvas.width = width;
-    this.canvas.height = height;
-    this.updateScale();
   }
 }
