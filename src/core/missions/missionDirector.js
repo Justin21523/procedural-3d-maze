@@ -2952,7 +2952,14 @@ export class MissionDirector {
           mission.state.lureUntilSec = this.elapsedSec + seconds;
           if (entry?.meta) entry.meta.active = true;
           setPowerSwitchState(lureObject, true);
-          this.eventBus?.emit?.(EVENTS.NOISE_EMITTED, { source: 'player', kind: 'lure', strength: 0.7 });
+          this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+            source: 'player',
+            kind: 'lure',
+            strength: 0.7,
+            position: lureObject.position,
+            radius: 12,
+            ttl: 1.0
+          });
           return { ok: true, message: 'Lure triggered', state: { active: true } };
         },
         meta: { missionId: mission.id, template: mission.template, active: false }
@@ -3638,7 +3645,18 @@ export class MissionDirector {
     mission.state.failedAttempts = (mission.state.failedAttempts || 0) + 1;
     if (actorKind === 'player') {
       this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Incorrect code.', seconds: 1.6 });
-      this.eventBus?.emit?.(EVENTS.NOISE_EMITTED, { source: 'player', kind: 'keypad', strength: 0.25 });
+      const entry = this.interactables?.get?.(keypadId) || null;
+      const pos = entry?.object3d?.position || null;
+      if (pos) {
+        this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+          source: 'player',
+          kind: 'keypad',
+          strength: 0.25,
+          position: pos,
+          radius: 6,
+          ttl: 0.7
+        });
+      }
     }
     this.eventBus?.emit?.(EVENTS.KEYPAD_CODE_RESULT, { actorKind, keypadId, ok: false, code: submitted, message: 'Incorrect' });
   }
@@ -4318,8 +4336,11 @@ export class MissionDirector {
 
       const max = mission.state.maxGunshotsTotal;
       if (Number.isFinite(max) && max >= 0 && mission.state.gunshots > max) {
-        // Soft fail: keep it locked and show the objective text; does not auto-lose.
-        mission.state.failed = true;
+        // Too many gunshots: treat as a reset, not a permanent lockout.
+        // Keep the objective retryable until the player stays quiet for the full timer.
+        mission.state.failed = false;
+        mission.state.gunshots = 0;
+        mission.state.lastNoiseAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
       }
     }
 
@@ -4514,7 +4535,6 @@ export class MissionDirector {
       if (!mission) continue;
       if (mission.template !== 'stealthNoise') continue;
       if (mission.state.completed) continue;
-      if (mission.state.failed) continue;
 
       const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
       const seconds = mission.state.seconds || 0;
@@ -5440,7 +5460,6 @@ export class MissionDirector {
         return 'Escort the survivor to the checkpoint.';
       }
       if (mission.template === 'stealthNoise') {
-        if (mission.state.failed) return 'Stay quiet (failed)';
         const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
         const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
         const remainingSec = Math.ceil(remaining);

@@ -241,7 +241,8 @@ export class Gun {
       return;
     }
 
-    const fired = this.fireWeapon(def, state);
+    const damageMult = externalFire ? (CONFIG.AUTOPILOT_COMBAT_DAMAGE_MULT ?? 1.0) : 1.0;
+    const fired = this.fireWeapon(def, state, { damageMult });
     if (!fired) {
       // Avoid spamming CPU/audio when we're capped (e.g., too many projectiles).
       state.cooldown = Math.max(state.cooldown || 0, 0.05);
@@ -387,7 +388,7 @@ export class Gun {
     skill.cooldown = skill.maxCooldown;
   }
 
-  fireWeapon(def, state) {
+  fireWeapon(def, state, fireContext = {}) {
     const cam = this.getCameraObject();
     if (!cam || !this.projectileManager) return false;
 
@@ -407,6 +408,17 @@ export class Gun {
       ...projBase,
       ...projMode
     };
+
+    const multRaw = fireContext?.damageMult;
+    const damageMult = Number.isFinite(multRaw) ? Math.max(0.1, Math.min(5, multRaw)) : 1.0;
+    if (damageMult !== 1.0) {
+      if (Number.isFinite(options.damage)) {
+        options.damage = options.damage * damageMult;
+      }
+      if (Number.isFinite(options.explosionDamage)) {
+        options.explosionDamage = options.explosionDamage * damageMult;
+      }
+    }
 
     let spawnedAny = false;
     if (def.pellets && def.pellets > 1) {

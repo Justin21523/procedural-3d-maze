@@ -279,6 +279,7 @@ export class ProjectileManager {
       canHitMonsters: options.canHitMonsters ?? true,
       canHitPlayer: options.canHitPlayer ?? false,
       hitRadius: options.hitRadius,
+      stunSeconds: options.stunSeconds,
       explosionRadius: options.explosionRadius,
       explosionDamage: options.explosionDamage,
       explosionColor: options.explosionColor,

@@ -258,6 +258,89 @@ export class AudioManager {
     };
   }
 
+  /**
+   * Procedural tool sounds (throw/deploy/trigger) without external assets.
+   * @param {string} kind
+   */
+  playToolThrow(kind = '') {
+    if (!this.enabled) return;
+
+    const buffer = this.getToolThrowBuffer(kind);
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.32 * this.effectsVolume * this.masterVolume);
+    sound.play();
+
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
+  /**
+   * @param {string} kind
+   */
+  playToolDeploy(kind = '') {
+    if (!this.enabled) return;
+
+    const buffer = this.getToolDeployBuffer(kind);
+    if (!buffer) return;
+
+    const k = this.normalizeToolKind(kind);
+    const baseVolume =
+      k === 'mine' ? 0.4 :
+      k === 'trap' ? 0.42 :
+      k === 'jammer' ? 0.4 :
+      k === 'sensor' ? 0.38 :
+      0.36;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(baseVolume * this.effectsVolume * this.masterVolume);
+    sound.play();
+
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
+  /**
+   * @param {string} kind
+   */
+  playToolTrigger(kind = '') {
+    if (!this.enabled) return;
+
+    const buffer = this.getToolTriggerBuffer(kind);
+    if (!buffer) return;
+
+    const k = this.normalizeToolKind(kind);
+    const baseVolume =
+      k === 'mine' ? 0.75 :
+      k === 'flash' ? 0.7 :
+      k === 'trap' ? 0.62 :
+      k === 'smoke' ? 0.58 :
+      k === 'decoy' ? 0.6 :
+      k === 'sensor' ? 0.52 :
+      0.55;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(baseVolume * this.effectsVolume * this.masterVolume);
+    sound.play();
+
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
+  normalizeToolKind(kind) {
+    const k = String(kind || '').trim().toLowerCase();
+    if (!k) return '';
+    if (k.endsWith('_grenade')) return k.slice(0, -'_grenade'.length);
+    return k;
+  }
+
   getGunshotBuffer() {
     if (this.buffers.has('gunshot_proc')) {
       return this.buffers.get('gunshot_proc');
@@ -304,6 +387,234 @@ export class AudioManager {
     }
 
     this.buffers.set('objective_chime_proc', buffer);
+    return buffer;
+  }
+
+  getToolThrowBuffer(kind) {
+    const k = this.normalizeToolKind(kind) || 'tool';
+    const key = `tool_throw_${k}_proc`;
+    if (this.buffers.has(key)) return this.buffers.get(key);
+
+    const ctx = this.listener.context;
+    const duration = 0.16;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    let lp = 0;
+    const alpha = 0.06;
+    let whooshAmp = 0.55;
+    let clickAmp = 0.25;
+    if (k === 'smoke') {
+      whooshAmp = 0.65;
+      clickAmp = 0.15;
+    } else if (k === 'flash') {
+      whooshAmp = 0.5;
+      clickAmp = 0.32;
+    }
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const env = Math.exp(-t * 18);
+      const white = Math.random() * 2 - 1;
+      lp += (white - lp) * alpha;
+      const whoosh = lp * env;
+      const click = i < sampleRate * 0.008 ? (Math.random() * 2 - 1) * (1 - i / (sampleRate * 0.008)) : 0;
+      data[i] = (whoosh * whooshAmp + click * clickAmp) * 0.75;
+    }
+
+    this.buffers.set(key, buffer);
+    return buffer;
+  }
+
+  getToolDeployBuffer(kind) {
+    const k = this.normalizeToolKind(kind) || 'tool';
+    const key = `tool_deploy_${k}_proc`;
+    if (this.buffers.has(key)) return this.buffers.get(key);
+
+    const ctx = this.listener.context;
+    const sampleRate = ctx.sampleRate;
+
+    let duration = 0.12;
+    if (k === 'jammer') duration = 0.18;
+    if (k === 'mine') duration = 0.11;
+    if (k === 'trap') duration = 0.1;
+
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    if (k === 'trap') {
+      const f1 = 980;
+      const f2 = 1460;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const env = Math.exp(-t * 42);
+        const tone = Math.sin(2 * Math.PI * f1 * t) * 0.55 + Math.sin(2 * Math.PI * f2 * t) * 0.35;
+        const noise = (Math.random() * 2 - 1) * 0.08;
+        data[i] = (tone + noise) * env * 0.9;
+      }
+    } else if (k === 'jammer') {
+      const toneA = 520;
+      const toneB = 720;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const ramp = Math.sin(Math.min(1, t / 0.01) * (Math.PI / 2));
+        const env = ramp * Math.exp(-t * 12);
+
+        let tone = 0;
+        if (t < 0.06) {
+          tone = Math.sin(2 * Math.PI * toneA * t) * 0.75;
+        } else if (t < 0.12) {
+          const tt = t - 0.06;
+          tone = Math.sin(2 * Math.PI * toneB * tt) * 0.75;
+        }
+
+        const noise = (Math.random() * 2 - 1) * 0.03;
+        data[i] = (tone + noise) * env * 0.85;
+      }
+    } else if (k === 'sensor') {
+      const f0 = 980;
+      const f1 = 1450;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const p = t / duration;
+        const freq = f0 + (f1 - f0) * p;
+        const env = Math.sin(Math.min(1, t / 0.014) * (Math.PI / 2)) * Math.exp(-t * 14);
+        const tone = Math.sin(2 * Math.PI * freq * t) * 0.85;
+        data[i] = tone * env * 0.8;
+      }
+    } else if (k === 'mine') {
+      const f0 = 210;
+      const f1 = 140;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const p = t / duration;
+        const freq = f0 + (f1 - f0) * p;
+        const env = Math.exp(-t * 32);
+        const tone = Math.sin(2 * Math.PI * freq * t) * 0.65;
+        const click = (Math.random() * 2 - 1) * 0.12;
+        data[i] = (tone + click) * env * 0.85;
+      }
+    } else {
+      // Lure / generic deploy: short rising chirp.
+      const f0 = 560;
+      const f1 = 820;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const p = t / duration;
+        const freq = f0 + (f1 - f0) * p;
+        const env = Math.sin(Math.min(1, t / 0.016) * (Math.PI / 2)) * Math.exp(-t * 12);
+        const tone = Math.sin(2 * Math.PI * freq * t) * 0.8;
+        const noise = (Math.random() * 2 - 1) * 0.05;
+        data[i] = (tone + noise) * env * 0.75;
+      }
+    }
+
+    this.buffers.set(key, buffer);
+    return buffer;
+  }
+
+  getToolTriggerBuffer(kind) {
+    const k = this.normalizeToolKind(kind) || 'tool';
+    const key = `tool_trigger_${k}_proc`;
+    if (this.buffers.has(key)) return this.buffers.get(key);
+
+    const ctx = this.listener.context;
+    const sampleRate = ctx.sampleRate;
+
+    let duration = 0.22;
+    if (k === 'smoke') duration = 0.45;
+    if (k === 'decoy') duration = 0.28;
+    if (k === 'trap') duration = 0.14;
+    if (k === 'mine') duration = 0.34;
+    if (k === 'sensor') duration = 0.16;
+
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    if (k === 'smoke') {
+      let lp = 0;
+      const alpha = 0.05;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const env = Math.sin(Math.min(1, t / 0.02) * (Math.PI / 2)) * Math.exp(-t * 5.5);
+        const white = Math.random() * 2 - 1;
+        lp += (white - lp) * alpha;
+        data[i] = lp * env * 0.75;
+      }
+    } else if (k === 'flash') {
+      const f0 = 1200;
+      const f1 = 2600;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const p = t / duration;
+        const freq = f0 + (f1 - f0) * p;
+        const env = Math.sin(Math.min(1, t / 0.012) * (Math.PI / 2)) * Math.exp(-t * 18);
+        const tone = Math.sin(2 * Math.PI * freq * t) * 0.9;
+        const noise = (Math.random() * 2 - 1) * 0.18;
+        data[i] = (tone + noise) * env * 0.8;
+      }
+    } else if (k === 'trap') {
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const env = Math.exp(-t * 55);
+        const snap = (Math.random() * 2 - 1) * 0.75;
+        const thud = Math.sin(2 * Math.PI * 180 * t) * 0.25;
+        data[i] = (snap + thud) * env * 0.85;
+      }
+    } else if (k === 'mine') {
+      const f0 = 95;
+      const f1 = 62;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const p = t / duration;
+        const env = Math.exp(-t * 7.5);
+        const freq = f0 + (f1 - f0) * p;
+        const boom = Math.sin(2 * Math.PI * freq * t) * 0.65;
+        const rumble = (Math.random() * 2 - 1) * 0.35;
+        data[i] = (boom + rumble) * env * 0.9;
+      }
+    } else if (k === 'sensor') {
+      const f0 = 980;
+      const f1 = 1500;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const p = t / duration;
+        const freq = f0 + (f1 - f0) * p;
+        const env = Math.sin(Math.min(1, t / 0.012) * (Math.PI / 2)) * Math.exp(-t * 15);
+        const tone = Math.sin(2 * Math.PI * freq * t) * 0.9;
+        data[i] = tone * env * 0.75;
+      }
+    } else if (k === 'decoy') {
+      const f0 = 520;
+      const f1 = 920;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const p = t / duration;
+        const freq = f0 + (f1 - f0) * p;
+        const env = Math.sin(Math.min(1, t / 0.016) * (Math.PI / 2)) * Math.exp(-t * 10);
+        const tone = Math.sin(2 * Math.PI * freq * t) * 0.7;
+        const pop = (Math.random() * 2 - 1) * 0.28;
+        data[i] = (tone + pop) * env * 0.9;
+      }
+    } else {
+      // Generic trigger: short pop/chirp.
+      const f0 = 420;
+      const f1 = 820;
+      for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const p = t / duration;
+        const freq = f0 + (f1 - f0) * p;
+        const env = Math.sin(Math.min(1, t / 0.016) * (Math.PI / 2)) * Math.exp(-t * 12);
+        const tone = Math.sin(2 * Math.PI * freq * t) * 0.75;
+        const noise = (Math.random() * 2 - 1) * 0.22;
+        data[i] = (tone + noise) * env * 0.8;
+      }
+    }
+
+    this.buffers.set(key, buffer);
     return buffer;
   }
 

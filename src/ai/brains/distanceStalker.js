@@ -1,5 +1,6 @@
 import { CONFIG } from '../../core/config.js';
 import { BaseMonsterBrain } from './baseBrain.js';
+import { canSeePlayer as canSeePlayerGrid } from '../components/perception/vision.js';
 
 /**
  * DistanceStalkerBrain
@@ -44,6 +45,10 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
       config.noiseMemorySeconds ??
       (CONFIG.AI_NOISE_MEMORY ?? 2.0);
 
+    this.scentMemorySeconds =
+      config.scentMemorySeconds ??
+      (CONFIG.AI_SCENT_MEMORY ?? 8.0);
+
     this.planInterval =
       config.planInterval ??
       0.45;
@@ -75,14 +80,14 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
   }
 
   canSeePlayer(monsterGrid, playerGrid) {
-    const dist = this.manhattan(monsterGrid, playerGrid);
-    if (dist > this.visionRange) return false;
-
-    if (this.followWhenHasLineOfSight && this.worldState?.hasLineOfSight) {
-      return this.worldState.hasLineOfSight(monsterGrid, playerGrid);
-    }
-
-    return true;
+    const yaw = this.monster?.getYaw?.() ?? this.monster?.yaw;
+    const visionFOV = this.monster?.visionFOV ?? this.monster?.typeConfig?.stats?.visionFOV;
+    return canSeePlayerGrid(this.worldState, monsterGrid, playerGrid, this.visionRange, {
+      monster: this.monster,
+      monsterYaw: yaw,
+      visionFOV,
+      requireLineOfSight: this.followWhenHasLineOfSight
+    });
   }
 
   hasRecentUsefulNoise(now) {
@@ -98,6 +103,14 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
     return isLoud || isSprint;
   }
 
+  hasRecentScent(now) {
+    const scent = this.lastSmelledScent;
+    if (!scent?.grid) return false;
+    if (now - (scent.smelledAt || 0) > this.scentMemorySeconds) return false;
+    const intensity = Number.isFinite(scent.intensity) ? scent.intensity : (Number.isFinite(scent.strength) ? scent.strength : 0);
+    return intensity > 0.05;
+  }
+
   canHearPlayerDistance(monsterGrid, playerGrid) {
     if (!this.followWhenPlayerSprints) return false;
     if (!this.playerIsSprinting()) return false;
@@ -107,8 +120,20 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
 
   updateDetection(monsterGrid, playerGrid) {
     const now = this.now();
+    const smelled = this.hasRecentScent(now);
 
     if (!playerGrid) {
+      if (smelled && this.lastSmelledScent?.grid) {
+        this.lastDetectedTime = now;
+        this.lastKnownPlayerGrid = { x: this.lastSmelledScent.grid.x, y: this.lastSmelledScent.grid.y };
+        if (this.mode !== 'follow') {
+          this.currentPath = [];
+          this.currentTarget = null;
+          this.lastPlanTime = 0;
+        }
+        this.mode = 'follow';
+        return;
+      }
       if (this.mode !== 'wander' && now - this.lastDetectedTime > this.memoryDuration) {
         this.mode = 'wander';
         this.lastKnownPlayerGrid = null;
@@ -123,13 +148,15 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
     const heardNoise = this.hasRecentUsefulNoise(now);
     const heardSprint = this.canHearPlayerDistance(monsterGrid, playerGrid);
 
-    if (saw || heardNoise || heardSprint) {
+    if (saw || heardNoise || heardSprint || smelled) {
       this.lastDetectedTime = now;
 
       if (saw) {
         this.lastKnownPlayerGrid = { x: playerGrid.x, y: playerGrid.y };
       } else if (heardNoise && this.lastHeardNoise?.grid) {
         this.lastKnownPlayerGrid = { x: this.lastHeardNoise.grid.x, y: this.lastHeardNoise.grid.y };
+      } else if (smelled && this.lastSmelledScent?.grid) {
+        this.lastKnownPlayerGrid = { x: this.lastSmelledScent.grid.x, y: this.lastSmelledScent.grid.y };
       } else {
         this.lastKnownPlayerGrid = { x: playerGrid.x, y: playerGrid.y };
       }
@@ -310,4 +337,3 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
     return { move, lookYaw, sprint };
   }
 }
-

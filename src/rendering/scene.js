@@ -98,6 +98,7 @@ export class SceneManager {
 
     // ---------- World / Camera ----------
     this.worldMeshes = [];
+    this.tickables = [];
     this.camera = null;
 
     // 方便存牆體做 raycast
@@ -106,6 +107,15 @@ export class SceneManager {
 
     // Resize handler
     window.addEventListener('resize', () => this.onWindowResize());
+  }
+
+  addWorldObject(obj) {
+    if (!obj) return;
+    this.scene.add(obj);
+    this.worldMeshes.push(obj);
+    if (obj?.userData?.tick) {
+      this.tickables.push(obj);
+    }
   }
 
   /**
@@ -357,7 +367,23 @@ export class SceneManager {
     const floorGeometry = new THREE.PlaneGeometry(tileSize, tileSize);
     const ceilingGeometry = new THREE.PlaneGeometry(tileSize, tileSize);
 
-    // Build walls, floors, and ceilings
+    // Instanced tiles: drastically reduce draw calls (walls + floor + ceiling).
+    // NOTE: Instanced meshes are still compatible with resource disposal in clearWorld().
+    const wallInstances = new Map();   // roomType -> [cx0, cz0, cx1, cz1, ...]
+    const floorInstances = new Map();  // roomType -> [...]
+    const ceilingInstances = new Map();// roomType -> [...]
+
+    const pushInstance = (map, roomType, cx, cz) => {
+      const rt = Number.isFinite(roomType) ? roomType : ROOM_TYPES.CORRIDOR;
+      let list = map.get(rt);
+      if (!list) {
+        list = [];
+        map.set(rt, list);
+      }
+      list.push(cx, cz);
+    };
+
+    // Build instance lists and spawn per-tile props.
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const worldPos = gridToWorld(x, y, tileSize);
@@ -366,48 +392,93 @@ export class SceneManager {
         // Keep visuals aligned to that convention to avoid apparent "clipping through walls".
         const centerX = worldPos.x + tileSize / 2;
         const centerZ = worldPos.z + tileSize / 2;
-        const roomType = roomMap[y][x];
-        const materials = roomMaterials[roomType] || roomMaterials[ROOM_TYPES.CORRIDOR];
+        const roomType = roomMap?.[y]?.[x] ?? ROOM_TYPES.CORRIDOR;
 
-        if (grid[y][x] === TILE_TYPES.WALL) {
-          // Create wall
-          const wall = new THREE.Mesh(wallGeometry, materials.wall);
-          wall.position.set(
-            centerX,
-            CONFIG.WALL_HEIGHT / 2,
-            centerZ
-          );
-          wall.castShadow = true;
-          wall.receiveShadow = true;
-          this.scene.add(wall);
-          this.worldMeshes.push(wall);
-          this.wallMeshes.push(wall);
-        } else if (grid[y][x] === TILE_TYPES.FLOOR) {
-          // Create floor tile
-          const floor = new THREE.Mesh(floorGeometry, materials.floor);
-          floor.rotation.x = -Math.PI / 2; // Rotate to be horizontal
-          floor.position.set(centerX, 0, centerZ);
-          floor.receiveShadow = true;
-          this.scene.add(floor);
-          this.worldMeshes.push(floor);
-
-          // Create ceiling tile
-          const ceiling = new THREE.Mesh(ceilingGeometry, materials.ceiling);
-          ceiling.rotation.x = Math.PI / 2; // Rotate to face down
-          ceiling.position.set(centerX, CONFIG.WALL_HEIGHT, centerZ);
-          this.scene.add(ceiling);
-          this.worldMeshes.push(ceiling);
-
-          // Spawn planned props (visuals match WorldState obstacle map)
-          const planned = worldState?.getPropAt ? worldState.getPropAt(x, y) : null;
-          const props = createRoomPropsFromPlan(roomType, x, y, planned);
-          props.forEach(prop => {
-            this.scene.add(prop);
-            this.worldMeshes.push(prop);
-          });
+        const tile = grid[y][x];
+        if (tile === TILE_TYPES.WALL) {
+          pushInstance(wallInstances, roomType, centerX, centerZ);
+          continue;
         }
+
+        // FLOOR/DOOR are walkable: render floor + ceiling.
+        pushInstance(floorInstances, roomType, centerX, centerZ);
+        pushInstance(ceilingInstances, roomType, centerX, centerZ);
+
+        // Spawn planned props (visuals match WorldState obstacle map)
+        const planned = worldState?.getPropAt ? worldState.getPropAt(x, y) : null;
+        const props = createRoomPropsFromPlan(roomType, x, y, planned);
+        props.forEach(prop => {
+          this.addWorldObject(prop);
+        });
       }
     }
+
+    // Pre-rotate floor/ceiling geometries once (cheaper than per-instance rotations).
+    floorGeometry.rotateX(-Math.PI / 2);
+    ceilingGeometry.rotateX(Math.PI / 2);
+
+    const tmpPos = new THREE.Vector3();
+    const tmpQuat = new THREE.Quaternion(); // identity
+    const tmpScale = new THREE.Vector3(1, 1, 1);
+    const tmpMatrix = new THREE.Matrix4();
+
+    const addInstancedTiles = (instances, geometry, getMaterial, yPos, { namePrefix = '' } = {}) => {
+      for (const [roomType, coords] of instances.entries()) {
+        const count = Math.floor((coords?.length || 0) / 2);
+        if (count <= 0) continue;
+
+        const material = getMaterial(roomType);
+        if (!material) continue;
+
+        const mesh = new THREE.InstancedMesh(geometry, material, count);
+        if (namePrefix) mesh.name = `${namePrefix}_${roomType}`;
+
+        for (let i = 0; i < count; i++) {
+          const cx = coords[i * 2];
+          const cz = coords[i * 2 + 1];
+          tmpPos.set(cx, yPos, cz);
+          tmpMatrix.compose(tmpPos, tmpQuat, tmpScale);
+          mesh.setMatrixAt(i, tmpMatrix);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+
+        // Ensure frustum culling uses a correct bounding volume for the spread-out instances.
+        mesh.computeBoundingBox?.();
+        mesh.computeBoundingSphere?.();
+
+        this.addWorldObject(mesh);
+      }
+    };
+
+    const corridorMaterials = roomMaterials[ROOM_TYPES.CORRIDOR] || null;
+
+    addInstancedTiles(
+      floorInstances,
+      floorGeometry,
+      (roomType) => (roomMaterials[roomType]?.floor || corridorMaterials?.floor),
+      0,
+      { namePrefix: '__floor' }
+    );
+
+    addInstancedTiles(
+      ceilingInstances,
+      ceilingGeometry,
+      (roomType) => (roomMaterials[roomType]?.ceiling || corridorMaterials?.ceiling),
+      CONFIG.WALL_HEIGHT,
+      { namePrefix: '__ceiling' }
+    );
+
+    // Walls sit at half height.
+    addInstancedTiles(
+      wallInstances,
+      wallGeometry,
+      (roomType) => (roomMaterials[roomType]?.wall || corridorMaterials?.wall),
+      CONFIG.WALL_HEIGHT / 2,
+      { namePrefix: '__wall' }
+    );
+
+    // Wall meshes are used for optional raycasts; include instanced walls.
+    this.wallMeshes = this.worldMeshes.filter((m) => m?.isInstancedMesh && String(m.name || '').startsWith('__wall_'));
 
     console.log(`Built world: ${this.worldMeshes.length} meshes created (including props)`);
 
@@ -452,8 +523,7 @@ export class SceneManager {
       const overlay = createObstacleOverlayMesh(worldState);
       if (!overlay) return;
       this.obstacleOverlay = overlay;
-      this.scene.add(overlay);
-      this.worldMeshes.push(overlay);
+      this.addWorldObject(overlay);
     }
 
     this.obstacleOverlay.visible = true;
@@ -593,8 +663,7 @@ export class SceneManager {
       if (CONFIG.POOL_FX_ENABLED && !CONFIG.LOW_PERF_MODE) {
         const fx = this.createPoolFx(worldX, worldZ, roomWorldW, roomWorldH);
         if (fx) {
-          this.scene.add(fx);
-          this.worldMeshes.push(fx);
+          this.addWorldObject(fx);
         }
       }
     }
@@ -740,6 +809,7 @@ export class SceneManager {
     });
     this.worldMeshes = [];
     this.wallMeshes = [];
+    this.tickables = [];
     this.obstacleOverlay = null;
   }
 
@@ -748,10 +818,8 @@ export class SceneManager {
    */
   update(deltaTime) {
     if (!deltaTime) return;
-    for (const mesh of this.worldMeshes) {
-      if (mesh?.userData?.tick) {
-        mesh.userData.tick(deltaTime);
-      }
+    for (const obj of this.tickables) {
+      obj?.userData?.tick?.(deltaTime);
     }
   }
 

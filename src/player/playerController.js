@@ -434,17 +434,32 @@ export class PlayerController {
    */
   tryUnstuck(moveVector) {
     this.stuckTimer += 1;
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const base = Math.max(0.04, tileSize * 0.04);
+    const scale = Math.min(4, 1 + Math.floor(this.stuckTimer / 10));
+    const step = base * scale;
+
+    const mvx = Number.isFinite(moveVector?.x) ? moveVector.x : 0;
+    const mvz = Number.isFinite(moveVector?.z) ? moveVector.z : 0;
+    const mvStepX = mvx * 0.2;
+    const mvStepZ = mvz * 0.2;
+
     const offsets = [
-      new THREE.Vector3(0.05, 0, 0),
-      new THREE.Vector3(-0.05, 0, 0),
-      new THREE.Vector3(0, 0, 0.05),
-      new THREE.Vector3(0, 0, -0.05),
-      new THREE.Vector3(moveVector.x * 0.1, 0, moveVector.z * 0.1),
+      [step, 0],
+      [-step, 0],
+      [0, step],
+      [0, -step],
+      [step, step],
+      [step, -step],
+      [-step, step],
+      [-step, -step],
+      [mvStepX, mvStepZ],
+      [-mvStepX, -mvStepZ],
     ];
 
-    for (const off of offsets) {
-      const nx = this.position.x + off.x;
-      const nz = this.position.z + off.z;
+    for (const [ox, oz] of offsets) {
+      const nx = this.position.x + ox;
+      const nz = this.position.z + oz;
       if (this.canMoveTo(nx, nz)) {
         this.position.x = nx;
         this.position.z = nz;
@@ -452,12 +467,43 @@ export class PlayerController {
       }
     }
 
-    // Fallback: snap to nearest walkable tile center if available
+    // Soft fallback: snap toward the current tile center (reduces corner "pin" cases).
+    if (this.worldState && typeof this.getGridPosition === 'function') {
+      const grid = this.getGridPosition();
+      const center = gridToWorld(grid.x, grid.y, tileSize);
+      const cx = center.x + tileSize / 2;
+      const cz = center.z + tileSize / 2;
+      const distToCenter = Math.hypot(this.position.x - cx, this.position.z - cz);
+      if (distToCenter > 0.001 && this.canMoveTo(cx, cz)) {
+        this.position.x = cx;
+        this.position.z = cz;
+        return;
+      }
+    }
+
+    // Only relocate if we're actually in invalid space (avoid visible "tile snapping").
+    const allowRelocate = !this.canMoveTo(this.position.x, this.position.z) || this.stuckTimer >= 60;
+    if (!allowRelocate) return;
+    if (!this.worldState?.isWalkable) return;
+
     const grid = this.getGridPosition();
-    if (this.worldState && this.worldState.isWalkable(grid.x, grid.y)) {
-      const center = gridToWorld(grid.x, grid.y, CONFIG.TILE_SIZE);
-      this.position.x = center.x + CONFIG.TILE_SIZE / 2;
-      this.position.z = center.z + CONFIG.TILE_SIZE / 2;
+    const maxRing = 4;
+    outer: for (let r = 0; r <= maxRing; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const gx = grid.x + dx;
+          const gy = grid.y + dy;
+          if (!this.worldState.isWalkable(gx, gy)) continue;
+          const center = gridToWorld(gx, gy, tileSize);
+          const cx = center.x + tileSize / 2;
+          const cz = center.z + tileSize / 2;
+          if (this.canMoveTo(cx, cz)) {
+            this.position.x = cx;
+            this.position.z = cz;
+            break outer;
+          }
+        }
+      }
     }
   }
 
@@ -467,6 +513,44 @@ export class PlayerController {
   forceUnstuck() {
     this.tryUnstuck(new THREE.Vector3(0.05, 0, 0));
     this.separateFromWalls();
+  }
+
+  /**
+   * Apply a small displacement without "teleport to tile center" fallbacks.
+   * Intended for soft pushes (e.g. separating from monsters) to avoid jitter.
+   * @param {number} dx
+   * @param {number} dz
+   * @param {{separateFromWalls?: boolean}} options
+   * @returns {boolean} True if moved
+   */
+  applyDisplacement(dx, dz, options = {}) {
+    if (!Number.isFinite(dx) || !Number.isFinite(dz)) return false;
+    if (Math.abs(dx) <= 1e-8 && Math.abs(dz) <= 1e-8) return false;
+    if (this.hidden) return false;
+
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const radius = CONFIG.PLAYER_RADIUS || 0.35;
+    const maxStep = Math.max(0.05, Math.min(tileSize * 0.25, radius * 0.5));
+    const dist = Math.hypot(dx, dz);
+    const steps = Math.max(1, Math.ceil(dist / maxStep));
+
+    const stepX = dx / steps;
+    const stepZ = dz / steps;
+
+    let moved = false;
+    for (let i = 0; i < steps; i++) {
+      const beforeX = this.position.x;
+      const beforeZ = this.position.z;
+      this.applyMovementStep(stepX, stepZ);
+      if (this.position.x !== beforeX || this.position.z !== beforeZ) moved = true;
+    }
+
+    if (options?.separateFromWalls !== false) {
+      this.separateFromWalls();
+    }
+    this.camera?.updatePosition?.(this.position.x, this.position.y, this.position.z);
+
+    return moved;
   }
 
   /**
@@ -493,6 +577,25 @@ export class PlayerController {
    */
   getGridPosition() {
     return worldToGrid(this.position.x, this.position.z, CONFIG.TILE_SIZE);
+  }
+
+  /**
+   * @returns {number} player camera yaw in radians
+   */
+  getViewYaw() {
+    if (this.camera?.getYaw) return this.camera.getYaw();
+    const cam = this.camera?.getCamera?.();
+    const yaw = cam?.rotation?.y;
+    return Number.isFinite(yaw) ? yaw : 0;
+  }
+
+  /**
+   * @returns {number} player camera FOV in degrees
+   */
+  getViewFovDeg() {
+    const cam = this.camera?.getCamera?.();
+    const fov = cam?.fov;
+    return Number.isFinite(fov) ? fov : (CONFIG.FOV ?? 75);
   }
 
   isHidden() {

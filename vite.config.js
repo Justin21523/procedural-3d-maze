@@ -207,8 +207,153 @@ function enemyMetaSavePlugin() {
   };
 }
 
+function enemyModelImportPlugin() {
+  const modelsDir = path.resolve(rootDir, 'public/models');
+  const apiUrl = '/api/models-import';
+  const maxBytes = 200 * 1024 * 1024; // 200MB per file (dev-only safeguard)
+  const allowedExts = new Set([
+    // primary model files
+    '.glb', '.gltf', '.dae',
+    // gltf dependencies
+    '.bin',
+    // textures (common)
+    '.png', '.jpg', '.jpeg', '.webp',
+    // textures (less common, still useful)
+    '.tga', '.dds'
+  ]);
+
+  function json(res, statusCode, payload) {
+    res.statusCode = statusCode;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify(payload));
+  }
+
+  function normalizeSegment(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    if (raw.includes('/') || raw.includes('\\')) return null;
+    if (raw === '.' || raw === '..') return null;
+    if (raw.includes('..')) return null;
+    if (!/^[a-zA-Z0-9._-]+$/.test(raw)) return null;
+    return raw;
+  }
+
+  function isSafePath(filePath) {
+    const abs = path.resolve(filePath);
+    const root = path.resolve(modelsDir) + path.sep;
+    return abs === path.resolve(modelsDir) || abs.startsWith(root);
+  }
+
+  function ensureDefaultMeta(folder) {
+    const metaFile = path.join(modelsDir, folder, 'meta.json');
+    if (!isSafePath(metaFile)) return;
+    if (fs.existsSync(metaFile)) return;
+    const payload = {
+      scaleMultiplier: 1,
+      groundOffset: 0.02,
+      studio: { version: 1, objects: [], materials: [] }
+    };
+    fs.mkdirSync(path.dirname(metaFile), { recursive: true });
+    fs.writeFileSync(metaFile, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+  }
+
+  return {
+    name: 'enemy-model-import',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = req.url?.split('?')[0];
+        if (url !== apiUrl) {
+          next();
+          return;
+        }
+
+        if (req.method !== 'POST') {
+          json(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+
+        const folder = normalizeSegment(req.headers['x-model-folder']);
+        const fileName = normalizeSegment(req.headers['x-file-name']);
+        const overwrite = String(req.headers['x-overwrite'] || '').toLowerCase() === 'true';
+
+        if (!folder) {
+          json(res, 400, { ok: false, error: 'Missing or invalid x-model-folder' });
+          return;
+        }
+        if (!fileName) {
+          json(res, 400, { ok: false, error: 'Missing or invalid x-file-name' });
+          return;
+        }
+
+        const ext = path.extname(fileName).toLowerCase();
+        if (!allowedExts.has(ext)) {
+          json(res, 400, { ok: false, error: `Unsupported file type: ${ext}` });
+          return;
+        }
+
+        const dest = path.join(modelsDir, folder, fileName);
+        if (!isSafePath(dest)) {
+          json(res, 400, { ok: false, error: 'Unsafe path' });
+          return;
+        }
+
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        ensureDefaultMeta(folder);
+
+        let bytes = 0;
+        const stream = fs.createWriteStream(dest, { flags: overwrite ? 'w' : 'wx' });
+
+        const abort = (statusCode, error) => {
+          try {
+            stream.destroy();
+          } catch {
+            // ignore
+          }
+          try {
+            if (fs.existsSync(dest)) fs.unlinkSync(dest);
+          } catch {
+            // ignore
+          }
+          json(res, statusCode, { ok: false, error });
+        };
+
+        req.on('data', (chunk) => {
+          bytes += chunk.length;
+          if (bytes > maxBytes) {
+            req.destroy();
+            abort(413, 'Payload too large');
+          }
+        });
+
+        req.on('aborted', () => {
+          abort(499, 'Client aborted');
+        });
+
+        stream.on('error', (err) => {
+          if (err?.code === 'EEXIST') {
+            json(res, 409, { ok: false, error: 'File exists (set x-overwrite: true to overwrite)' });
+            return;
+          }
+          abort(500, err?.message || String(err));
+        });
+
+        stream.on('finish', () => {
+          json(res, 200, {
+            ok: true,
+            folder,
+            fileName,
+            modelUrl: `/models/${folder}/${fileName}`
+          });
+        });
+
+        req.pipe(stream);
+      });
+    }
+  };
+}
+
 export default defineConfig({
-  plugins: [modelsManifestPlugin(), enemyMetaSavePlugin()],
+  plugins: [modelsManifestPlugin(), enemyMetaSavePlugin(), enemyModelImportPlugin()],
   server: {
     port: 3000,
     watch: {

@@ -22,6 +22,7 @@ export const MonsterTypes = {
       visionRange: 18,         // Units
       visionFOV: Math.PI * 140 / 180,  // 140 degrees
       hearingRange: 12,        // Units (detects sprinting player)
+      smellRange: 12,          // Grid tiles (scaled by CONFIG.AI_BASE_SMELL)
       scale: 1,              // Model scale (FIXED: increased for visibility)
     },
 
@@ -87,6 +88,7 @@ export const MonsterTypes = {
       visionRange: 10,
       visionFOV: Math.PI / 2,  // 90 degrees
       hearingRange: 5,         // Poor hearing
+      smellRange: 5,           // Poor smell
       scale: 1,                // Model scale (FIXED: increased for visibility)
     },
 
@@ -137,6 +139,7 @@ export const MonsterTypes = {
       visionRange: 20,         // Very long sight
       visionFOV: Math.PI * 160 / 180,  // 160 degrees (nearly 180)
       hearingRange: 15,
+      smellRange: 8,
       scale: 1,                 // Model scale (FIXED: increased for visibility)
     },
 
@@ -199,6 +202,7 @@ export const MonsterTypes = {
       visionRange: 22,         // Excellent vision
       visionFOV: Math.PI * 100 / 180,  // 100 degrees (focused)
       hearingRange: 18,        // Excellent hearing
+      smellRange: 16,          // Excellent smell
       scale: 1,               // Model scale (FIXED: increased for visibility)
     },
 
@@ -261,6 +265,7 @@ export const MonsterTypes = {
       visionRange: 12,
       visionFOV: Math.PI * 110 / 180,
       hearingRange: 8,
+      smellRange: 10,
       scale: 1,                  // Model scale (FIXED: increased for visibility)
     },
 
@@ -303,6 +308,61 @@ export const MonsterTypes = {
   },
 
   /**
+   * WEEPING_ANGEL - "木頭人": freezes when the player looks at it
+   */
+  WEEPING_ANGEL: {
+    id: 'WEEPING_ANGEL',
+    name: 'Weeping Angel',
+    aiType: 'weepingAngel',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 10,
+
+    stats: {
+      speedFactor: 0.95,
+      visionRange: 14,
+      visionFOV: Math.PI * 120 / 180,
+      hearingRange: 10,
+      smellRange: 14,
+      scale: 1,
+    },
+
+    behavior: {
+      aggressiveness: 'high',
+      patrolStyle: 'stalk',
+      preferredMode: 'hunt'
+    },
+
+    combat: {
+      contactDamage: 12,
+      contactCooldown: 1.8,
+      contactChance: 0.65
+    },
+
+    // Brain overrides (merged into config by MonsterManager.buildBrainConfig)
+    brain: {
+      memorySeconds: 12.0,
+      unseenSpeedMultiplier: 2.2,
+      wanderSpeedMultiplier: 1.0,
+      freezeFovMarginDeg: 7,
+      freezeRequiresLineOfSight: true,
+      noiseMemorySeconds: 2.4
+    },
+
+    animations: {
+      idle: ['Idle', 'idle'],
+      walk: ['Walk', 'walk'],
+      run: ['Run', 'run']
+    },
+
+    appearance: {
+      emissiveColor: 0xffffff,  // Cold white glow
+      emissiveIntensity: 0.22
+    }
+  },
+
+  /**
    * GREETER - Friendly-ish guide that keeps some distance
    */
   GREETER: {
@@ -319,6 +379,7 @@ export const MonsterTypes = {
       visionRange: 12,
       visionFOV: Math.PI * 160 / 180,
       hearingRange: 6,
+      smellRange: 0,
       scale: 0.9,
     },
 
@@ -360,15 +421,17 @@ export function getMonsterType(typeName) {
  */
 export function createMonsterMix(count, weights = null) {
   const mix = [];
+  const desired = Math.max(0, Math.round(count || 0));
+  if (desired <= 0) return mix;
 
   if (!weights) {
     // Legacy behavior: ensure at least one of each main type if count >= 3
-    if (count >= 3) {
+    if (desired >= 3) {
       mix.push(MonsterTypes.HUNTER);
       mix.push(MonsterTypes.WANDERER);
       mix.push(MonsterTypes.SENTINEL);
     }
-    while (mix.length < count) {
+    while (mix.length < desired) {
       mix.push(getRandomMonsterType());
     }
     for (let i = mix.length - 1; i > 0; i--) {
@@ -378,20 +441,67 @@ export function createMonsterMix(count, weights = null) {
     return mix;
   }
 
-  const entries = Object.entries(weights);
-  const sum = entries.reduce((acc, [, w]) => acc + w, 0) || 1;
-  const normalized = entries.map(([name, w]) => [name, w / sum]);
+  const candidates = [];
+  for (const [name, w] of Object.entries(weights || {})) {
+    const type = MonsterTypes[name];
+    const weight = Number(w);
+    if (!type) continue;
+    if (!Number.isFinite(weight) || weight <= 0) continue;
+    candidates.push({ name, type, weight });
+  }
 
-  for (let i = 0; i < count; i++) {
-    const r = Math.random();
-    let acc = 0;
-    for (const [name, p] of normalized) {
-      acc += p;
-      if (r <= acc) {
-        mix.push(MonsterTypes[name] || MonsterTypes.HUNTER);
-        break;
-      }
+  // If a bad/too-narrow weight table is provided, fall back to a sensible default mix.
+  if (candidates.length === 0) {
+    return createMonsterMix(desired, null);
+  }
+
+  // Enforce at least 2 distinct types when spawning 2+ monsters (protects against "all Hunter" tables).
+  if (desired >= 2 && candidates.length < 2) {
+    const avoid = candidates[0]?.type?.id || null;
+    const fallback = ['STALKER', 'SENTINEL', 'RUSHER', 'WANDERER', 'WEEPING_ANGEL'];
+    for (const key of fallback) {
+      const type = MonsterTypes[key];
+      if (!type || type.id === avoid) continue;
+      candidates.push({ name: key, type, weight: Math.max(0.1, candidates[0].weight * 0.25) });
+      break;
     }
+  }
+
+  const pickWeighted = (list) => {
+    if (!list || list.length === 0) return null;
+    const total = list.reduce((acc, e) => acc + Math.max(0, Number(e?.weight) || 0), 0);
+    if (!(total > 0)) {
+      return list[Math.floor(Math.random() * list.length)];
+    }
+    let r = Math.random() * total;
+    for (const entry of list) {
+      r -= Math.max(0, Number(entry?.weight) || 0);
+      if (r <= 0) return entry;
+    }
+    return list[list.length - 1];
+  };
+
+  // Weighted without replacement for the first `distinctCount` picks.
+  const remaining = candidates.slice();
+  const distinctCount = Math.min(desired, remaining.length);
+  for (let i = 0; i < distinctCount; i++) {
+    const picked = pickWeighted(remaining) || remaining[0];
+    if (!picked) break;
+    mix.push(picked.type || MonsterTypes.HUNTER);
+    const idx = remaining.indexOf(picked);
+    if (idx !== -1) remaining.splice(idx, 1);
+  }
+
+  // Fill the rest with replacement.
+  while (mix.length < desired) {
+    const picked = pickWeighted(candidates) || candidates[0];
+    mix.push(picked?.type || MonsterTypes.HUNTER);
+  }
+
+  // Shuffle final order to avoid deterministic role ordering.
+  for (let i = mix.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [mix[i], mix[j]] = [mix[j], mix[i]];
   }
 
   return mix;

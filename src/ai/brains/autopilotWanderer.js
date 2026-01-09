@@ -1,6 +1,7 @@
 import { CONFIG } from '../../core/config.js';
 import { ROOM_TYPES } from '../../world/tileTypes.js';
 import { BaseMonsterBrain } from './baseBrain.js';
+import { canSeePlayer } from '../components/perception/vision.js';
 
 /**
  * AutopilotWandererBrain
@@ -32,6 +33,20 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
       CONFIG.AUTOPILOT_EXPLORE_SAMPLES ??
       80;
 
+    this.visionRange =
+      config.visionRange ??
+      monster?.visionRange ??
+      monster?.typeConfig?.stats?.visionRange ??
+      10;
+
+    this.noiseMemorySeconds =
+      config.noiseMemorySeconds ??
+      (CONFIG.AI_NOISE_MEMORY ?? 2.0);
+
+    this.scentMemorySeconds =
+      config.scentMemorySeconds ??
+      (CONFIG.AI_SCENT_MEMORY ?? 8.0);
+
     this.chaseRange = config.chaseRange ?? 2;
     this.maxChaseDuration = config.maxChaseDuration ?? 5.0;
 
@@ -60,6 +75,44 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
     this.noProgressThreshold = config.noProgressSeconds ?? 0.9;
     this.avoidTiles = new Map(); // key -> expire timestamp
     this.stallNudgeMultiplier = 2.0;
+  }
+
+  monsterCanSeePlayer(monsterGrid, playerGrid) {
+    const yaw = this.monster?.getYaw?.() ?? this.monster?.yaw;
+    const visionFOV = this.monster?.visionFOV ?? this.monster?.typeConfig?.stats?.visionFOV;
+    return canSeePlayer(this.worldState, monsterGrid, playerGrid, this.visionRange, {
+      monster: this.monster,
+      monsterYaw: yaw,
+      visionFOV,
+      requireLineOfSight: true
+    });
+  }
+
+  hasRecentNoise(now) {
+    const noise = this.lastHeardNoise;
+    if (!noise?.grid) return false;
+    return now - (noise.heardAt || 0) <= this.noiseMemorySeconds;
+  }
+
+  hasRecentScent(now) {
+    const scent = this.lastSmelledScent;
+    if (!scent?.grid) return false;
+    if (now - (scent.smelledAt || 0) > this.scentMemorySeconds) return false;
+    const intensity = Number.isFinite(scent.intensity) ? scent.intensity : (Number.isFinite(scent.strength) ? scent.strength : 0);
+    return intensity > 0.05;
+  }
+
+  pickStimulusGrid(now, monsterGrid, playerGrid) {
+    if (playerGrid && this.monsterCanSeePlayer(monsterGrid, playerGrid)) {
+      return { x: playerGrid.x, y: playerGrid.y };
+    }
+    if (this.hasRecentNoise(now) && this.lastHeardNoise?.grid) {
+      return { x: this.lastHeardNoise.grid.x, y: this.lastHeardNoise.grid.y };
+    }
+    if (this.hasRecentScent(now) && this.lastSmelledScent?.grid) {
+      return { x: this.lastSmelledScent.grid.x, y: this.lastSmelledScent.grid.y };
+    }
+    return null;
   }
 
   roomCenter(room) {
@@ -183,18 +236,19 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
     return roomType !== ROOM_TYPES.CORRIDOR ? 15 : 0;
   }
 
-  updateChaseState(monsterGrid, playerGrid) {
+  updateChaseState(monsterGrid, stimulusGrid) {
     const now = this.now();
     const wasChasing = this.state === 'chase';
-    const inRange = playerGrid
-      ? this.manhattan(monsterGrid, playerGrid) <= this.chaseRange
+    const rangeTarget = stimulusGrid || this.lastSeenPlayerGrid;
+    const inRange = rangeTarget
+      ? this.manhattan(monsterGrid, rangeTarget) <= this.chaseRange
       : false;
 
     if (this.chaseLockout && !inRange) {
       this.chaseLockout = false;
     }
 
-    if (!this.chaseLockout && inRange && playerGrid) {
+    if (!this.chaseLockout && stimulusGrid && inRange) {
       if (!wasChasing) {
         this.chaseStartTime = now;
         this.currentPath = [];
@@ -202,13 +256,14 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
         this.lastPlanTime = 0;
       }
       this.state = 'chase';
-      this.lastSeenPlayerGrid = { x: playerGrid.x, y: playerGrid.y };
-    } else {
-      if (wasChasing) {
-        this.currentPath = [];
-        this.currentTarget = null;
-        this.lastPlanTime = 0;
-      }
+      this.lastSeenPlayerGrid = { x: stimulusGrid.x, y: stimulusGrid.y };
+    } else if (!stimulusGrid && wasChasing) {
+      // Keep chasing last known tile until timeout; do not instantly snap to the real player position.
+      this.state = 'chase';
+    } else if (!stimulusGrid && !wasChasing) {
+      this.state = 'wander';
+      this.chaseStartTime = null;
+    } else if (stimulusGrid && !inRange) {
       this.state = 'wander';
       this.chaseStartTime = null;
     }
@@ -223,14 +278,16 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
         this.lastPlanTime = 0;
       }
     }
+
+    if (this.state !== 'chase' && wasChasing) {
+      this.currentPath = [];
+      this.currentTarget = null;
+      this.lastPlanTime = 0;
+    }
   }
 
   pickTarget(monsterGrid) {
     if (this.state === 'chase') {
-      const playerGrid = this.getPlayerGridPosition();
-      if (playerGrid) {
-        return playerGrid;
-      }
       if (this.lastSeenPlayerGrid) {
         return this.lastSeenPlayerGrid;
       }
@@ -304,13 +361,15 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
     }
 
     const playerGrid = this.getPlayerGridPosition();
-    this.updateChaseState(monsterGrid, playerGrid);
+    const now = this.now();
+    const stimulusGrid = this.pickStimulusGrid(now, monsterGrid, playerGrid);
+    this.updateChaseState(monsterGrid, stimulusGrid);
 
     // Plan after state updates so chase timers immediately change paths
     this.plan(monsterGrid);
 
     const { move, lookYaw } = this.followPathLikeAutopilot(monsterGrid);
-    if (this.state === 'chase' && playerGrid) {
+    if (this.state === 'chase' && stimulusGrid && playerGrid && stimulusGrid.x === playerGrid.x && stimulusGrid.y === playerGrid.y) {
       return { move, lookYaw: this.computeLookYawToPlayer(), sprint: false };
     }
     return { move, lookYaw, sprint: false };
@@ -418,4 +477,3 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
     return mask.size > 0 ? mask : null;
   }
 }
-

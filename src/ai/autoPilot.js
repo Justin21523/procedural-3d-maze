@@ -11,13 +11,14 @@ import { SearchTask } from './tasks/searchTask.js';
  * based on mission points, exit, and monster avoidance.
  */
 export class AutoPilot {
-  constructor(worldState, monsterManager, missionPointsRef, exitPointRef, playerController, levelConfig = null) {
+  constructor(worldState, monsterManager, missionPointsRef, exitPointRef, playerController, levelConfig = null, pickupMarkersRef = null) {
     this.worldState = worldState;
     this.monsterManager = monsterManager;
     this.missionPointsRef = missionPointsRef; // function or array reference
     this.exitPointRef = exitPointRef;         // function or object with getGridPosition
     this.playerController = playerController;
     this.gun = null;
+    this.pickupMarkersRef = pickupMarkersRef; // function returning pickup markers (grid)
 
     this.pathfinder = new Pathfinding(worldState);
     this.currentPath = [];
@@ -39,6 +40,11 @@ export class AutoPilot {
     // 探索偏好：盡量挑遠、沒走過的地方
     this.minExploreDistance = CONFIG.AUTOPILOT_MIN_EXPLORE_DIST || 18; // 最少距離，才當作「值得走的遠目標」
     this.explorationSamples = CONFIG.AUTOPILOT_EXPLORE_SAMPLES || 80; // 每次隨機抽樣幾個 walkable tile 來評分
+    this.planAttempts = CONFIG.AUTOPILOT_PLAN_ATTEMPTS || 6; // 一次規劃最多嘗試幾個目標（避免挑到不可達目標就停住）
+
+    // 不可達目標記憶：避免一直重試同一個「走不到」的點而原地發呆
+    this.unreachableTiles = new Map(); // key -> timestamp(ms)
+    this.unreachableTTL = CONFIG.AUTOPILOT_UNREACHABLE_TTL || 12_000; // 12 秒後允許重新嘗試
 
     // 卡住偵測
     this.lastGrid = null;
@@ -56,6 +62,13 @@ export class AutoPilot {
     this.lastWorldPos = null;
     this.noProgressTimer = 0;
     this.noProgressThreshold = apCfg.noProgressSeconds ?? 0.8;
+
+    // Route stability: commit to an outbound step at junctions to reduce dithering.
+    this.stepLockFromKey = null;
+    this.stepLockNext = null;
+    this.stepLockTimer = 0;
+    this.stepLockSeconds = Number.isFinite(apCfg.stepLockSeconds) ? apCfg.stepLockSeconds : 0.75;
+    this.stepLockMinNeighbors = Number.isFinite(apCfg.stepLockMinNeighbors) ? apCfg.stepLockMinNeighbors : 3;
 
     // Combat (AI player aiming/firing)
     this.combatTargetId = null;
@@ -76,6 +89,13 @@ export class AutoPilot {
     this.taskWantsInteract = false;
     this.taskInteractId = null;
     this._missionState = null;
+  }
+
+  getPickupMarkers() {
+    const raw = typeof this.pickupMarkersRef === 'function'
+      ? this.pickupMarkersRef()
+      : (this.pickupMarkersRef || []);
+    return Array.isArray(raw) ? raw : [];
   }
 
   setEnabled(enabled) {
@@ -120,6 +140,55 @@ export class AutoPilot {
     this.currentPath = [];
     this.currentTarget = null;
     this.lastPlanTime = 0;
+    this.clearStepLock();
+  }
+
+  recordUnreachable(gridPos) {
+    if (!gridPos) return;
+    const now = Date.now();
+    const key = this.posKey(gridPos);
+    this.unreachableTiles.set(key, now);
+
+    const expireBefore = now - this.unreachableTTL;
+    for (const [k, ts] of this.unreachableTiles.entries()) {
+      if (ts < expireBefore) {
+        this.unreachableTiles.delete(k);
+      }
+    }
+  }
+
+  isTemporarilyUnreachable(gridPos) {
+    if (!gridPos) return false;
+    const ts = this.unreachableTiles.get(this.posKey(gridPos));
+    if (!ts) return false;
+    return (Date.now() - ts) < this.unreachableTTL;
+  }
+
+  handleUnreachableTaskTarget(playerGrid, target) {
+    // If the current task can pick a new target (e.g. SearchTask), prefer that.
+    const current = this.taskRunner?.current || null;
+    const ctx = {
+      worldState: this.worldState,
+      gridPos: playerGrid,
+      getGridPos: () => playerGrid
+    };
+
+    if (current && typeof current.pickNextTarget === 'function') {
+      try {
+        current.pickNextTarget(ctx);
+      } catch {
+        // fall through to clearing
+        this.taskRunner?.clear?.();
+      }
+    } else {
+      this.taskRunner?.clear?.();
+    }
+
+    this.taskTarget = null;
+    this.taskWantsInteract = false;
+    this.taskInteractId = null;
+    this.resetPath();
+    this.triggerNudge();
   }
 
   readMissionState() {
@@ -208,7 +277,14 @@ export class AutoPilot {
     if (objectiveTemplate === 'escort' || objectiveTemplate === 'escortToSafeRoom') {
       const started = !!objective?.progress?.started;
       const completed = !!objective?.progress?.completed;
-      if (!completed && started && objectiveGoalGrid && Number.isFinite(objectiveGoalGrid.x) && Number.isFinite(objectiveGoalGrid.y)) {
+      if (
+        !completed &&
+        started &&
+        objectiveGoalGrid &&
+        Number.isFinite(objectiveGoalGrid.x) &&
+        Number.isFinite(objectiveGoalGrid.y) &&
+        !this.isTemporarilyUnreachable(objectiveGoalGrid)
+      ) {
         this.taskTargetType = 'exit';
         this.taskRunner.setTasks([
           new MoveToTask(objectiveGoalGrid, { threshold: 0 })
@@ -219,7 +295,7 @@ export class AutoPilot {
 
     if (objectiveTemplate === 'holdToScan') {
       const nextGridPos = objective?.nextInteractGridPos || objective?.progress?.nextTargetGridPos || null;
-      if (nextGridPos && Number.isFinite(nextGridPos.x) && Number.isFinite(nextGridPos.y)) {
+      if (nextGridPos && Number.isFinite(nextGridPos.x) && Number.isFinite(nextGridPos.y) && !this.isTemporarilyUnreachable(nextGridPos)) {
         this.taskTargetType = 'mission';
         this.taskRunner.setTasks([
           new MoveToTask(nextGridPos, { threshold: 0 })
@@ -230,7 +306,7 @@ export class AutoPilot {
 
     if (objectiveTemplate === 'photographEvidence') {
       const nextGridPos = objective?.nextInteractGridPos || objective?.progress?.nextTargetGridPos || null;
-      if (nextGridPos && Number.isFinite(nextGridPos.x) && Number.isFinite(nextGridPos.y)) {
+      if (nextGridPos && Number.isFinite(nextGridPos.x) && Number.isFinite(nextGridPos.y) && !this.isTemporarilyUnreachable(nextGridPos)) {
         this.taskTargetType = 'mission';
         this.taskRunner.setTasks([
           new MoveToTask(nextGridPos, { threshold: 0 })
@@ -241,7 +317,13 @@ export class AutoPilot {
 
     if (objectiveTemplate === 'lureToSensor') {
       const stage = String(objective?.progress?.stage || '').trim();
-      if (stage === 'wait' && objectiveGoalGrid && Number.isFinite(objectiveGoalGrid.x) && Number.isFinite(objectiveGoalGrid.y)) {
+      if (
+        stage === 'wait' &&
+        objectiveGoalGrid &&
+        Number.isFinite(objectiveGoalGrid.x) &&
+        Number.isFinite(objectiveGoalGrid.y) &&
+        !this.isTemporarilyUnreachable(objectiveGoalGrid)
+      ) {
         this.taskTargetType = 'mission';
         this.taskRunner.setTasks([
           new MoveToTask(objectiveGoalGrid, { threshold: 0 })
@@ -286,14 +368,14 @@ export class AutoPilot {
         if (objectiveNextId) {
           const nextTarget = pool.find((t) => String(t?.id || '').trim() === objectiveNextId);
           const nextGridPos = objective?.nextInteractGridPos || null;
-          if (nextTarget?.gridPos && nextTarget.id) {
+          if (nextTarget?.gridPos && nextTarget.id && !this.isTemporarilyUnreachable(nextTarget.gridPos)) {
             this.taskTargetType = 'mission';
             this.taskRunner.setTasks([
               new InteractTask(nextTarget.id || '', nextTarget.gridPos, { threshold: 1 })
             ]);
             return;
           }
-          if (nextGridPos && Number.isFinite(nextGridPos.x) && Number.isFinite(nextGridPos.y)) {
+          if (nextGridPos && Number.isFinite(nextGridPos.x) && Number.isFinite(nextGridPos.y) && !this.isTemporarilyUnreachable(nextGridPos)) {
             this.taskTargetType = 'mission';
             this.taskRunner.setTasks([
               new InteractTask(objectiveNextId, nextGridPos, { threshold: 1 })
@@ -308,33 +390,39 @@ export class AutoPilot {
           return da - db;
         });
 
-        const next = pool[0];
-        this.taskTargetType = 'mission';
-        this.taskRunner.setTasks([
-          new InteractTask(next.id || '', next.gridPos, { threshold: 1 })
-        ]);
-        return;
+        const next = pool.find((t) => t?.gridPos && !this.isTemporarilyUnreachable(t.gridPos)) || null;
+        if (next) {
+          this.taskTargetType = 'mission';
+          this.taskRunner.setTasks([
+            new InteractTask(next.id || '', next.gridPos, { threshold: 1 })
+          ]);
+          return;
+        }
       }
     }
 
     // Exit unlocked: go to exit and interact to finish.
-    if (exitUnlocked !== false && this.exitPointRef?.getGridPosition) {
+    if (exitUnlocked === true && this.exitPointRef?.getGridPosition) {
       const exit = this.exitPointRef.getGridPosition();
+      if (!this.isTemporarilyUnreachable(exit)) {
       this.taskTargetType = 'exit';
       this.taskRunner.setTasks([
         new InteractTask('exit', exit, { threshold: 1 })
       ]);
       return;
+      }
     }
 
     // Exit locked but objective is to unlock it: go to exit and interact.
     if (objectiveTemplate === 'unlockExit' && this.exitPointRef?.getGridPosition) {
       const exit = this.exitPointRef.getGridPosition();
+      if (!this.isTemporarilyUnreachable(exit)) {
       this.taskTargetType = 'exit';
       this.taskRunner.setTasks([
         new InteractTask('exit', exit, { threshold: 1 })
       ]);
       return;
+      }
     }
 
     // Exit locked but no interactable targets: explore/search until the objective updates.
@@ -404,6 +492,7 @@ export class AutoPilot {
     for (let i = 0; i < this.explorationSamples; i++) {
       const tile = this.worldState.findRandomWalkableTile();
       if (!tile) continue;
+      if (this.isTemporarilyUnreachable(tile)) continue;
 
       const dist = Math.abs(tile.x - playerGrid.x) + Math.abs(tile.y - playerGrid.y);
       if (dist < this.minExploreDistance) continue;
@@ -431,6 +520,7 @@ export class AutoPilot {
       for (let i = 0; i < this.explorationSamples; i++) {
         const tile = this.worldState.findRandomWalkableTile();
         if (!tile) continue;
+        if (this.isTemporarilyUnreachable(tile)) continue;
 
         const dist = Math.abs(tile.x - playerGrid.x) + Math.abs(tile.y - playerGrid.y);
         const key = this.posKey(tile);
@@ -451,13 +541,140 @@ export class AutoPilot {
     return best ? { x: best.x, y: best.y } : null;
   }
 
+  pickPickupTarget(playerGrid, options = {}) {
+    const exclude = options?.exclude instanceof Set ? options.exclude : null;
+    if (!playerGrid) return null;
+
+    const pickups = this.getPickupMarkers();
+    if (!Array.isArray(pickups) || pickups.length === 0) return null;
+
+    const gs = this.playerController?.gameState || null;
+    const healthPct = gs?.getHealthPercentage ? gs.getHealthPercentage() : 100;
+    const inv = gs?.getInventorySnapshot ? (gs.getInventorySnapshot() || {}) : {};
+
+    const weaponState = this.gun?.getWeaponState ? this.gun.getWeaponState() : null;
+    const hasAmmoInfo = !!weaponState;
+    const ammoTotal = hasAmmoInfo ? ((weaponState?.ammoInMag || 0) + (weaponState?.ammoReserve || 0)) : Infinity;
+
+    const urgentHealth = healthPct < 45;
+    const urgentAmmo = hasAmmoInfo && ammoTotal < 10;
+
+    const threat = this.getThreatInfo(playerGrid);
+    const nearestDist = threat?.nearestDist ?? Infinity;
+    const threatened = nearestDist <= 3;
+    if (threatened && !(urgentHealth || urgentAmmo)) return null;
+
+    const desiredTools = {
+      smoke: 1,
+      flash: 1,
+      decoy: 1,
+      lure: 1,
+      trap: 1,
+      jammer: 1,
+      sensor: 1,
+      mine: 1
+    };
+
+    const getCount = (k) => {
+      const n = Math.round(Number(inv?.[k]) || 0);
+      return Number.isFinite(n) ? Math.max(0, n) : 0;
+    };
+
+    let best = null;
+    const maxDist = urgentHealth || urgentAmmo ? 18 : 14;
+
+    for (const p of pickups) {
+      if (!p) continue;
+      const x = Math.round(Number(p.x));
+      const y = Math.round(Number(p.y));
+      const kind = String(p.kind || '').trim();
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !kind) continue;
+
+      const pos = { x, y };
+      const key = this.posKey(pos);
+      if (exclude && exclude.has(key)) continue;
+      if (this.isTemporarilyUnreachable(pos)) continue;
+
+      const dist = Math.abs(x - playerGrid.x) + Math.abs(y - playerGrid.y);
+      if (dist > maxDist && !(urgentHealth || urgentAmmo)) continue;
+
+      let need = 0;
+      let kindBias = 0;
+      let distWeight = 4.0;
+
+      if (kind === 'health') {
+        need = Math.max(0, Math.min(1, (70 - healthPct) / 70));
+        distWeight = 6.0;
+        kindBias = 10;
+      } else if (kind === 'ammo') {
+        if (!hasAmmoInfo) continue;
+        need = Math.max(0, Math.min(1, (22 - ammoTotal) / 22));
+        distWeight = 5.0;
+        kindBias = 7;
+      } else if (desiredTools[kind] !== undefined) {
+        const have = getCount(kind);
+        const want = desiredTools[kind] || 0;
+        need = want > 0 ? Math.max(0, Math.min(1, (want - have) / want)) : 0;
+        distWeight = 3.8;
+        if (kind === 'smoke') kindBias = 9;
+        else if (kind === 'flash') kindBias = 8;
+        else if (kind === 'decoy') kindBias = 6;
+        else if (kind === 'sensor') kindBias = 4;
+      } else {
+        continue;
+      }
+
+      const opportunistic = dist <= 2;
+      if (need <= 0 && !opportunistic) continue;
+
+      const score = need * 100 + kindBias + (opportunistic ? 12 : 0) - dist * distWeight;
+      if (!best || score > best.score) {
+        best = {
+          x,
+          y,
+          kind,
+          dist,
+          need,
+          urgent: urgentHealth || urgentAmmo,
+          score
+        };
+      }
+    }
+
+    return best ? { x: best.x, y: best.y, kind: best.kind, dist: best.dist, need: best.need, urgent: best.urgent } : null;
+  }
+
   /**
    * Choose next target: nearest mission (uncollected), else exit, else exploration target
    */
-  pickTarget(playerGrid) {
+  pickTarget(playerGrid, options = {}) {
+    const exclude = options?.exclude instanceof Set ? options.exclude : null;
+
+    const pickupTarget = this.pickPickupTarget(playerGrid, { exclude });
+    const shouldDetourForPickup = (primaryType) => {
+      if (!pickupTarget) return false;
+      if (pickupTarget.urgent) return true;
+      const primary = String(primaryType || '').trim();
+      const dist = pickupTarget.dist ?? Infinity;
+      const hasNeed = (pickupTarget.need || 0) > 0;
+      const opportunistic = dist <= 1;
+      if (!(hasNeed || opportunistic)) return false;
+      const limit = primary === 'explore' ? 14 : 8;
+      return dist <= limit;
+    };
+
     if (this.taskTarget && Number.isFinite(this.taskTarget.x) && Number.isFinite(this.taskTarget.y)) {
-      this.targetType = this.taskTargetType || 'mission';
-      return { x: this.taskTarget.x, y: this.taskTarget.y };
+      const taskPos = { x: this.taskTarget.x, y: this.taskTarget.y };
+      const key = this.posKey(taskPos);
+      const blocked = (exclude && exclude.has(key)) || this.isTemporarilyUnreachable(taskPos);
+      if (!blocked) {
+        if (shouldDetourForPickup(this.taskTargetType)) {
+          this.targetType = 'pickup';
+          return { x: pickupTarget.x, y: pickupTarget.y };
+        }
+        this.targetType = this.taskTargetType || 'mission';
+        return taskPos;
+      }
     }
 
     const missions = this.getMissionTargets();
@@ -470,26 +687,69 @@ export class AutoPilot {
         const db = Math.abs(b.gridPos.x - playerGrid.x) + Math.abs(b.gridPos.y - playerGrid.y);
         return da - db;
       });
-      this.targetType = 'mission';
-      return { x: uncollected[0].gridPos.x, y: uncollected[0].gridPos.y };
+
+      for (const cand of uncollected) {
+        const pos = { x: cand.gridPos.x, y: cand.gridPos.y };
+        const key = this.posKey(pos);
+        if (exclude && exclude.has(key)) continue;
+        if (this.isTemporarilyUnreachable(pos)) continue;
+        if (shouldDetourForPickup('mission')) {
+          this.targetType = 'pickup';
+          return { x: pickupTarget.x, y: pickupTarget.y };
+        }
+        this.targetType = 'mission';
+        return pos;
+      }
     }
 
-    // Otherwise go to exit
-    if (this.exitPointRef && this.exitPointRef.getGridPosition) {
+    const state = this.getMissionState();
+    const exitUnlocked = state?.exitUnlocked;
+    const objectiveTemplate = String(state?.objective?.template || '').trim();
+
+    // Otherwise go to exit (only if unlocked, or if the current objective requires interacting with it).
+    const allowExit =
+      exitUnlocked === true ||
+      objectiveTemplate === 'unlockExit';
+
+    if (allowExit && this.exitPointRef && this.exitPointRef.getGridPosition) {
       const exit = this.exitPointRef.getGridPosition();
-      this.targetType = 'exit';
-      return { x: exit.x, y: exit.y };
+      const pos = { x: exit.x, y: exit.y };
+      const key = this.posKey(pos);
+      if ((!exclude || !exclude.has(key)) && !this.isTemporarilyUnreachable(pos)) {
+        if (shouldDetourForPickup('exit')) {
+          this.targetType = 'pickup';
+          return { x: pickupTarget.x, y: pickupTarget.y };
+        }
+        this.targetType = 'exit';
+        return pos;
+      }
     }
 
     // 否則啟動「探索模式」：找一個又遠又沒去過的格子
+    if (shouldDetourForPickup('explore')) {
+      this.targetType = 'pickup';
+      return { x: pickupTarget.x, y: pickupTarget.y };
+    }
     const exploreTarget = this.pickExplorationTarget(playerGrid);
     this.targetType = 'explore';
     if (exploreTarget) {
-      return exploreTarget;
+      const key = this.posKey(exploreTarget);
+      if (!exclude || !exclude.has(key)) {
+        return exploreTarget;
+      }
     }
 
     // 仍然沒選到的話，就退回舊的隨機邏輯
-    return this.worldState.findRandomWalkableTile();
+    for (let i = 0; i < 12; i++) {
+      const fallback = this.worldState.findRandomWalkableTile();
+      if (!fallback) break;
+      const fallbackKey = this.posKey(fallback);
+      if (exclude && exclude.has(fallbackKey)) continue;
+      if (this.isTemporarilyUnreachable(fallback)) continue;
+      return fallback;
+    }
+
+    return null;
   }
 
   /**
@@ -497,6 +757,16 @@ export class AutoPilot {
    */
   plan(playerGrid) {
     const now = performance.now() / 1000;
+    const missionState = this.getMissionState();
+    const exitUnlocked = missionState?.exitUnlocked;
+    const objectiveTemplate = String(missionState?.objective?.template || '').trim();
+    const allowExitTarget = exitUnlocked === true || objectiveTemplate === 'unlockExit';
+
+    // Safety: if the exit becomes locked (or wasn't meant to be targeted), drop any stale exit target and re-plan.
+    if (!allowExitTarget && this.targetType === 'exit') {
+      this.currentTarget = null;
+      this.currentPath = [];
+    }
 
     // 如果目標已經幾乎到達，就丟掉舊路徑、強制重新規劃
     if (this.currentTarget) {
@@ -516,6 +786,26 @@ export class AutoPilot {
           this.currentTarget = null;
           this.currentPath = [];
         }
+      } else if (this.targetType === 'exit') {
+        // Keep the exit target stable until we actually arrive on its tile
+        // (interaction range is handled separately by InteractableSystem).
+        if (distToTarget <= 0) {
+          this.currentTarget = null;
+          this.currentPath = [];
+        }
+      } else if (this.targetType === 'pickup') {
+        const pickups = this.getPickupMarkers();
+        const stillValid = pickups.some((p) =>
+          p &&
+          Number.isFinite(p.x) &&
+          Number.isFinite(p.y) &&
+          Math.round(Number(p.x)) === this.currentTarget.x &&
+          Math.round(Number(p.y)) === this.currentTarget.y
+        );
+        if (!stillValid || distToTarget <= 1) {
+          this.currentTarget = null;
+          this.currentPath = [];
+        }
       } else {
         if (distToTarget <= 1) {
           this.currentTarget = null;
@@ -527,7 +817,7 @@ export class AutoPilot {
     // 有有效路徑而且還在規劃冷卻時間內，就不重算以避免抖動
     if (
       this.currentPath &&
-      this.currentPath.length > 1 &&
+      this.currentPath.length > 0 &&
       this.currentTarget &&
       now - this.lastPlanTime < this.planInterval
     ) {
@@ -536,26 +826,74 @@ export class AutoPilot {
 
     this.lastPlanTime = now;
 
-    const target = this.pickTarget(playerGrid);
-    if (!target) return;
-
-    this.currentTarget = target;
-
     // Use avoidance mask to block near-monster tiles
     const avoidMask = this.buildAvoidanceMask();
-    let path = this.pathfinder.findPath(playerGrid, target, true, avoidMask);
+    const exclude = new Set();
+    const maxAttempts = Math.max(1, Math.min(30, Number(this.planAttempts) || 6));
 
-    // 如果因為避怪完全找不到路，退一步允許接近怪物（總比完全不動好）
-    if ((!path || path.length === 0) && avoidMask && avoidMask.size > 0) {
-      path = this.pathfinder.findPath(playerGrid, target, true, null);
+    // Prefer keeping the current target (reduces jitter at multi-way junctions).
+    if (this.currentTarget && !this.isTemporarilyUnreachable(this.currentTarget)) {
+      let path = this.pathfinder.findPath(playerGrid, this.currentTarget, true, avoidMask);
+      if ((!path || path.length === 0) && avoidMask && avoidMask.size > 0) {
+        path = this.pathfinder.findPath(playerGrid, this.currentTarget, true, null);
+      }
+      if (path && path.length > 0 && typeof this.pathfinder.smoothPath === 'function') {
+        path = this.pathfinder.smoothPath(path);
+      }
+      if (path && path.length > 0) {
+        this.currentPath = path;
+        return;
+      }
+
+      // Current target no longer reachable; fall back to selecting a new target.
+      const failedTarget = this.currentTarget;
+      this.recordUnreachable(failedTarget);
+      if (this.taskTarget && failedTarget.x === this.taskTarget.x && failedTarget.y === this.taskTarget.y) {
+        this.handleUnreachableTaskTarget(playerGrid, failedTarget);
+        return;
+      }
+      this.currentTarget = null;
+      this.currentPath = [];
     }
 
-    // ✅ 這裡做平滑
-    if (path && path.length > 0 && typeof this.pathfinder.smoothPath === 'function') {
-      path = this.pathfinder.smoothPath(path);
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const target = this.pickTarget(playerGrid, { exclude });
+      if (!target) break;
+
+      const tKey = this.posKey(target);
+      exclude.add(tKey);
+
+      let path = this.pathfinder.findPath(playerGrid, target, true, avoidMask);
+
+      // 如果因為避怪完全找不到路，退一步允許接近怪物（總比完全不動好）
+      if ((!path || path.length === 0) && avoidMask && avoidMask.size > 0) {
+        path = this.pathfinder.findPath(playerGrid, target, true, null);
+      }
+
+      // ✅ 這裡做平滑
+      if (path && path.length > 0 && typeof this.pathfinder.smoothPath === 'function') {
+        path = this.pathfinder.smoothPath(path);
+      }
+
+      if (path && path.length > 0) {
+        this.currentTarget = target;
+        this.currentPath = path;
+        return;
+      }
+
+      // Pathfinding failed: remember and try another target.
+      this.recordUnreachable(target);
+
+      // If this was a task target, force the task to pick a different waypoint/goal.
+      if (this.taskTarget && target.x === this.taskTarget.x && target.y === this.taskTarget.y) {
+        this.handleUnreachableTaskTarget(playerGrid, target);
+        return;
+      }
     }
 
-    this.currentPath = path || [];
+    // Nothing reachable: clear current path so nudge/no-progress logic can recover.
+    this.currentTarget = null;
+    this.currentPath = [];
   }
 
   /**
@@ -568,11 +906,14 @@ export class AutoPilot {
     const playerPos = this.playerController.getGridPosition();
     this._missionState = this.readMissionState();
     this.tickTasks(deltaTime, playerPos, this._missionState);
+    this.updateStepLock(deltaTime, playerPos);
 
     const threat = this.getThreatInfo(playerPos);
     const block = threat.nearestDist <= 2;
     const panicSprint = threat.nearestDist <= 4;
-    const combat = this.computeCombatDirective(playerPos, deltaTime, { panic: block });
+    // Keep blocking early, but only suppress firing when the monster is *extremely* close.
+    const panic = threat.nearestDist <= 1;
+    const combat = this.computeCombatDirective(playerPos, deltaTime, { panic });
     this.interactCooldown = Math.max(0, (this.interactCooldown || 0) - (deltaTime ?? 0));
     if (combat && this._missionState?.objective?.template === 'stealthNoise') {
       combat.fire = false;
@@ -821,7 +1162,7 @@ export class AutoPilot {
 
     const wantsInteract =
       !disableInteract &&
-      (this.taskWantsInteract || (this.targetType === 'mission' && distToGoal <= 0)) &&
+      (this.taskWantsInteract || ((this.targetType === 'mission' || this.targetType === 'exit') && distToGoal <= 0)) &&
       (this.interactCooldown || 0) <= 0;
 
     let interact = false;
@@ -866,8 +1207,10 @@ export class AutoPilot {
     }
 
     const target = this.currentPath[0];
-    const targetWorldX = target.x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
-    const targetWorldZ = target.y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
+    this.maybeStartStepLock(playerPos, target);
+    const lockedTarget = this.getStepLockTarget(playerPos) || target;
+    const targetWorldX = lockedTarget.x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
+    const targetWorldZ = lockedTarget.y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
 
     // 使用「玩家世界座標 -> 目標世界座標」向量，避免因格子坐標誤差貼牆
     const dx = targetWorldX - this.playerController.position.x;
@@ -1189,6 +1532,77 @@ export class AutoPilot {
     this.nudgeDir = { x: Math.cos(angle), y: Math.sin(angle) };
     this.nudgeTimer = this.nudgeDuration * 1.5;
     this.resetPath();
+  }
+
+  clearStepLock() {
+    this.stepLockFromKey = null;
+    this.stepLockNext = null;
+    this.stepLockTimer = 0;
+  }
+
+  updateStepLock(deltaTime, playerGrid) {
+    const dt = deltaTime ?? 0;
+    if (this.stepLockTimer > 0) {
+      this.stepLockTimer = Math.max(0, this.stepLockTimer - dt);
+      if (this.stepLockTimer <= 0) {
+        this.clearStepLock();
+        return;
+      }
+    }
+    if (!this.stepLockFromKey) return;
+    const key = this.posKey(playerGrid);
+    if (key !== this.stepLockFromKey) {
+      this.clearStepLock();
+    }
+  }
+
+  getWalkableNeighborCount(gridPos) {
+    const ws = this.worldState;
+    if (!ws?.isWalkable) return 0;
+    const x = gridPos?.x;
+    const y = gridPos?.y;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return 0;
+
+    let count = 0;
+    if (ws.isWalkable(x + 1, y)) count++;
+    if (ws.isWalkable(x - 1, y)) count++;
+    if (ws.isWalkable(x, y + 1)) count++;
+    if (ws.isWalkable(x, y - 1)) count++;
+    return count;
+  }
+
+  maybeStartStepLock(playerGrid, waypoint) {
+    if (this.stepLockTimer > 0) return;
+    if (!playerGrid || !waypoint) return;
+
+    const seconds = Number(this.stepLockSeconds) || 0;
+    if (!(seconds > 0)) return;
+
+    const minNeighbors = Math.max(2, Math.round(Number(this.stepLockMinNeighbors) || 3));
+    const neighborCount = this.getWalkableNeighborCount(playerGrid);
+    if (neighborCount < minNeighbors) return;
+
+    const dx = Math.sign(waypoint.x - playerGrid.x);
+    const dy = Math.sign(waypoint.y - playerGrid.y);
+    if (dx === 0 && dy === 0) return;
+
+    const next = { x: playerGrid.x + dx, y: playerGrid.y + dy };
+    if (!this.worldState?.isWalkable?.(next.x, next.y)) return;
+
+    this.stepLockFromKey = this.posKey(playerGrid);
+    this.stepLockNext = next;
+    this.stepLockTimer = Math.max(0.1, seconds);
+  }
+
+  getStepLockTarget(playerGrid) {
+    if (!this.stepLockFromKey || !this.stepLockNext) return null;
+    if (!(this.stepLockTimer > 0)) return null;
+    const key = this.posKey(playerGrid);
+    if (key !== this.stepLockFromKey) return null;
+    const x = this.stepLockNext?.x;
+    const y = this.stepLockNext?.y;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return this.stepLockNext;
   }
 
   handleNudgeTimer(dt) {
