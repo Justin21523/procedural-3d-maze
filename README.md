@@ -1,203 +1,128 @@
 # Procedural 3D Maze
 
-一個使用 **JavaScript + Three.js** 製作的實驗性 3D 迷宮原型專案，具備隨機生成地圖、第一人稱視角移動與可愛怪物 AI。本專案的重點是**學習與實作演算法**，而非製作商業級遊戲。
+一個以 **JavaScript（ES Modules）+ Three.js** 製作的第一人稱（First-person）迷宮遊戲原型：每一關用程序生成（Procedural Generation）產生新的迷宮與房型，再依關卡配置生成任務（Missions）、怪物（Enemies）與掉落（Pickups）。玩家能用武器與道具（Tools）周旋，完成目標後解鎖出口進入下一關（支援無限生成/難度成長）。
 
-**A procedural 3D maze prototype with cute monsters, built with JavaScript and Three.js. Focus on learning and implementing algorithms.**
-
-![Phase](https://img.shields.io/badge/Phase-3%20Complete-blue)
-![Version](https://img.shields.io/badge/version-0.3.0-green)
-![License](https://img.shields.io/badge/license-MIT-yellow)
+本專案同時也包含 **AI 玩家（Autopilot）**：當你不操作時，角色會自動探索、解任務、戰鬥並策略性使用道具（用於 demo / 壓力測試 / 玩法驗證）。
 
 ---
 
-## 特色（Features）
+## 目前重點特色（Features）
 
-### Phase 1 - MVP（已完成）✅
-- ✅ 第一人稱視角探索（First-person exploration）
-- ✅ WASD + 滑鼠控制（WASD + mouse controls）
-- ✅ 簡單 3D 場景（地板 + 牆壁）（Simple 3D scene with floor and walls）
-- ✅ 碰撞檢測（Collision detection）
-- ✅ Backrooms 風格視覺（Backrooms-like atmosphere）
-
-### Phase 2 - 隨機迷宮生成（已完成）✅
-- ✅ DFS-based 迷宮生成演算法
-- ✅ 可配置地圖尺寸
-- ✅ 自動生成出生點
-- ✅ 保證迷宮連通性
-
-### Phase 3 - 基礎怪物 AI（已完成）✅
-- ✅ A* 路徑搜尋演算法
-- ✅ 多種怪物類型（Hunter, Wanderer, Sentinel, Stalker, Rusher）
-- ✅ 行為樹 AI 系統
-- ✅ 前沿探索演算法
-
-### Phase 4 - 完整 FSM（已完成）✅
-- ✅ 怪物狀態機（EXPLORE, PATROL, CHASE, SEARCH, WANDER, IDLE）
-- ✅ 完整視線系統（視距 + 視角 + 聽覺）
-- ✅ 自主探索與巡邏路徑
-
-### Phase 5 - 體驗優化（部分完成）🚧
-- ✅ 迷你地圖系統
-- ✅ 出口點機制
-- ✅ 怪物模型載入（支援 GLTF/GLB/DAE）
-- ✅ 可配置的遊戲參數
-- ⬜ 音效系統
-- ⬜ 牆面與地板貼圖優化
+- **無限關卡（Endless Levels）**：`src/core/levelDirector.js` 支援 base levels + recipes + 動態生成（難度隨表現成長）
+- **任務與互動（Missions & Interactables）**：關卡 JSON 定義任務清單；互動門檻/消耗物品走 `InteractableSystem`
+- **道具玩法（Tools）**：誘餌/陷阱/干擾器/感測器/地雷 + 投擲（煙霧/閃光/誘餌）
+- **AI 感知全套（Perception）**：視野（FOV/LOS）、聽覺（Noise）、嗅覺（Scent）、煙霧遮蔽視線、閃光致盲、干擾器削弱感知
+- **怪物多型態（Monster Types）**：含特殊「木頭人（Weeping Angel）」等 brain；刷怪與關卡配置有多樣性保護
+- **導航輔助**：迷你地圖（永遠顯示整張地圖縮圖）+ 3D 世界標示（M 開關）
+- **效能保護**：遠距離 AI 節流、投射物/特效上限、像素比限制等
 
 ---
 
 ## 快速開始（Quick Start）
 
-### 系統需求（Requirements）
-- Node.js v18+
-- 現代瀏覽器（支援 WebGL）
+### 系統需求
 
-### 安裝與執行（Installation）
+- Node.js v18+
+- 現代瀏覽器（WebGL）
+
+### 安裝與啟動
 
 ```bash
-# 1. 複製專案（Clone the repository）
-git clone https://github.com/yourusername/procedural-3d-maze.git
-cd procedural-3d-maze
-
-# 2. 安裝依賴（Install dependencies）
 npm install
-
-# 3. 啟動開發伺服器（Start dev server）
-npm run dev
-# 若要配合測試文件使用固定埠：npm run dev -- --host --port 3002
-
-# 4. 開啟瀏覽器（Open browser）
-# 前往 http://localhost:3000 （或你指定的埠，例如 3002）
+npm run dev -- --host --port 3002
 ```
 
-### 操作方式（Controls）
+打開：`http://localhost:3002/`
+
+---
+
+## 操作方式（Controls）
+
+### 移動/互動
 
 | 按鍵 | 功能 |
-|------|------|
-| **WASD** | 移動（Move） |
-| **滑鼠（Mouse）** | 轉視角（Look around） |
-| **Shift** | 衝刺（Sprint） |
-| **ESC** | 暫停 / 釋放滑鼠（Pause / Release mouse） |
+|---|---|
+| `WASD` | 移動 |
+| `Mouse` | 轉視角 |
+| `Shift` | 衝刺 |
+| `E` | 互動 / 使用任務物件 |
+| `ESC` | 暫停 / 釋放滑鼠（Pointer Lock） |
+| `Tab` | 開啟/關閉設定面板 |
+| `` ` `` | 顯示/隱藏 Debug 按鈕（再點擊按鈕開 debug panel） |
+
+### 戰鬥
+
+| 按鍵 | 功能 |
+|---|---|
+| `Left Click` | 開火 |
+| `Right Click` 或 `F` | 格擋（Block/Guard） |
+| `R` | 換彈 |
+| `1/2/3` | 切換武器 |
+| `B` | 切換武器模式（若武器支援） |
+| `Q` | 技能：手榴彈 |
+| `X` | 技能：EMP |
+
+### 道具（Tools）
+
+| 按鍵 | 道具 |
+|---|---|
+| `4` | Lure（誘餌裝置） |
+| `5` | Trap（陷阱） |
+| `6` | Jammer（干擾器） |
+| `7` | Decoy（誘餌投擲） |
+| `8` | Smoke（煙霧） |
+| `9` | Flash（閃光） |
+| `0` | Sensor（感測器） |
+| `V` | Mine（地雷） |
+| `M` | 3D 世界標示開關（World Markers） |
+| `C` | 相機工具模式（某些任務會用到，例如拍照/掃描） |
+
+---
+
+## 手動驗證（Manual Validation）
+
+建議固定埠（3002）跑 dev server 後，依序測：
+
+1. AI 匯入 sanity：`http://localhost:3002/test-ai.html`
+2. 主程式載入：`http://localhost:3002/diagnostic.html`
+3. 主遊戲：`http://localhost:3002/`
+4. Enemy Lab：`http://localhost:3002/enemy-lab.html`
+5. Level Lab：`http://localhost:3002/level-lab.html`
+
+更完整的測試說明請看：`TESTING.md`、`TESTING_GUIDE.md`
+
+---
+
+## 文件（Documentation）
+
+- 文件治理規則：`docs/README.md`
+- 給 LLM/專案助手接手的「全套」實作說明：`docs/assistant/README.md`
+  - 架構/更新順序：`docs/assistant/ARCHITECTURE.md`
+  - AI 全套：`docs/assistant/AI.md`
+  - 關卡/任務/道具：`docs/assistant/CONTENT_SYSTEMS.md`
+  - 迷你地圖/效能：`docs/assistant/RENDERING_PERFORMANCE.md`
 
 ---
 
 ## 專案結構（Project Structure）
 
 ```
-procedural-3d-maze/
-├── docs/                    # 📚 所有設計與技術文件
-│   ├── GAME_DESIGN.md      # 遊戲設計文件
-│   ├── TECH_DESIGN.md      # 技術設計文件
-│   ├── AI_ALGO_NOTES.md    # 演算法筆記
-│   ├── GLOSSARY_中英術語.md # 術語對照表
-│   └── TODO.md             # 功能待辦清單
-├── public/                  # 🌐 靜態資源
-│   └── index.html          # HTML 入口
-├── src/                     # 💻 程式碼主目錄
-│   ├── main.js             # 主程式入口
-│   ├── core/               # 核心系統（config, gameLoop）
-│   ├── rendering/          # 渲染模組（scene, camera, lighting）
-│   ├── world/              # 世界與地圖（worldState, mapGenerator）
-│   ├── player/             # 玩家系統（input, playerController）
-│   ├── ai/                 # AI 系統（pathfinding, fsm, monsters）
-│   └── utils/              # 工具函式（math, random）
-├── scripts/                 # 📝 開發腳本與說明
-│   └── dev.md              # 開發環境設定說明
-├── package.json            # NPM 依賴與腳本
-└── vite.config.js          # Vite 配置
+src/
+  ai/            # Autopilot + monster brains + pathfinding
+  audio/         # AudioManager（含程序化音效）
+  core/          # config, events, gameLoop, levelDirector, spawnDirector, toolSystem...
+  entities/      # monsters, projectiles, pickups
+  player/        # input, controller, gun, weapon view
+  rendering/     # scene, camera, minimap, world markers
+  ui/            # UIManager（HUD/提示/結算/輸入模式）
+  world/         # maze grid, rooms, collision, exit, props
+public/
+  levels/        # 關卡 JSON 與 manifest
+  level-recipes/ # 無限生成 recipes（可選）
+  models/        # 模型與 meta
+  textures/      # 貼圖
 ```
 
----
-
-## 技術棧（Technology Stack）
-
-| 技術 | 用途 |
-|------|------|
-| **JavaScript (ES6+)** | 程式語言 |
-| **Three.js** | 3D 渲染引擎 |
-| **Vite** | 開發伺服器與打包工具 |
-
-**不使用的技術：** React/Vue、TypeScript、遊戲引擎（Unity/Godot）
-**理由：** 專注於演算法實作，保持最簡工具鏈
-
----
-
-## 演算法重點（Algorithm Highlights）
-
-本專案實作以下核心演算法：
-
-### 1. 迷宮生成（Maze Generation）
-- **DFS-based algorithm**：深度優先搜尋生成連通迷宮
-- 適合 Backrooms 風格的長走廊結構
-
-### 2. 路徑搜尋（Pathfinding）
-- **A* (A-star) algorithm**：怪物追蹤玩家的最佳路徑
-- 使用 Manhattan distance 作為 heuristic
-
-### 3. 視線判斷（Line-of-Sight）
-- **距離檢查**：視距限制
-- **視角檢查**：FOV 範圍
-- **遮擋檢查**：Raycasting 判斷牆壁阻擋
-
-### 4. 有限狀態機（Finite State Machine）
-- **Patrol**：巡邏狀態
-- **Chase**：追擊狀態
-- **Search**：搜尋狀態
-
-詳細說明請參考 `docs/AI_ALGO_NOTES.md`
-
----
-
-## 文件導覽（Documentation）
-
-| 文件 | 說明 |
-|------|------|
-| [GAME_DESIGN.md](docs/GAME_DESIGN.md) | 遊戲目標、玩法機制、怪物行為設計 |
-| [TECH_DESIGN.md](docs/TECH_DESIGN.md) | 技術架構、模組拆分、資料流 |
-| [AI_ALGO_NOTES.md](docs/AI_ALGO_NOTES.md) | 所有演算法實作細節與筆記 |
-| [GLOSSARY_中英術語.md](docs/GLOSSARY_中英術語.md) | 專業術語中英對照表 |
-| [TODO.md](docs/TODO.md) | 功能開發進度追蹤 |
-| [CHANGELOG.md](docs/CHANGELOG.md) | 重大變更記錄 |
-| [scripts/dev.md](scripts/dev.md) | 開發環境設定詳細說明 |
-
----
-
-## 開發原則（Development Principles）
-
-### 1. 單一真相檔（Single Source of Truth）
-- 同一主題只有一個文件
-- 禁止建立 `*_v2.md`、`*_backup.md` 等副本
-- 所有更新必須回寫對應原檔
-
-### 2. 極簡工具鏈（Minimal Tooling）
-- 不使用複雜框架或過度工程
-- 優先使用原生 ES Modules
-- 保持依賴最少化
-
-### 3. 演算法可讀性優先（Readability Over Cleverness）
-- 清楚的程式結構比炫技重要
-- 每個函式與類別都有 English 註解
-- 避免 God file / God class
-
-### 4. 約定式提交（Conventional Commits）
-- 使用 `feat|fix|docs|refactor|test|chore:` 前綴
-- 每次改動聚焦一件事
-
-詳見 `docs/README.md` 的治理規則。
-
----
-
-## 啟動後的手動驗證（Manual Validation）
-
-1. 確認 dev server 運行（預設 3000，或使用 `--port 3002` 以配合測試文件）
-2. AI 匯入檢查：開啟 `http://localhost:3002/test-ai.html`（改成你的埠）→ 預期綠色「All modules loaded successfully」訊息
-3. 主程式診斷：開啟 `diagnostic.html` → 按「Test Main Game」→ 預期 `main.js loaded successfully`
-4. Enemy Lab：開啟 `http://localhost:3002/enemy-lab.html` → 測試模型站立/比例/貼地，並可直接存到 `public/models/<enemy>/meta.json`
-5. 遊戲驗證：開啟 `/` 首頁 → 點擊「Click to Start」取得 Pointer Lock → 確認迷你地圖渲染、怪物生成日誌與移動操作正常
-
----
-
-## 貢獻指南（Contributing）
 
 ### 開發流程
 
