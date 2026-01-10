@@ -67,6 +67,7 @@ public/README.txt
 
 # Tauri / Rust build outputs
 src-tauri/target/
+src-tauri/gen/
 
 # Local data (do not commit)
 data/
