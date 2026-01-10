@@ -65,5 +65,8 @@ public/*.jpeg
 public/*.webp
 public/README.txt
 
+# Tauri / Rust build outputs
+src-tauri/target/
+
 # Local data (do not commit)
 data/

@@ -1,15 +1,15 @@
 {
+  "$schema": "https://schema.tauri.app/config/2",
   "build": {
     "beforeDevCommand": "npm run dev -- --host --port 3002",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:3002",
-    "distDir": "../dist"
+    "devUrl": "http://localhost:3002",
+    "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "Procedural 3D Maze",
-    "version": "0.1.0"
-  },
-  "tauri": {
+  "productName": "Procedural 3D Maze",
+  "version": "0.1.0",
+  "identifier": "com.procedural3dmaze.app",
+  "app": {
     "windows": [
       {
         "title": "Procedural 3D Maze",
@@ -21,13 +21,11 @@
     ],
     "security": {
       "csp": null
-    },
-    "bundle": {
-      "active": true,
-      "targets": "all",
-      "identifier": "com.procedural3dmaze.app",
-      "icon": []
     }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
   }
 }
-

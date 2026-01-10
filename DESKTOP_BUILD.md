@@ -22,6 +22,13 @@ npm install
 
 If you don't have Rust yet, install `rustup` + `stable` first.
 
+### Helper scripts (Ubuntu/Debian)
+
+```bash
+./scripts/install-desktop-deps-ubuntu.sh
+./scripts/install-rust.sh
+```
+
 ## Dev (desktop window)
 
 Runs Vite on `http://localhost:3002` and opens the Tauri window:
@@ -46,3 +53,4 @@ Outputs are placed under `src-tauri/target/release/bundle/`.
 
 - This repo uses absolute asset paths like `/models/...` and `/textures/...`.
   - Tauri's `custom-protocol` serves the app under an internal origin so these paths work without changing the game code.
+- Linux note: newer distros (e.g. Ubuntu 24.04) ship WebKitGTK 4.1 (libsoup3). This repo uses Tauri v2 to match that stack.
