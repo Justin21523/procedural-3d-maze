@@ -1,19 +1,9 @@
 {
-  "generatedAt": "2026-01-10T11:43:31.597Z",
+  "generatedAt": "2026-01-10T12:52:38.824Z",
   "models": [
-    "/models/enemy/BisonBurly/BisonBurly.dae",
-    "/models/enemy/CityLicker/CityLicker.dae",
-    "/models/enemy/Clodzilla/Clodzilla.dae",
-    "/models/enemy/Cocobanana/Cocobanana.dae",
     "/models/enemy/fuzzlefox/fuzzlefox__cute_stylized_cartoon_fox_character.glb",
-    "/models/enemy/KomaStar/KomaStar.dae",
-    "/models/enemy/Lappinitup/Lappinitup.dae",
-    "/models/enemy/Runsure/Runsure.dae",
-    "/models/enemy/Shakey/Shakey.dae",
-    "/models/enemy/Sighdurr/Sighdurr.dae",
     "/models/enemy/sonic-hd/sonic-hd.glb",
     "/models/enemy/super_monkey_ball/super_monkey_ball_-_aiai.glb",
-    "/models/enemy/tails_sonic_the_hedgehog/tails_sonic_the_hedgehog.glb",
-    "/models/enemy/Unbearaboy/Unbearaboy.dae"
+    "/models/enemy/tails_sonic_the_hedgehog/tails_sonic_the_hedgehog.glb"
   ]
 }
