@@ -34,7 +34,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -50,7 +49,7 @@ jobs:
         run: choco install nsis -y
 
       - name: Install frontend deps
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Build desktop bundle (Windows .exe via NSIS)
         if: runner.os == 'Windows'
