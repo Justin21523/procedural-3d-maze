@@ -38,6 +38,7 @@ npm run desktop:dev
 ```
 
 If you see `failed to get cargo metadata`, install Rust (cargo/rustc) and restart the terminal.
+If you see `listen EPERM ... 0.0.0.0:3002`, remove `--host` (desktop dev only needs localhost).
 
 ## Build installers / executables
 
