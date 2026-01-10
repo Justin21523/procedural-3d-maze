@@ -1,12 +1,12 @@
-# Enemy Model Metadata (`meta.json`)
+# Enemy Model Metadata (`manifest.json`)
 
-This document describes how to use `public/models/<enemy>/meta.json` to tune enemy model transforms (scale, grounding, facing) and optionally override some gameplay knobs (AI/combat/stats), so you can add/tune models without changing runtime code.
+This document describes how to use `public/models/enemy/<enemy>/manifest.json` to tune enemy model transforms (scale, grounding, facing) and optionally override some gameplay knobs (AI/combat/stats), so you can add/tune models without changing runtime code.
 
 ---
 
 ## Location
 
-- `public/models/<enemy>/meta.json`
+- `public/models/enemy/<enemy>/manifest.json`
 
 Example:
 
@@ -103,7 +103,7 @@ Used for brain/modules wiring:
 
 ## Important notes
 
-- `meta.json` is sanitized at runtime: invalid types are ignored and numeric values are clamped to safe ranges.
+- `manifest.json` is sanitized at runtime: invalid types are ignored and numeric values are clamped to safe ranges.
 - Recommended tuning pages:
   - `enemy-lab.html`: first-person testing + live tuning (can save)
   - `test-enemy-meta.html`: lightweight transform preview (scale/upright/groundOffset)
@@ -116,7 +116,7 @@ When running Vite dev server (`npm run dev`), `enemy-lab.html` can write to disk
 
 - `POST /api/enemy-meta` with `{ modelPath: "/models/...", meta: {...} }`
 - Writes to:
-  - Folder models: `public/models/<folder>/meta.json`
+  - Enemy models: `public/models/enemy/<enemy>/manifest.json`
   - Root models: `public/models/<file>.meta.json`
 
 ---
@@ -125,5 +125,5 @@ When running Vite dev server (`npm run dev`), `enemy-lab.html` can write to disk
 
 After adding/removing files under `public/models/`, you can regenerate manifests / meta stubs:
 
-- `npm run models:sync` (folder `meta.json` only)
-- `npm run models:sync:all` (also generates root `*.meta.json`)
+- `npm run models:sync` (creates `public/models/enemy/manifest.json`, `public/models/weapon/manifest.json`, and per-enemy `manifest.json` if missing)
+- `node scripts/sync-models.js --force-enemy` (overwrite per-enemy manifests from `meta.json` + defaults)

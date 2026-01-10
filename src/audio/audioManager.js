@@ -202,6 +202,38 @@ export class AudioManager {
   }
 
   /**
+   * Procedural pickup "heal" chime.
+   */
+  playPickupHeal() {
+    if (!this.enabled) return;
+    const buffer = this.getPickupHealBuffer?.();
+    if (!buffer) return;
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.45 * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
+  /**
+   * Procedural monster guard clang.
+   */
+  playMonsterGuard() {
+    if (!this.enabled) return;
+    const buffer = this.getMonsterGuardBuffer?.();
+    if (!buffer) return;
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.5 * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
+  /**
    * Procedural win sound (short bright chirp) without external assets.
    */
   playGameWon() {
@@ -256,6 +288,97 @@ export class AudioManager {
     sound.onEnded = () => {
       sound.disconnect();
     };
+  }
+
+  /**
+   * Procedural weapon switch click.
+   */
+  playWeaponSwitch() {
+    if (!this.enabled) return;
+    const buffer = this.getWeaponSwitchBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.4 * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => sound.disconnect();
+  }
+
+  /**
+   * Procedural reload cue (start/finish).
+   */
+  playReload(kind = 'start') {
+    if (!this.enabled) return;
+    const buffer = kind === 'finish' ? this.getReloadFinishBuffer() : this.getReloadStartBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.45 * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => sound.disconnect();
+  }
+
+  /**
+   * Procedural weapon mode toggle.
+   */
+  playWeaponModeToggle() {
+    if (!this.enabled) return;
+    const buffer = this.getWeaponModeToggleBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.35 * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => sound.disconnect();
+  }
+
+  /**
+   * Procedural grenade launch thump.
+   */
+  playGrenadeLaunch() {
+    if (!this.enabled) return;
+    const buffer = this.getGrenadeLaunchBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.6 * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => sound.disconnect();
+  }
+
+  /**
+   * Procedural EMP pulse zap.
+   */
+  playEmpPulse() {
+    if (!this.enabled) return;
+    const buffer = this.getEmpPulseBuffer();
+    if (!buffer) return;
+
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.55 * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => sound.disconnect();
+  }
+
+  /**
+   * Procedural explosion boom (small/medium).
+   */
+  playExplosion(intensity = 1.0) {
+    if (!this.enabled) return;
+    const buffer = this.getExplosionBuffer();
+    if (!buffer) return;
+
+    const vol = Math.max(0.2, Math.min(1.0, Number(intensity) || 1.0));
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume((0.55 + vol * 0.25) * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => sound.disconnect();
   }
 
   /**
@@ -727,6 +850,60 @@ export class AudioManager {
     return buffer;
   }
 
+  getPickupHealBuffer() {
+    if (this.buffers.has('pickup_heal_proc')) {
+      return this.buffers.get('pickup_heal_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.22;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const f0 = 660;
+    const f1 = 990;
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const k = t / duration;
+      const freq = f0 + (f1 - f0) * k;
+      const env = Math.sin(Math.min(1, t / 0.02) * (Math.PI / 2)) * Math.exp(-t * 10);
+      const tone = Math.sin(2 * Math.PI * freq * t) * 0.7 + Math.sin(2 * Math.PI * (freq * 2) * t) * 0.15;
+      data[i] = tone * env * 0.85;
+    }
+
+    this.buffers.set('pickup_heal_proc', buffer);
+    return buffer;
+  }
+
+  getMonsterGuardBuffer() {
+    if (this.buffers.has('monster_guard_proc')) {
+      return this.buffers.get('monster_guard_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.16;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    // Metallic "clang": two close tones + noise burst, fast decay.
+    const fA = 520;
+    const fB = 760;
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const env = Math.exp(-t * 22);
+      const tone = Math.sin(2 * Math.PI * fA * t) * 0.55 + Math.sin(2 * Math.PI * fB * t) * 0.35;
+      const noise = (Math.random() * 2 - 1) * 0.25;
+      data[i] = (tone + noise) * env * 0.9;
+    }
+
+    this.buffers.set('monster_guard_proc', buffer);
+    return buffer;
+  }
+
   /**
    * Play player footstep sound
    * @param {boolean} running - Is player running?
@@ -752,6 +929,166 @@ export class AudioManager {
     sound.onEnded = () => {
       sound.disconnect();
     };
+  }
+
+  getWeaponSwitchBuffer() {
+    if (this.buffers.has('weapon_switch_proc')) return this.buffers.get('weapon_switch_proc');
+
+    const ctx = this.listener.context;
+    const duration = 0.08;
+    const sampleRate = ctx.sampleRate;
+    const frames = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frames, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < frames; i++) {
+      const t = i / sampleRate;
+      const env = Math.exp(-t * 55);
+      const click = (Math.random() * 2 - 1) * 0.55;
+      const tone = Math.sin(t * Math.PI * 2 * 1400) * 0.25;
+      data[i] = (click + tone) * env;
+    }
+
+    this.buffers.set('weapon_switch_proc', buffer);
+    return buffer;
+  }
+
+  getReloadStartBuffer() {
+    if (this.buffers.has('reload_start_proc')) return this.buffers.get('reload_start_proc');
+
+    const ctx = this.listener.context;
+    const duration = 0.18;
+    const sampleRate = ctx.sampleRate;
+    const frames = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frames, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < frames; i++) {
+      const t = i / sampleRate;
+      const env = Math.exp(-t * 18);
+      const clack = (Math.random() * 2 - 1) * 0.35;
+      const low = Math.sin(t * Math.PI * 2 * 240) * 0.35;
+      const high = Math.sin(t * Math.PI * 2 * 1100) * 0.12;
+      data[i] = (clack + low + high) * env;
+    }
+
+    this.buffers.set('reload_start_proc', buffer);
+    return buffer;
+  }
+
+  getReloadFinishBuffer() {
+    if (this.buffers.has('reload_finish_proc')) return this.buffers.get('reload_finish_proc');
+
+    const ctx = this.listener.context;
+    const duration = 0.14;
+    const sampleRate = ctx.sampleRate;
+    const frames = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frames, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < frames; i++) {
+      const t = i / sampleRate;
+      const env = Math.exp(-t * 22);
+      const click = (Math.random() * 2 - 1) * 0.28;
+      const tone = Math.sin(t * Math.PI * 2 * 900) * 0.25;
+      const thud = Math.sin(t * Math.PI * 2 * 150) * 0.22;
+      data[i] = (click + tone + thud) * env;
+    }
+
+    this.buffers.set('reload_finish_proc', buffer);
+    return buffer;
+  }
+
+  getWeaponModeToggleBuffer() {
+    if (this.buffers.has('weapon_mode_proc')) return this.buffers.get('weapon_mode_proc');
+
+    const ctx = this.listener.context;
+    const duration = 0.12;
+    const sampleRate = ctx.sampleRate;
+    const frames = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frames, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < frames; i++) {
+      const t = i / sampleRate;
+      const env = Math.exp(-t * 28);
+      const chirp = Math.sin(t * Math.PI * 2 * (720 + t * 1800)) * 0.35;
+      const tick = (Math.random() * 2 - 1) * 0.18;
+      data[i] = (chirp + tick) * env;
+    }
+
+    this.buffers.set('weapon_mode_proc', buffer);
+    return buffer;
+  }
+
+  getGrenadeLaunchBuffer() {
+    if (this.buffers.has('grenade_launch_proc')) return this.buffers.get('grenade_launch_proc');
+
+    const ctx = this.listener.context;
+    const duration = 0.22;
+    const sampleRate = ctx.sampleRate;
+    const frames = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frames, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < frames; i++) {
+      const t = i / sampleRate;
+      const env = Math.exp(-t * 10);
+      const boom = Math.sin(t * Math.PI * 2 * (110 + t * 90)) * 0.55;
+      const snap = (Math.random() * 2 - 1) * 0.12;
+      data[i] = (boom + snap) * env;
+    }
+
+    this.buffers.set('grenade_launch_proc', buffer);
+    return buffer;
+  }
+
+  getEmpPulseBuffer() {
+    if (this.buffers.has('emp_pulse_proc')) return this.buffers.get('emp_pulse_proc');
+
+    const ctx = this.listener.context;
+    const duration = 0.24;
+    const sampleRate = ctx.sampleRate;
+    const frames = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frames, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < frames; i++) {
+      const t = i / sampleRate;
+      const env = Math.exp(-t * 9);
+      const f = 260 + t * 1900;
+      const tone = Math.sin(t * Math.PI * 2 * f) * 0.38;
+      const buzz = Math.sin(t * Math.PI * 2 * (f * 1.98)) * 0.16;
+      const noise = (Math.random() * 2 - 1) * 0.12;
+      data[i] = (tone + buzz + noise) * env;
+    }
+
+    this.buffers.set('emp_pulse_proc', buffer);
+    return buffer;
+  }
+
+  getExplosionBuffer() {
+    if (this.buffers.has('explosion_proc')) return this.buffers.get('explosion_proc');
+
+    const ctx = this.listener.context;
+    const duration = 0.55;
+    const sampleRate = ctx.sampleRate;
+    const frames = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frames, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const base = 85;
+    for (let i = 0; i < frames; i++) {
+      const t = i / sampleRate;
+      const env = Math.exp(-t * 4.8);
+      const rumble = Math.sin(t * Math.PI * 2 * (base + t * 30)) * 0.65;
+      const roar = (Math.random() * 2 - 1) * 0.35;
+      const crack = Math.sin(t * Math.PI * 2 * (420 + t * 180)) * 0.18;
+      data[i] = (rumble + roar + crack) * env;
+    }
+
+    this.buffers.set('explosion_proc', buffer);
+    return buffer;
   }
 
   /**

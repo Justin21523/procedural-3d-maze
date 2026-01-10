@@ -35,14 +35,31 @@ export const CONFIG = {
 
   // Player weapon view (first-person)
   PLAYER_WEAPON_VIEW_ENABLED: true,
-  PLAYER_WEAPON_MODEL_PATH: '/models/assault_rifle_pbr.glb',
+  PLAYER_WEAPON_MODEL_PATH: '/models/weapon/assault_rifle_pbr.glb',
   PLAYER_WEAPON_SCALE: 1.0,
-  PLAYER_WEAPON_OFFSET: { x: 0.35, y: -0.35, z: -0.72 },
+  // Slightly closer to the camera to improve visibility (esp. small weapons like pistols).
+  PLAYER_WEAPON_OFFSET: { x: 0.35, y: -0.35, z: -0.58 },
   PLAYER_WEAPON_ROTATION: { x: -0.12, y: Math.PI + 0.12, z: 0.06 },
   PLAYER_WEAPON_SWAY: 0.9,
   PLAYER_WEAPON_BOB: 0.55,
   PLAYER_WEAPON_RECOIL: 1.0,
   PLAYER_CROSSHAIR_ENABLED: true,
+
+  // Rendering quality (performance)
+  RENDER_MAX_PIXEL_RATIO: 1.25,    // cap internal resolution (balances quality/perf on HiDPI)
+  RENDER_MIN_PIXEL_RATIO: 0.85,    // dynamic resolution lower bound (avoid excessive blur)
+  RENDER_DYNAMIC_RESOLUTION: true, // adjust pixel ratio to maintain FPS
+  RENDER_TARGET_FPS: 60,
+  RENDER_ANTIALIAS: false,         // MSAA is expensive on some GPUs
+  RENDER_USE_PHYSICAL_MATERIALS: false, // MeshPhysicalMaterial is heavy; use MeshStandardMaterial by default
+  RENDER_NORMAL_MAPS: true,
+  RENDER_ENV_MAPS: true,
+  RENDER_ENV_MAPS_FLOOR_ONLY: true, // keep reflections mainly on floors (big perf win)
+  RENDER_TEXTURE_ANISOTROPY: 4,    // clamp anisotropy (big perf win vs max=16 on many GPUs)
+  RENDER_EXPOSURE: 1.12,           // toneMapping exposure (helps avoid dull/dark look)
+
+  // Lighting / mission-driven world effects
+  POWER_OFF_LIGHT_MULTIPLIER: 0.75, // used when levels start "power off"
 
   // Monster settings
   MONSTER_BASE_HEIGHT: 1.6,// 怪物「基準身高」（未加 type scale）
@@ -66,7 +83,7 @@ export const CONFIG = {
   MONSTER_PROJECTILE_DAMAGE: 8,
   MONSTER_PROJECTILE_LIFETIME: 3.0,
   MONSTER_RESPAWN_DELAY: 0.6,    // Seconds before a replacement monster spawns
-  MONSTER_MODEL: '/models/VascodaGama.dae', // Default monster model (can be changed in UI)
+  MONSTER_MODEL: '/models/enemy/CityLicker/CityLicker.dae', // Default monster model (can be changed in UI)
   MONSTER_USE_ASSET_MODELS: true, // true=use public/models manifest; false=spawn simple placeholder cubes
 
   // Monster ranged combat rhythm (performance + "no shooting air")
@@ -216,7 +233,22 @@ export const CONFIG = {
 	  PROJECTILE_FAR_DISTANCE_TILES: 18,      // beyond this distance, tick projectiles less often
 	  PROJECTILE_FAR_TICK_SECONDS: 0.06,      // far projectile tick interval (seconds)
 	  FX_RENDER_DISTANCE_TILES: 18,           // skip spawning impact/explosion visuals beyond this distance
-	  MONSTER_RENDER_CULL_DISTANCE_TILES: 22, // hide monster models beyond this distance to reduce draw cost
+  MONSTER_RENDER_CULL_DISTANCE_TILES: 22, // hide monster models beyond this distance to reduce draw cost
+
+  // Monster defense + drops (reduce complexity, add clear gameplay loops)
+  MONSTER_GUARD_ENABLED: true,
+  MONSTER_GUARD_CHANCE: 0.14,          // chance to enter guard on hit (when available)
+  MONSTER_GUARD_MIN_HEALTH_RATIO: 0.55, // more likely to guard when below this health ratio
+  MONSTER_GUARD_DURATION_SECONDS: 0.7,
+  MONSTER_GUARD_COOLDOWN_SECONDS: 2.2,
+  MONSTER_GUARD_DAMAGE_MULT: 0.35,     // guard reduces incoming damage
+
+  MONSTER_DROP_HEALTH_CHANCE: 0.22,
+  MONSTER_DROP_HEALTH_SMALL_AMOUNT: 12,
+  MONSTER_DROP_HEALTH_BIG_CHANCE: 0.06,
+  MONSTER_DROP_HEALTH_BIG_AMOUNT: 30,
+  MONSTER_DROP_HEART_CHANCE: 0.12,
+  MONSTER_DROP_HEART_MAX_HEALTH_BONUS: 2, // permanent max health increase
 
 	  // Shadow settings
 	  SHADOW_ENABLED: true,           // Enable real-time shadows
@@ -234,12 +266,21 @@ export const CONFIG = {
   // Environment models
   POOL_MODEL_ENABLED: true,
   POOL_MODEL_PATH: '/models/pool_5.glb',
+  POOL_HDR_ENABLED: true,
+  POOL_HDR_PATH: '/pool_1k.hdr',
   ENVIRONMENT_HDR_ENABLED: true,
   ENVIRONMENT_HDR_PATH: '/pool_1k.hdr',
   POOL_FX_ENABLED: true,
+  POOL_FX_UPDATE_HZ: 20,              // cap water surface updates (CPU saver)
+  POOL_FX_CULL_DISTANCE_TILES: 14,    // hide + stop updating pool FX when far
+  POOL_MODEL_CULL_DISTANCE_TILES: 22, // hide pool model when far
 
   // Post-processing settings
   POST_PROCESSING_ENABLED: true,  // Enable post-processing pipeline
+
+  // Save / progress
+  AUTO_SAVE_ENABLED: true,
+  AUTO_SAVE_INTERVAL_SECONDS: 45,
 
   // Bloom settings
   BLOOM_ENABLED: true,
@@ -282,6 +323,7 @@ export const CONFIG = {
   AUTOPILOT_COMBAT_BURST_MAX_SHOTS: 6,
   AUTOPILOT_COMBAT_BURST_REST_MIN_SECONDS: 0.28,
   AUTOPILOT_COMBAT_BURST_REST_MAX_SECONDS: 0.55,
+  AUTOPILOT_PICKUP_UNREACHABLE_TTL: 30_000, // ms: avoid re-targeting a problematic pickup for a while
 
   // Player collision radius (in tiles)
   PLAYER_COLLISION_RADIUS: 0.35,

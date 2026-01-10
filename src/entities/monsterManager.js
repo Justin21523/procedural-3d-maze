@@ -48,6 +48,7 @@ export class MonsterManager {
     this.enemyCatalog = new EnemyCatalog();
     this.projectileManager = null;
     this.squadCoordinator = new SquadCoordinator();
+    this.audioManager = null;
   }
 
   setPlayerRef(playerRef) {
@@ -68,6 +69,10 @@ export class MonsterManager {
 
   setEventBus(eventBus) {
     this.eventBus = eventBus;
+  }
+
+  setAudioManager(audioManager) {
+    this.audioManager = audioManager || null;
   }
 
   setAutoRespawnEnabled(enabled) {
@@ -919,6 +924,12 @@ export class MonsterManager {
           monster.updateAnimation(dt);
         }
         continue;
+      }
+      if ((monster.guardTimer || 0) > 0) {
+        monster.guardTimer = Math.max(0, (monster.guardTimer || 0) - dt);
+      }
+      if ((monster.guardCooldown || 0) > 0) {
+        monster.guardCooldown = Math.max(0, (monster.guardCooldown || 0) - dt);
       }
       if ((monster.perceptionJammedTimer || 0) > 0) {
         monster.perceptionJammedTimer = Math.max(0, (monster.perceptionJammedTimer || 0) - dt);

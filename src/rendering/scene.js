@@ -37,21 +37,22 @@ export class SceneManager {
 
     // ---------- Renderer ----------
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: !!(CONFIG.RENDER_ANTIALIAS ?? true),
       powerPreference: 'high-performance'
     });
 
     const width = container.clientWidth;
     const height = container.clientHeight;
 
-    // 限制 pixel ratio，避免 4K 螢幕直接把 GPU 烤爆
-    // 極限降載：強制 pixel ratio = 1
-    const pixelRatio = 1.0;
-    this.renderer.setPixelRatio(pixelRatio);
+    // Limit pixel ratio to avoid overloading high-DPI screens.
+    const maxPixelRatio = Number.isFinite(CONFIG.RENDER_MAX_PIXEL_RATIO) ? CONFIG.RENDER_MAX_PIXEL_RATIO : 1.0;
+    const basePixelRatio = Math.min(maxPixelRatio, window.devicePixelRatio || 1);
+    this.pixelRatio = Math.max(0.25, basePixelRatio);
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(width, height);
 
     // PBR / 色彩 / tone mapping 設定
-    this.renderer.physicallyCorrectLights = true;
+    this.renderer.physicallyCorrectLights = !!(CONFIG.RENDER_USE_PHYSICAL_MATERIALS ?? false);
 
     if ('outputEncoding' in this.renderer) {
       // three r150 以前
@@ -63,10 +64,10 @@ export class SceneManager {
 
     if ('toneMapping' in this.renderer && THREE.ACESFilmicToneMapping !== undefined) {
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      this.renderer.toneMappingExposure = 1.0;
+      this.renderer.toneMappingExposure = Number.isFinite(CONFIG.RENDER_EXPOSURE) ? CONFIG.RENDER_EXPOSURE : 1.0;
     }
 
-    // 陰影：關閉可大幅降低 GPU/CPU 開銷
+    // Shadows: disabled by default (big performance win)
     this.renderer.shadowMap.enabled = false;
 
     container.appendChild(this.renderer.domElement);
@@ -91,7 +92,10 @@ export class SceneManager {
 
     // ---------- Environment Map（假「光追」反射） ----------
     this.environmentMap = null;
+    this.poolEnvironmentMap = null;
+    this.poolEnvironmentMapPromise = null;
     this._setupEnvironmentMap();
+    this._setupPoolEnvironmentMap();
 
     // ---------- Lighting ----------
     this.lights = setupLighting(this.scene);
@@ -104,9 +108,36 @@ export class SceneManager {
     // 方便存牆體做 raycast
     this.wallMeshes = [];
     this.obstacleOverlay = null;
+    this.frameStats = {
+      frameMs: 0,
+      updateMs: 0,
+      renderMs: 0,
+      fpsEma: 0,
+      pixelRatio: this.pixelRatio
+    };
 
     // Resize handler
     window.addEventListener('resize', () => this.onWindowResize());
+  }
+
+  setPixelRatio(nextRatio) {
+    if (!this.renderer) return;
+    const min = Number.isFinite(CONFIG.RENDER_MIN_PIXEL_RATIO) ? CONFIG.RENDER_MIN_PIXEL_RATIO : 0.7;
+    const max = Number.isFinite(CONFIG.RENDER_MAX_PIXEL_RATIO) ? CONFIG.RENDER_MAX_PIXEL_RATIO : 1.0;
+    const r = Math.max(0.25, Math.min(max, Math.max(min, Number(nextRatio) || this.pixelRatio || 1)));
+    if (Math.abs((this.pixelRatio || 1) - r) < 1e-3) return;
+    this.pixelRatio = r;
+    this.renderer.setPixelRatio(r);
+    this.renderer.setSize(this.container.clientWidth, this.container.clientHeight, false);
+    if (this.frameStats) this.frameStats.pixelRatio = r;
+  }
+
+  setFrameStats(stats = null) {
+    if (!stats || typeof stats !== 'object') return;
+    this.frameStats = {
+      ...(this.frameStats || {}),
+      ...stats
+    };
   }
 
   addWorldObject(obj) {
@@ -124,43 +155,140 @@ export class SceneManager {
   _setupEnvironmentMap() {
     if (!this.renderer) return;
 
-    const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
-    pmremGenerator.compileEquirectangularShader?.();
-
     const applyEnv = (texture) => {
       this.environmentMap = texture;
-      this.scene.environment = this.environmentMap;
+      const useEnvMap = !!(CONFIG.RENDER_ENV_MAPS ?? true);
+      const envFloorOnly = !!(CONFIG.RENDER_ENV_MAPS_FLOOR_ONLY ?? false);
+      // If floor-only mode is enabled, avoid setting scene.environment because it implicitly
+      // applies reflections to *all* MeshStandard/Physical materials (expensive).
+      this.scene.environment = (useEnvMap && !envFloorOnly) ? this.environmentMap : null;
     };
 
     const useFallback = () => {
+      const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
+      pmremGenerator.compileEquirectangularShader?.();
       const envScene = new RoomEnvironment();
       const envRT = pmremGenerator.fromScene(envScene);
       applyEnv(envRT.texture);
       pmremGenerator.dispose();
     };
 
-    const hdrPath = CONFIG.ENVIRONMENT_HDR_ENABLED ? CONFIG.ENVIRONMENT_HDR_PATH : null;
-    if (hdrPath) {
-      import('three/examples/jsm/loaders/RGBELoader.js')
-        .then(({ RGBELoader }) => {
-          const loader = new RGBELoader(this.modelManager);
-          loader.load(
-            hdrPath,
-            (hdr) => {
-              const envRT = pmremGenerator.fromEquirectangular(hdr);
-              hdr.dispose?.();
-              applyEnv(envRT.texture);
-              pmremGenerator.dispose();
-            },
-            undefined,
-            () => useFallback()
-          );
-        })
-        .catch(() => useFallback());
+    const enabled = !!(CONFIG.ENVIRONMENT_HDR_ENABLED);
+    const hdrCandidates = enabled
+      ? [CONFIG.ENVIRONMENT_HDR_PATH, '/pool_1k.hdr'].filter(Boolean)
+      : [];
+
+    if (hdrCandidates.length === 0) {
+      useFallback();
       return;
     }
 
-    useFallback();
+    this.loadFirstHdrEnvironmentMap(hdrCandidates)
+      .then((tex) => {
+        if (tex) applyEnv(tex);
+        else useFallback();
+      })
+      .catch(() => useFallback());
+  }
+
+  async loadHdrEnvironmentMap(hdrPath) {
+    if (!hdrPath || !this.renderer) throw new Error('Missing HDR path');
+    const { RGBELoader } = await import('three/examples/jsm/loaders/RGBELoader.js');
+
+    const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
+    pmremGenerator.compileEquirectangularShader?.();
+    const loader = new RGBELoader(this.modelManager);
+
+    try {
+      const hdr = await new Promise((resolve, reject) => {
+        loader.load(hdrPath, resolve, undefined, reject);
+      });
+      const envRT = pmremGenerator.fromEquirectangular(hdr);
+      hdr.dispose?.();
+      return envRT.texture;
+    } finally {
+      pmremGenerator.dispose();
+    }
+  }
+
+  async loadFirstHdrEnvironmentMap(paths) {
+    const list = Array.isArray(paths) ? paths.filter(Boolean) : [];
+    for (const p of list) {
+      try {
+        return await this.loadHdrEnvironmentMap(p);
+      } catch (err) {
+        void err;
+      }
+    }
+    return null;
+  }
+
+  _setupPoolEnvironmentMap() {
+    const enabled = !!(CONFIG.POOL_HDR_ENABLED);
+    if (!enabled) {
+      this.poolEnvironmentMap = null;
+      this.poolEnvironmentMapPromise = null;
+      return;
+    }
+
+    const candidates = [CONFIG.POOL_HDR_PATH, CONFIG.ENVIRONMENT_HDR_PATH, '/pool_1k.hdr'].filter(Boolean);
+    if (candidates.length === 0) return;
+
+    if (this.poolEnvironmentMapPromise) return;
+    this.poolEnvironmentMapPromise = this.loadFirstHdrEnvironmentMap(candidates)
+      .then((tex) => {
+        this.poolEnvironmentMap = tex;
+        this.poolEnvironmentMapPromise = null;
+        if (this.poolEnvironmentMap && this.poolEnvironmentMap !== this.environmentMap) {
+          this.applyPoolEnvironmentToWorld();
+        }
+        return tex;
+      })
+      .catch((err) => {
+        console.log('⚠️ Pool HDR load failed', err?.message || err);
+        this.poolEnvironmentMap = null;
+        this.poolEnvironmentMapPromise = null;
+        return null;
+      });
+  }
+
+  getPoolEnvironmentMap() {
+    return this.poolEnvironmentMap || this.environmentMap || null;
+  }
+
+  applyPoolEnvironmentToWorld() {
+    const env = this.getPoolEnvironmentMap();
+    if (!env) return;
+
+    for (const obj of this.worldMeshes || []) {
+      if (!obj) continue;
+      const isPoolFx = obj?.name === '__poolFx' || obj?.userData?.__poolFx;
+      const isPoolModel = !!obj?.userData?.__poolRoomModel;
+      if (!isPoolFx && !isPoolModel) continue;
+      this.applyPoolEnvironmentToObject(obj);
+    }
+  }
+
+  applyPoolEnvironmentToObject(root) {
+    if (!(CONFIG.RENDER_ENV_MAPS ?? true)) return;
+    const env = this.getPoolEnvironmentMap();
+    if (!env || !root?.traverse) return;
+
+    root.traverse((child) => {
+      if (!child?.isMesh) return;
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      const next = mats.map((m) => {
+        if (!m) return m;
+        const cloned = m.userData?.__poolEnvApplied ? m : m.clone();
+        cloned.userData = cloned.userData || {};
+        cloned.userData.__poolEnvApplied = true;
+        cloned.envMap = env;
+        cloned.envMapIntensity = Number.isFinite(cloned.envMapIntensity) ? cloned.envMapIntensity : 1.1;
+        cloned.needsUpdate = true;
+        return cloned;
+      });
+      child.material = Array.isArray(child.material) ? next : next[0];
+    });
   }
 
   async getGltfLoader() {
@@ -286,7 +414,12 @@ export class SceneManager {
 
     // Create textures for each room type
     const roomMaterials = {};
-    const sharedNormal = createNormalMap(6);
+    const useNormals = !!(CONFIG.RENDER_NORMAL_MAPS ?? true);
+    const sharedNormal = useNormals ? createNormalMap(6) : null;
+    const useEnvMap = !!(CONFIG.RENDER_ENV_MAPS ?? true);
+    const envFloorOnly = !!(CONFIG.RENDER_ENV_MAPS_FLOOR_ONLY ?? false);
+    const usePhysical = !!(CONFIG.RENDER_USE_PHYSICAL_MATERIALS ?? false);
+    const MaterialClass = usePhysical ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial;
 
     // Create materials for all room types
     Object.values(ROOM_TYPES).forEach(roomType => {
@@ -303,11 +436,15 @@ export class SceneManager {
 
       const textures = [wallTexture, floorTexture, ceilingTexture];
       const maxAniso = this.maxAnisotropy || 1;
+      const anisoClamp = Number.isFinite(CONFIG.RENDER_TEXTURE_ANISOTROPY)
+        ? Math.max(1, Math.round(CONFIG.RENDER_TEXTURE_ANISOTROPY))
+        : maxAniso;
+      const aniso = Math.max(1, Math.min(maxAniso, anisoClamp));
 
       textures.forEach(tex => {
         tex.wrapS = THREE.RepeatWrapping;
         tex.wrapT = THREE.RepeatWrapping;
-        tex.anisotropy = maxAniso;
+        tex.anisotropy = aniso;
 
         if ('encoding' in tex) {
           tex.encoding = THREE.sRGBEncoding;
@@ -317,36 +454,36 @@ export class SceneManager {
       });
 
       const pbr = this.getMaterialPropsForRoom(roomType);
+      const envWall = useEnvMap && !envFloorOnly ? this.environmentMap : null;
+      const envCeiling = useEnvMap && !envFloorOnly ? this.environmentMap : null;
+      const envFloor = useEnvMap ? this.environmentMap : null;
 
       roomMaterials[roomType] = {
-        wall: new THREE.MeshPhysicalMaterial({
+        wall: new MaterialClass({
           map: wallTexture,
-          normalMap: sharedNormal,
+          normalMap: sharedNormal || null,
           roughness: pbr.wall.roughness,
           metalness: pbr.wall.metalness,
-          clearcoat: 0.25,
-          clearcoatRoughness: 0.18,
-          envMap: this.environmentMap,
+          ...(usePhysical ? { clearcoat: 0.25, clearcoatRoughness: 0.18 } : {}),
+          envMap: envWall,
           envMapIntensity: pbr.wall.envMapIntensity
         }),
-        floor: new THREE.MeshPhysicalMaterial({
+        floor: new MaterialClass({
           map: floorTexture,
-          normalMap: sharedNormal,
+          normalMap: sharedNormal || null,
           roughness: pbr.floor.roughness,
           metalness: pbr.floor.metalness,
-          clearcoat: 0.35,
-          clearcoatRoughness: 0.12,
-          envMap: this.environmentMap,
+          ...(usePhysical ? { clearcoat: 0.35, clearcoatRoughness: 0.12 } : {}),
+          envMap: envFloor,
           envMapIntensity: pbr.floor.envMapIntensity
         }),
-        ceiling: new THREE.MeshPhysicalMaterial({
+        ceiling: new MaterialClass({
           map: ceilingTexture,
-          normalMap: sharedNormal,
+          normalMap: sharedNormal || null,
           roughness: pbr.ceiling.roughness,
           metalness: pbr.ceiling.metalness,
-          clearcoat: 0.2,
-          clearcoatRoughness: 0.2,
-          envMap: this.environmentMap,
+          ...(usePhysical ? { clearcoat: 0.2, clearcoatRoughness: 0.2 } : {}),
+          envMap: envCeiling,
           envMapIntensity: pbr.ceiling.envMapIntensity
         })
       };
@@ -592,12 +729,27 @@ export class SceneManager {
     const poolRooms = rooms.filter((r) => r?.type === ROOM_TYPES.POOL);
     if (poolRooms.length === 0) return;
 
-    const url = CONFIG.POOL_MODEL_PATH || '/models/pool_5.glb';
+    const urlCandidates = [
+      CONFIG.POOL_MODEL_PATH,
+      '/models/pool_5.glb',
+      '/models/pool/pool_5.glb',
+      '/models/environment/pool_5.glb'
+    ].filter(Boolean);
+
     let prototype = null;
-    try {
-      prototype = await this.loadGltfPrototype(url);
-    } catch (err) {
-      console.log(`⚠️ Pool model load failed (${url})`, err?.message || err);
+    let usedUrl = null;
+    for (const url of urlCandidates) {
+      try {
+        prototype = await this.loadGltfPrototype(url);
+        usedUrl = url;
+        break;
+      } catch (err) {
+        void err;
+      }
+    }
+
+    if (!prototype) {
+      console.log(`⚠️ Pool model load failed (${urlCandidates[0] || 'unknown'})`);
       return;
     }
 
@@ -605,6 +757,9 @@ export class SceneManager {
     if (buildToken !== this.worldBuildToken) return;
 
     const tileSize = CONFIG.TILE_SIZE || 1;
+    const modelCullTiles = CONFIG.POOL_MODEL_CULL_DISTANCE_TILES ?? 0;
+    const modelCullWorld = Number.isFinite(modelCullTiles) && modelCullTiles > 0 ? modelCullTiles * tileSize : 0;
+    const modelCullSq = modelCullWorld > 0 ? modelCullWorld * modelCullWorld : 0;
     const box = new THREE.Box3();
     const size = new THREE.Vector3();
     const center = new THREE.Vector3();
@@ -620,6 +775,11 @@ export class SceneManager {
       const targetZ = roomWorldH * 0.86;
 
       const model = prototype.clone(true);
+      model.userData = model.userData || {};
+      model.userData.__poolRoomModel = true;
+      if (this.poolEnvironmentMap && this.poolEnvironmentMap !== this.environmentMap) {
+        this.applyPoolEnvironmentToObject(model);
+      }
 
       let best = { scale: 1, rot: 0 };
       for (const rot of yRotations) {
@@ -659,6 +819,24 @@ export class SceneManager {
 
       this.scene.add(model);
       this.worldMeshes.push(model);
+      if (usedUrl) {
+        model.userData.__poolModelUrl = usedUrl;
+      }
+      model.userData.__poolRoomCenter = { x: worldX, z: worldZ };
+      if (modelCullSq > 0) {
+        model.userData.tick = (dt, camera) => {
+          void dt;
+          const pos = camera?.position;
+          if (!pos) return;
+          const cx = model.userData?.__poolRoomCenter?.x ?? model.position.x;
+          const cz = model.userData?.__poolRoomCenter?.z ?? model.position.z;
+          const dx = pos.x - cx;
+          const dz = pos.z - cz;
+          const far = (dx * dx + dz * dz) > modelCullSq;
+          model.visible = !far;
+        };
+        this.tickables.push(model);
+      }
 
       if (CONFIG.POOL_FX_ENABLED && !CONFIG.LOW_PERF_MODE) {
         const fx = this.createPoolFx(worldX, worldZ, roomWorldW, roomWorldH);
@@ -675,21 +853,17 @@ export class SceneManager {
     const waterW = Math.max(tileSize * 1.2, roomWorldW * 0.72);
     const waterD = Math.max(tileSize * 0.9, roomWorldH * 0.56);
 
-    const geo = new THREE.PlaneGeometry(waterW, waterD, 18, 14);
+    const geo = new THREE.PlaneGeometry(waterW, waterD, 8, 6);
     geo.rotateX(-Math.PI / 2);
 
-    const mat = new THREE.MeshPhysicalMaterial({
+    const mat = new THREE.MeshStandardMaterial({
       color: 0x4ab8ff,
       transparent: true,
       opacity: 0.6,
-      roughness: 0.06,
-      metalness: 0.05,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.04,
-      transmission: 0.68,
-      ior: 1.33,
-      envMap: this.environmentMap,
-      envMapIntensity: 1.2,
+      roughness: 0.18,
+      metalness: 0.02,
+      envMap: this.getPoolEnvironmentMap(),
+      envMapIntensity: 0.9,
       depthWrite: false
     });
 
@@ -703,6 +877,9 @@ export class SceneManager {
 
     const group = new THREE.Group();
     group.name = '__poolFx';
+    group.userData = group.userData || {};
+    group.userData.__poolFx = true;
+    group.userData.__poolFxCenter = { x: centerX, z: centerZ };
     group.add(water);
     group.add(light);
 
@@ -710,14 +887,36 @@ export class SceneManager {
     group.userData.wave = {
       base,
       time: Math.random() * 10,
-      amplitude: 0.08,
+      amplitude: 0.06,
       frequency: 1.5,
-      choppiness: 1.15
+      choppiness: 1.15,
+      accumulator: 0
     };
-    group.userData.tick = (dt) => {
+    group.userData.tick = (dt, camera) => {
       const wave = group.userData.wave;
       if (!wave) return;
-      wave.time += dt;
+      const hz = Math.max(1, Math.round(CONFIG.POOL_FX_UPDATE_HZ ?? 20));
+      const step = 1 / hz;
+      wave.accumulator += dt;
+
+      // Distance cull: stop updating and hide FX when far away.
+      const cullTiles = CONFIG.POOL_FX_CULL_DISTANCE_TILES ?? 0;
+      const camPos = camera?.position || null;
+      if (camPos && Number.isFinite(cullTiles) && cullTiles > 0) {
+        const cullWorld = cullTiles * tileSize;
+        const cullSq = cullWorld * cullWorld;
+        const cx = group.userData.__poolFxCenter?.x ?? centerX;
+        const cz = group.userData.__poolFxCenter?.z ?? centerZ;
+        const dx = camPos.x - cx;
+        const dz = camPos.z - cz;
+        const far = (dx * dx + dz * dz) > cullSq;
+        group.visible = !far;
+        if (far) return;
+      }
+
+      if (wave.accumulator < step) return;
+      wave.accumulator = wave.accumulator % step;
+      wave.time += step;
 
       const pos = geo.attributes.position.array;
       for (let i = 0; i < pos.length; i += 3) {
@@ -728,7 +927,6 @@ export class SceneManager {
         pos[i + 1] = base[i + 1] + (w1 + w2) * 0.5 * wave.amplitude;
       }
       geo.attributes.position.needsUpdate = true;
-      geo.computeVertexNormals();
 
       if (light) {
         light.intensity = 0.45 + Math.sin(wave.time * 1.3) * 0.12;
@@ -819,7 +1017,7 @@ export class SceneManager {
   update(deltaTime) {
     if (!deltaTime) return;
     for (const obj of this.tickables) {
-      obj?.userData?.tick?.(deltaTime);
+      obj?.userData?.tick?.(deltaTime, this.camera);
     }
   }
 
@@ -877,7 +1075,13 @@ export class SceneManager {
     } catch (err) {
       void err;
     }
+    try {
+      this.poolEnvironmentMap?.dispose?.();
+    } catch (err) {
+      void err;
+    }
     this._setupEnvironmentMap();
+    this._setupPoolEnvironmentMap();
   }
 
   /**
@@ -885,6 +1089,16 @@ export class SceneManager {
    */
   dispose() {
     this.clearWorld();
+    try {
+      this.environmentMap?.dispose?.();
+    } catch (err) {
+      void err;
+    }
+    try {
+      this.poolEnvironmentMap?.dispose?.();
+    } catch (err) {
+      void err;
+    }
     this.renderer.dispose();
   }
 }

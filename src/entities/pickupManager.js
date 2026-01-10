@@ -88,9 +88,10 @@ export class PickupManager {
     pos.y = Math.max(0.15, pos.y + 0.1);
 
     const isTool = TOOL_PICKUP_KINDS.has(kind);
+    const isHealthLike = kind === 'health' || kind === 'healthSmall' || kind === 'healthBig' || kind === 'monsterHeart';
     const amount = Number.isFinite(options.amount)
       ? options.amount
-      : (kind === 'health' ? 20 : (kind === 'ammo' ? 30 : (isTool ? 1 : 1)));
+      : (isHealthLike ? (kind === 'healthBig' ? 30 : (kind === 'healthSmall' ? 12 : (kind === 'monsterHeart' ? 2 : 20))) : (kind === 'ammo' ? 30 : (isTool ? 1 : 1)));
     const ttl = Number.isFinite(options.ttl) ? options.ttl : (isTool ? 45.0 : 20.0);
 
     const mesh = this.createPickupMesh(kind);
@@ -126,6 +127,12 @@ export class PickupManager {
     switch (kind) {
       case 'health':
         return this.createHealthMesh();
+      case 'healthSmall':
+        return this.createHealthSmallMesh();
+      case 'healthBig':
+        return this.createHealthBigMesh();
+      case 'monsterHeart':
+        return this.createMonsterHeartMesh();
       case 'ammo':
         return this.createAmmoMesh();
       case 'lure':
@@ -187,6 +194,49 @@ export class PickupManager {
     const barB = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.46, 0.12), mat);
     group.add(barB);
 
+    group.scale.setScalar(1.0);
+    return group;
+  }
+
+  createHealthSmallMesh() {
+    const group = this.createHealthMesh();
+    group.scale.setScalar(0.78);
+    return group;
+  }
+
+  createHealthBigMesh() {
+    const group = this.createHealthMesh();
+    group.scale.setScalar(1.25);
+    group.traverse?.((child) => {
+      const mat = child?.material;
+      if (!mat) return;
+      if (Array.isArray(mat)) return;
+      mat.emissiveIntensity = 0.75;
+      mat.roughness = 0.45;
+    });
+    return group;
+  }
+
+  createMonsterHeartMesh() {
+    const group = new THREE.Group();
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xff6688,
+      emissive: 0xaa2244,
+      emissiveIntensity: 0.8,
+      roughness: 0.4,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.95
+    });
+    const a = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 14), mat);
+    const b = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 14), mat);
+    a.position.set(-0.08, 0.06, 0);
+    b.position.set(0.08, 0.06, 0);
+    group.add(a, b);
+    const c = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.26, 16), mat);
+    c.position.set(0, -0.08, 0);
+    c.rotation.z = Math.PI;
+    group.add(c);
     group.scale.setScalar(1.0);
     return group;
   }
@@ -442,9 +492,15 @@ export class PickupManager {
 
       // Collect
       const pickupPos = p.mesh.position.clone();
-      if (p.kind === 'health') {
+      if (p.kind === 'health' || p.kind === 'healthSmall' || p.kind === 'healthBig') {
         const gs = this.gameState || this.playerRef?.gameState || null;
         gs?.heal?.(p.amount);
+        this.audioManager?.playPickupHeal?.();
+      } else if (p.kind === 'monsterHeart') {
+        const gs = this.gameState || this.playerRef?.gameState || null;
+        const bonus = Math.max(1, Math.round(Number(p.amount) || 1));
+        gs?.addMaxHealth?.(bonus, { healAdded: true });
+        this.audioManager?.playPickupHeal?.();
       } else if (p.kind === 'ammo') {
         this.gun?.addAmmo?.(p.amount);
       } else if (TOOL_PICKUP_KINDS.has(p.kind)) {

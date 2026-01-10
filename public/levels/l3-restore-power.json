@@ -1,52 +1,95 @@
 {
   "id": 3,
-  "name": "L3 - Restore Power",
-  "maze": { "width": 29, "height": 29, "roomDensity": 2.8, "extraConnectionChance": 0.1 },
+  "name": "L3 - Power & Upload",
+  "maze": { "width": 25, "height": 25, "roomDensity": 2.5, "extraConnectionChance": 0.08 },
   "rooms": {
     "typeWeights": {
-      "CLASSROOM": 2.8,
-      "CLASSROOMS_BLOCK": 1.6,
-      "OFFICE": 1.2,
-      "LAB": 1.2,
-      "STORAGE": 1.0,
+      "CLASSROOM": 2.9,
+      "CLASSROOMS_BLOCK": 1.5,
+      "OFFICE": 1.4,
+      "LAB": 1.35,
+      "STORAGE": 1.1,
       "CAFETERIA": 0.75,
       "BATHROOM": 0.7,
-      "LIBRARY": 0.55,
+      "LIBRARY": 0.6,
       "POOL": 0.2,
-      "GYM": 0.3,
-      "BEDROOM": 0.4
+      "GYM": 0.28,
+      "BEDROOM": 0.38
     }
   },
   "monsters": {
-    "count": 8,
+    "count": 4,
     "maxCount": 6,
-    "speedMultiplier": 1.05,
-    "visionMultiplier": 1.1,
-    "memoryMultiplier": 1.2,
-    "typeWeights": { "WANDERER": 0.3, "HUNTER": 0.4, "SENTINEL": 0.2, "STALKER": 0.1 },
+    "speedMultiplier": 1.02,
+    "visionMultiplier": 0.95,
+    "memoryMultiplier": 0.9,
+    "typeWeights": { "WANDERER": 0.4, "HUNTER": 0.35, "SENTINEL": 0.2, "GREETER": 0.05 },
     "allowSprintTypes": ["HUNTER", "SENTINEL"]
   },
+  "budgets": {
+    "missionObjectsMax": 40
+  },
   "missions": {
-    "timeLimitSec": 300,
+    "timeLimitSec": 0,
     "list": [
       {
         "id": "power",
         "template": "restorePower",
         "required": true,
-        "params": { "switches": 3, "roomTypes": ["LAB", "STORAGE"] }
+        "params": {
+          "switches": 2,
+          "roomTypes": ["LAB", "STORAGE"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Find and activate the power switches in Labs/Storage.",
+            "Power enables the upload terminal."
+          ]
+        }
       },
       {
-        "id": "evidence",
-        "template": "collectEvidence",
+        "id": "upload",
+        "template": "uploadEvidence",
         "required": true,
         "params": {
+          "requiresPower": true,
+          "powerItemId": "power_on",
           "count": 5,
-          "required": 4,
-          "roomTypes": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"]
+          "required": 3,
+          "itemId": "evidence",
+          "roomTypesEvidence": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
+          "roomTypesTerminal": ["OFFICE", "LAB"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Collect evidence pickups (you only need 3).",
+            "After power is on, find the upload terminal and press E."
+          ]
+        }
+      },
+      {
+        "id": "kills",
+        "template": "killCount",
+        "required": true,
+        "params": {
+          "count": 3,
+          "hints": [
+            "Defeat monsters to reduce pressure while completing objectives.",
+            "Use Q grenade / X EMP if you get surrounded."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
         }
       }
     ],
-    "exit": { "requires": ["power", "evidence"] }
+    "exit": { "requires": ["power", "upload", "kills", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,
@@ -55,9 +98,8 @@
   },
   "autopilot": {
     "avoidRadius": 5,
-    "replanInterval": 0.45,
-    "stuckSeconds": 0.9,
-    "noProgressSeconds": 0.5
+    "replanInterval": 0.48,
+    "stuckSeconds": 0.95,
+    "noProgressSeconds": 0.55
   }
 }
-

@@ -1,18 +1,15 @@
 {
+  "schemaVersion": 1,
+  "id": "Runsure",
+  "displayName": "Runsure",
+  "modelFile": "Runsure.dae",
+  "textureFiles": [
+    "y559000_01.png"
+  ],
   "scaleMultiplier": 1,
   "groundOffset": 0.02,
   "stats": {
     "hitRadius": 1
-  },
-  "correctionRotationDeg": {
-    "x": 90,
-    "y": 0,
-    "z": 90
-  },
-  "correctionOffset": {
-    "x": 0,
-    "y": 16.36,
-    "z": 0
   },
   "combat": {
     "ranged": {

@@ -38,6 +38,16 @@ npm run preview
 
 ---
 
+## Desktop app (no Node needed for players)
+
+Build a desktop executable/installer using Tauri:
+
+- Instructions: `DESKTOP_BUILD.md:1`
+- Dev: `npm run desktop:dev`
+- Build: `npm run desktop:build`
+
+---
+
 ## Controls
 
 ### Movement / interaction

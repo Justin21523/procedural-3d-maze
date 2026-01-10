@@ -8,6 +8,7 @@ export class CombatSystem {
     this.projectileManager = options.projectileManager || null;
     this.playerRef = options.playerRef || null;
     this.gameState = options.gameState || null;
+    this.audioManager = options.audioManager || null;
 
     this.unsubscribers = [];
     this.bind();
@@ -146,6 +147,10 @@ export class CombatSystem {
         size: Math.max(1.1, radius * 0.35),
         intensity: 2.3
       });
+    }
+
+    if (projectile.owner === 'player') {
+      this.audioManager?.playExplosion?.(Math.max(0.4, Math.min(1.0, radius / 5)));
     }
 
     this.monsterManager?.applyAreaDamage?.(hitPosition, radius, damage, {

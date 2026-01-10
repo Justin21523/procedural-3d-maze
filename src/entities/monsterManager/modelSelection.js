@@ -15,7 +15,7 @@ function getPoolKey(models) {
 
 export class EnemyModelSelector {
   constructor(options = {}) {
-    this.manifestUrl = options.manifestUrl || '/models/manifest.json';
+    this.manifestUrl = options.manifestUrl || '/models/enemy/manifest.json';
     this.manifest = null;
     this.manifestPromise = null;
 
@@ -39,7 +39,7 @@ export class EnemyModelSelector {
         this.manifest = list;
         return list;
       } catch (err) {
-        console.warn('⚠️ Could not load /models/manifest.json, falling back to sprites:', err?.message || err);
+        console.warn(`⚠️ Could not load ${this.manifestUrl}, falling back to sprites:`, err?.message || err);
         this.manifest = [];
         return [];
       } finally {
@@ -53,19 +53,29 @@ export class EnemyModelSelector {
   pickModelPool(allModels) {
     if (!Array.isArray(allModels) || allModels.length === 0) return [];
 
-    // Prefer models inside subfolders: /models/<Folder>/<file>
-    const inSubfolders = allModels.filter((p) => {
+    // Prefer enemy models: /models/enemy/<Enemy>/<file>
+    const enemyModels = allModels.filter((p) => {
+      if (typeof p !== 'string') return false;
+      return p.includes('/models/enemy/');
+    });
+
+    const candidates = enemyModels.length > 0 ? enemyModels : allModels;
+
+    // Prefer models inside subfolders: /models/.../<file>
+    const inSubfolders = candidates.filter((p) => {
       if (typeof p !== 'string') return false;
       return p.split('/').length >= 4;
     });
 
-    // Prioritize .dae in subfolders (common for enemy characters)
-    const daeInSubfolders = inSubfolders.filter((p) => p.toLowerCase().endsWith('.dae'));
-    if (daeInSubfolders.length > 0) {
-      return daeInSubfolders;
-    }
+    const preferred = inSubfolders.length > 0 ? inSubfolders : candidates;
 
-    const preferred = inSubfolders.length > 0 ? inSubfolders : allModels;
+    // Prefer common model extensions (manifest can include other asset paths)
+    const allowedExt = ['.glb', '.gltf', '.dae'];
+    const modelFiles = preferred.filter((p) => {
+      const lower = String(p).toLowerCase();
+      return allowedExt.some((ext) => lower.endsWith(ext));
+    });
+    const pool = modelFiles.length > 0 ? modelFiles : preferred;
 
     // Basic safety filter to avoid obvious non-enemy assets in the pool.
     const denyKeywords = [
@@ -82,12 +92,12 @@ export class EnemyModelSelector {
       'fx',
     ];
 
-    const filtered = preferred.filter((p) => {
+    const filtered = pool.filter((p) => {
       const lower = p.toLowerCase();
       return !denyKeywords.some((k) => lower.includes(k));
     });
 
-    return filtered.length > 0 ? filtered : preferred;
+    return filtered.length > 0 ? filtered : pool;
   }
 
   pickRandom(models) {
@@ -118,4 +128,3 @@ export class EnemyModelSelector {
     this.bagKey = null;
   }
 }
-

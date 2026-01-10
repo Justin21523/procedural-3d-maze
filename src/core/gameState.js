@@ -18,6 +18,7 @@ export class GameState {
     this.startTime = 0;
     this.currentTime = 0;
     this.isRunning = false;
+    this._paused = false;
 
     // Game status
     this.hasWon = false;
@@ -63,7 +64,25 @@ export class GameState {
    */
   stopTimer() {
     this.isRunning = false;
+    this._paused = false;
     console.log('⏱️ Timer stopped');
+  }
+
+  pauseTimer() {
+    if (!this.isRunning) return;
+    this.isRunning = false;
+    this._paused = true;
+    console.log('⏸️ Timer paused');
+  }
+
+  resumeTimer() {
+    if (this.isRunning) return;
+    if (!this._paused) return;
+    // Keep elapsed time; shift startTime forward so Date.now()-startTime continues from currentTime.
+    this.startTime = Date.now() - (this.currentTime || 0);
+    this.isRunning = true;
+    this._paused = false;
+    console.log('▶️ Timer resumed');
   }
 
   /**
@@ -157,6 +176,25 @@ export class GameState {
       currentHealth: this.currentHealth,
       maxHealth: this.maxHealth
     });
+  }
+
+  addMaxHealth(amount, options = {}) {
+    const add = Math.round(Number(amount) || 0);
+    if (!Number.isFinite(add) || add === 0) return 0;
+    const before = this.maxHealth;
+    this.maxHealth = Math.max(1, before + add);
+    if (options.healToFull) {
+      this.currentHealth = this.maxHealth;
+    } else if (options.healAdded) {
+      this.currentHealth = Math.min(this.maxHealth, this.currentHealth + add);
+    }
+    this.eventBus?.emit?.(EVENTS.PLAYER_MAX_HEALTH_CHANGED, {
+      before,
+      after: this.maxHealth,
+      delta: this.maxHealth - before,
+      currentHealth: this.currentHealth
+    });
+    return this.maxHealth - before;
   }
 
   /**
@@ -259,6 +297,7 @@ export class GameState {
     this.startTime = 0;
     this.currentTime = 0;
     this.isRunning = false;
+    this._paused = false;
     this.keyItems.clear();
 
     console.log('🔄 GameState reset');
@@ -349,5 +388,85 @@ export class GameState {
       out[id] = Math.round(n);
     }
     return out;
+  }
+
+  toSaveData() {
+    return {
+      maxHealth: this.maxHealth,
+      currentHealth: this.currentHealth,
+      steps: this.steps,
+      itemsCollected: this.itemsCollected,
+      itemsTotal: this.itemsTotal,
+      exitFound: this.exitFound,
+      exitUnlocked: this.exitUnlocked,
+      exitLockedReason: this.exitLockedReason,
+      missionsTotal: this.missionsTotal,
+      missionsCollected: this.missionsCollected,
+      roomsVisited: Array.from(this.roomsVisited || []),
+      inventory: this.getInventorySnapshot(),
+      timerMs: Number(this.currentTime) || 0,
+      timerRunning: !!this.isRunning,
+      timerPaused: !!this._paused
+    };
+  }
+
+  applySaveData(data) {
+    const d = data && typeof data === 'object' ? data : null;
+    if (!d) return false;
+
+    const maxHealth = Number(d.maxHealth);
+    if (Number.isFinite(maxHealth) && maxHealth > 0) this.maxHealth = Math.round(maxHealth);
+
+    const currentHealth = Number(d.currentHealth);
+    if (Number.isFinite(currentHealth)) this.currentHealth = Math.max(0, Math.round(currentHealth));
+
+    this.steps = Math.max(0, Math.round(Number(d.steps) || 0));
+    this.itemsCollected = Math.max(0, Math.round(Number(d.itemsCollected) || 0));
+    this.itemsTotal = Math.max(0, Math.round(Number(d.itemsTotal) || 0));
+    this.exitFound = !!d.exitFound;
+    this.exitUnlocked = d.exitUnlocked !== false;
+    this.exitLockedReason = this.exitUnlocked ? '' : String(d.exitLockedReason || '');
+    this.missionsTotal = Math.max(0, Math.round(Number(d.missionsTotal) || 0));
+    this.missionsCollected = Math.max(0, Math.round(Number(d.missionsCollected) || 0));
+
+    this.roomsVisited.clear();
+    if (Array.isArray(d.roomsVisited)) {
+      for (const v of d.roomsVisited) {
+        const n = Number(v);
+        if (Number.isFinite(n)) this.roomsVisited.add(n);
+      }
+    }
+
+    this.keyItems.clear();
+    const inv = d.inventory && typeof d.inventory === 'object' ? d.inventory : null;
+    if (inv) {
+      for (const [id, count] of Object.entries(inv)) {
+        const n = Math.round(Number(count));
+        if (!Number.isFinite(n) || n <= 0) continue;
+        this.keyItems.set(String(id), n);
+      }
+    }
+
+    // Restore timer
+    this.startTime = 0;
+    this.currentTime = Math.max(0, Math.round(Number(d.timerMs) || 0));
+    this.isRunning = false;
+    this._paused = false;
+    if (d.timerRunning) {
+      this.startTime = Date.now() - this.currentTime;
+      this.isRunning = true;
+      this._paused = false;
+    } else if (d.timerPaused) {
+      this.isRunning = false;
+      this._paused = true;
+    }
+
+    // Save files never restore game-over states.
+    this.isDead = false;
+    this.hasWon = false;
+    this.hasLost = false;
+    this.gameOver = false;
+
+    return true;
   }
 }

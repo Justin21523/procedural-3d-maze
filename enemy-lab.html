@@ -326,7 +326,7 @@
       </p>
       <p style="margin-top:-6px;">
         If you add/remove files under <span class="pill">public/models/</span>, run <span class="pill">npm run models:sync</span> to refresh
-        <span class="pill">public/models/manifest.json</span>.
+        <span class="pill">public/models/enemy/manifest.json</span>.
       </p>
 
       <div class="section">
@@ -1259,13 +1259,22 @@
     }
 
     async function fetchManifest() {
-      const res = await fetch('/models/manifest.json', { cache: 'no-store' });
-      const json = await res.json();
-      const models = Array.isArray(json) ? json : json?.models;
-      return {
-        generatedAt: typeof json?.generatedAt === 'string' ? json.generatedAt : null,
-        models: Array.isArray(models) ? models.filter(p => typeof p === 'string') : []
-      };
+      const urls = ['/models/enemy/manifest.json', '/models/manifest.json'];
+      for (const url of urls) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const json = await res.json();
+          const models = Array.isArray(json) ? json : json?.models;
+          return {
+            generatedAt: typeof json?.generatedAt === 'string' ? json.generatedAt : null,
+            models: Array.isArray(models) ? models.filter(p => typeof p === 'string') : []
+          };
+        } catch (err) {
+          void err;
+        }
+      }
+      return { generatedAt: null, models: [] };
     }
 
     async function fetchExistingMeta(modelPath) {
@@ -1473,6 +1482,10 @@
     const worldState = createArenaWorldState(17);
 
     const canvasContainer = document.getElementById('canvas-container');
+    if (canvasContainer) {
+      canvasContainer.tabIndex = 0;
+      canvasContainer.style.outline = 'none';
+    }
     const sceneManager = new SceneManager(canvasContainer);
     const cameraController = new FirstPersonCamera(canvasContainer.clientWidth / Math.max(1, canvasContainer.clientHeight));
     sceneManager.setCamera(cameraController);
@@ -1513,6 +1526,13 @@
     void combatSystem;
 
     const rendererEl = sceneManager.renderer?.domElement || null;
+    if (rendererEl) {
+      rendererEl.addEventListener('pointerdown', () => {
+        if (labMode !== 'play') return;
+        if (input.isPointerLocked()) return;
+        input.requestPointerLock(rendererEl);
+      });
+    }
     const orbitControls = rendererEl
       ? new OrbitControls(cameraController.getCamera(), rendererEl)
       : null;
@@ -1775,11 +1795,20 @@
 
 		    function onTransformControlsObjectChange() {
 		      if (isStudioTabActive()) {
-		        if (studioState.proxyDragActive) {
-		          studioApplyProxyDrag();
-		        } else {
-		          studioCommitSelectionTransform();
+		        // If the gizmo is attached to the selection proxy, ensure we actually propagate
+		        // the proxy delta into the selected objects (otherwise it looks like you can only
+		        // move an "invisible cube").
+		        if (transformControls?.object === studioState.selectionProxy) {
+		          if (!studioState.proxyDragActive) {
+		            studioBeginProxyDrag();
+		          }
+		          if (studioState.proxyDragActive) {
+		            studioApplyProxyDrag();
+		          }
+		          return;
 		        }
+
+		        studioCommitSelectionTransform();
 		      } else {
 		        pullMetaFromLiveMonster();
 		      }
@@ -3492,6 +3521,7 @@
           transformControls.visible = false;
         }
         if (lockOverlay) lockOverlay.style.display = 'flex';
+        canvasContainer?.focus?.();
 
         const pos = player.getPosition();
         cameraController.updatePosition(pos.x, pos.y, pos.z);
@@ -4234,7 +4264,8 @@
     }
 
     ui.lockBtn.addEventListener('click', () => {
-      input.requestPointerLock();
+      input.requestPointerLock(rendererEl || canvasContainer || null);
+      canvasContainer?.focus?.();
     });
 
     ui.copyBtn.addEventListener('click', async () => {
@@ -4371,7 +4402,7 @@
 
 	      if (studioActive) {
 	        studioUpdate(dt);
-	      } else if (aiEnabled) {
+	      } else if (aiEnabled && labMode === 'play') {
 	        const playerPos = player.getPosition();
 	        monsterManager.update(dt, playerPos);
 	      }

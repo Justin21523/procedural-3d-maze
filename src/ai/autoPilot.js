@@ -77,6 +77,8 @@ export class AutoPilot {
     this.combatFireCooldown = 0;
     this.combatBurstShotsRemaining = 0;
     this.combatBurstRestTimer = 0;
+    this.weaponDecisionCooldown = 0;
+    this.lastDesiredWeaponId = null;
 
     // Interaction (mission objects use the same InteractableSystem as the player)
     this.interactCooldown = 0;
@@ -112,6 +114,156 @@ export class AutoPilot {
     this.combatBurstRestTimer = 0;
   }
 
+  scoreCombatWeapon(def, state, distTiles, crowd) {
+    if (!def) return -Infinity;
+    const ammoInMag = state ? (state.ammoInMag || 0) : Infinity;
+    const ammoReserve = state ? (state.ammoReserve || 0) : Infinity;
+    const ammoTotal = ammoInMag + ammoReserve;
+    if (ammoTotal <= 0) return -Infinity;
+
+    const ai = def.ai || {};
+    const minRange = Number.isFinite(ai.minRangeTiles) ? ai.minRangeTiles : 0;
+    const maxRange = Number.isFinite(ai.maxRangeTiles) ? ai.maxRangeTiles : 999;
+    const crowdBias = Number.isFinite(ai.crowdBias) ? ai.crowdBias : 0;
+
+    const clamped = Math.max(minRange, Math.min(maxRange, distTiles));
+    const distPenalty = Math.abs(distTiles - clamped);
+
+    let score = 100 - distPenalty * 18;
+
+    // Strongly discourage using a weapon far outside its range.
+    if (distTiles < minRange) score -= (minRange - distTiles) * 28;
+    if (distTiles > maxRange) score -= (distTiles - maxRange) * 24;
+
+    const kind = String(def?.projectile?.kind || '');
+    const dmg = Number(def?.projectile?.explosionDamage ?? def?.projectile?.damage ?? 1);
+    const interval = Math.max(0.04, Number(def?.fireInterval ?? 0.3));
+    const dps = dmg / interval;
+    if (Number.isFinite(dps)) score += Math.min(22, dps * 0.6);
+
+    const closeCount = crowd?.closeCount || 0;
+    const midCount = crowd?.midCount || 0;
+    const aliveCount = crowd?.aliveCount || 0;
+
+    // Grenade-like weapons: use when there are multiple targets and we're not too close.
+    if (kind === 'grenade') {
+      if (distTiles < Math.max(3, minRange)) score -= 80;
+      score += Math.min(35, Math.max(0, (midCount - 1)) * 10);
+      if (aliveCount >= 3) score += 14;
+
+      // Preserve rare ammo: avoid spamming grenades when low.
+      if (ammoTotal <= 2) score -= 30;
+      if (ammoTotal <= 4) score -= 12;
+    }
+
+    // Prefer faster weapons when panicking up close.
+    if (distTiles <= 2) score += Math.max(0, (0.35 - interval) * 55);
+
+    // Per-weapon nudges (keeps all 3 in rotation)
+    if (def.id === 'pistol') {
+      if (distTiles <= 4) score += 18;
+      if (distTiles >= 9) score -= 18;
+    } else if (def.id === 'rifle') {
+      if (distTiles >= 6) score += 12;
+      if (distTiles <= 2) score -= 6;
+    }
+
+    score += Math.min(22, closeCount * 5) * crowdBias;
+
+    // Avoid switching into an empty mag unless we can still fire immediately.
+    if (state && ammoInMag <= 0 && ammoReserve > 0) {
+      score -= 14;
+    }
+
+    // De-prioritize long reload weapons when low under pressure.
+    const reloadSeconds = Number(def.reloadSeconds ?? 0);
+    if (closeCount >= 2 && reloadSeconds > 1.9) score -= 10;
+
+    return score;
+  }
+
+  chooseCombatWeapon(distTiles, monsters, playerGrid) {
+    const gun = this.gun || null;
+    if (!gun) return null;
+
+    const weaponOrder = Array.isArray(gun.weaponOrder) ? gun.weaponOrder : [];
+    const weaponDefs = gun.weaponDefs || {};
+    if (weaponOrder.length === 0) return null;
+
+    let closeCount = 0;
+    let midCount = 0;
+    let aliveCount = 0;
+    for (const m of monsters || []) {
+      if (!m || m.isDead || m.isDying) continue;
+      aliveCount += 1;
+      const mg = m.getGridPosition ? m.getGridPosition() : null;
+      if (!mg || !playerGrid) continue;
+      const d = Math.abs(mg.x - playerGrid.x) + Math.abs(mg.y - playerGrid.y);
+      if (d <= 2) closeCount += 1;
+      if (d <= 6) midCount += 1;
+    }
+
+    const crowd = { closeCount, midCount, aliveCount };
+    const scores = {};
+    let best = null;
+    for (const id of weaponOrder) {
+      const def = weaponDefs[id] || null;
+      if (!def) continue;
+      const state = gun.getWeaponState ? gun.getWeaponState(id) : null;
+      const score = this.scoreCombatWeapon(def, state, distTiles, crowd);
+      scores[id] = score;
+      if (!Number.isFinite(score)) continue;
+
+      if (!best || score > best.score) {
+        best = { id, score };
+      }
+    }
+
+    if (!best) return null;
+    return { ...best, scores };
+  }
+
+  maybeSwitchCombatWeapon(distTiles, monsters, playerGrid, dt) {
+    const gun = this.gun || null;
+    if (!gun?.switchWeapon || !gun?.getActiveWeaponDef) return;
+    if (this.weaponDecisionCooldown > 0) return;
+
+    const hud = gun.getHudState ? gun.getHudState() : null;
+    const activeDef = gun.getActiveWeaponDef();
+    const activeId = activeDef?.id || null;
+
+    // Avoid canceling reload unless we're empty and can swap to keep firing.
+    if (hud?.isReloading && (hud?.ammoInMag || 0) > 0) {
+      this.weaponDecisionCooldown = 0.35;
+      return;
+    }
+
+    const choice = this.chooseCombatWeapon(distTiles, monsters, playerGrid);
+    const desired = choice?.id || null;
+    const desiredScore = Number.isFinite(choice?.score) ? choice.score : -Infinity;
+    const activeScore = activeId && choice?.scores && Number.isFinite(choice.scores[activeId]) ? choice.scores[activeId] : -Infinity;
+
+    const switchMargin = 10;
+    const canSwitch = desired && desired !== activeId && desiredScore >= activeScore + switchMargin;
+
+    if (canSwitch) {
+      const order = Array.isArray(gun.weaponOrder) ? gun.weaponOrder : [];
+      const idx = order.indexOf(desired);
+      if (idx >= 0 && typeof gun.switchWeaponByIndex === 'function') {
+        gun.switchWeaponByIndex(idx);
+      } else {
+        gun.switchWeapon(desired);
+      }
+      this.lastDesiredWeaponId = desired;
+      this.weaponDecisionCooldown = 0.6;
+      return;
+    }
+
+    // Evaluate a bit more often when close-range panicking, less when calm.
+    const next = distTiles <= 3 ? 0.3 : 0.45;
+    this.weaponDecisionCooldown = next;
+  }
+
   /**
    * 產生格子 key
    */
@@ -143,15 +295,18 @@ export class AutoPilot {
     this.clearStepLock();
   }
 
-  recordUnreachable(gridPos) {
+  recordUnreachable(gridPos, ttlMs = null) {
     if (!gridPos) return;
     const now = Date.now();
     const key = this.posKey(gridPos);
-    this.unreachableTiles.set(key, now);
+    const ttl = Number.isFinite(ttlMs) ? Math.max(250, ttlMs) : null;
+    this.unreachableTiles.set(key, { ts: now, ttl });
 
     const expireBefore = now - this.unreachableTTL;
     for (const [k, ts] of this.unreachableTiles.entries()) {
-      if (ts < expireBefore) {
+      const entry = ts && typeof ts === 'object' ? ts : { ts };
+      const ttl = Number.isFinite(entry.ttl) ? entry.ttl : this.unreachableTTL;
+      if ((entry.ts || 0) < (now - ttl)) {
         this.unreachableTiles.delete(k);
       }
     }
@@ -159,9 +314,14 @@ export class AutoPilot {
 
   isTemporarilyUnreachable(gridPos) {
     if (!gridPos) return false;
-    const ts = this.unreachableTiles.get(this.posKey(gridPos));
-    if (!ts) return false;
-    return (Date.now() - ts) < this.unreachableTTL;
+    const raw = this.unreachableTiles.get(this.posKey(gridPos));
+    if (!raw) return false;
+    if (typeof raw === 'number') {
+      return (Date.now() - raw) < this.unreachableTTL;
+    }
+    const ts = Number(raw?.ts) || 0;
+    const ttl = Number.isFinite(raw?.ttl) ? raw.ttl : this.unreachableTTL;
+    return (Date.now() - ts) < ttl;
   }
 
   handleUnreachableTaskTarget(playerGrid, target) {
@@ -624,7 +784,19 @@ export class AutoPilot {
         continue;
       }
 
-      const opportunistic = dist <= 2;
+      const opportunistic = dist <= 1;
+      // Avoid getting "stuck" farming pickups we don't need.
+      if (need <= 0) {
+        if (kind === 'health') {
+          if (healthPct >= 95 && !urgentHealth) continue;
+        } else if (kind === 'ammo') {
+          if (!hasAmmoInfo) continue;
+          if (ammoTotal >= 40 && !urgentAmmo) continue;
+        } else {
+          // Tools: only detour if we actually need them.
+          continue;
+        }
+      }
       if (need <= 0 && !opportunistic) continue;
 
       const score = need * 100 + kindBias + (opportunistic ? 12 : 0) - dist * distWeight;
@@ -917,6 +1089,8 @@ export class AutoPilot {
     this.interactCooldown = Math.max(0, (this.interactCooldown || 0) - (deltaTime ?? 0));
     if (combat && this._missionState?.objective?.template === 'stealthNoise') {
       combat.fire = false;
+      combat.skillGrenade = false;
+      combat.skillEmp = false;
     }
 
     const objective = this._missionState?.objective || null;
@@ -925,6 +1099,7 @@ export class AutoPilot {
       const breakOnGunfire = objective?.progress?.breakOnGunfire !== false;
       if (carrying && breakOnGunfire) {
         combat.fire = false;
+        combat.skillGrenade = false;
       }
     }
     if (objective?.template === 'stealthNoise') {
@@ -1140,6 +1315,9 @@ export class AutoPilot {
         sprint: false,
         block,
         fire: !!combat?.fire,
+        skillGrenade: !!combat?.skillGrenade,
+        skillEmp: !!combat?.skillEmp,
+        weaponMode: typeof combat?.weaponMode === 'string' ? combat.weaponMode : null,
       };
       return cmd;
     }
@@ -1185,6 +1363,9 @@ export class AutoPilot {
         block,
         interact,
         fire: !!combat?.fire,
+        skillGrenade: !!combat?.skillGrenade,
+        skillEmp: !!combat?.skillEmp,
+        weaponMode: typeof combat?.weaponMode === 'string' ? combat.weaponMode : null,
         camera: false
       };
     }
@@ -1266,6 +1447,11 @@ export class AutoPilot {
       this.noProgressTimer > this.noProgressThreshold;
 
     if (shouldResetPath) {
+      // If we're stuck trying to reach a pickup, blacklist it for longer so we don't re-pick it immediately.
+      if (this.currentTarget && this.targetType === 'pickup') {
+        const ttl = Number(CONFIG.AUTOPILOT_PICKUP_UNREACHABLE_TTL) || 30_000;
+        this.recordUnreachable(this.currentTarget, ttl);
+      }
       this.currentPath = [];
       this.currentTarget = null;
       this.stuckTimer = 0;
@@ -1284,6 +1470,9 @@ export class AutoPilot {
       block,
       interact,
       fire: !!combat?.fire,
+      skillGrenade: !!combat?.skillGrenade,
+      skillEmp: !!combat?.skillEmp,
+      weaponMode: typeof combat?.weaponMode === 'string' ? combat.weaponMode : null,
       camera: false
     };
   }
@@ -1298,6 +1487,7 @@ export class AutoPilot {
     this.combatRetargetTimer = Math.max(0, (this.combatRetargetTimer || 0) - dt);
     this.combatFireCooldown = Math.max(0, (this.combatFireCooldown || 0) - dt);
     this.combatBurstRestTimer = Math.max(0, (this.combatBurstRestTimer || 0) - dt);
+    this.weaponDecisionCooldown = Math.max(0, (this.weaponDecisionCooldown || 0) - dt);
 
     const monsters = this.monsterManager?.getMonsters
       ? this.monsterManager.getMonsters()
@@ -1306,6 +1496,7 @@ export class AutoPilot {
       this.combatTargetId = null;
       this.lastCombatTargetIdForRhythm = null;
       this.resetCombatRhythm();
+      this.lastDesiredWeaponId = null;
       return null;
     }
 
@@ -1345,7 +1536,9 @@ export class AutoPilot {
     const distTiles = Math.abs(monsterGrid.x - playerGrid.x) + Math.abs(monsterGrid.y - playerGrid.y);
     if (distTiles > maxRange) return null;
 
-    if (requireLOS && this.worldState?.hasLineOfSight) {
+    this.maybeSwitchCombatWeapon(distTiles, monsters, playerGrid, dt);
+
+    if (requireLOS && distTiles > 2 && this.worldState?.hasLineOfSight) {
       if (!this.worldState.hasLineOfSight(playerGrid, monsterGrid)) return null;
     }
 
@@ -1385,9 +1578,47 @@ export class AutoPilot {
     const alignPitchRad = (Math.max(1, Math.min(60, alignPitchDeg)) * Math.PI) / 180;
     const alignedPitch = Math.abs(deltaPitch) <= alignPitchRad;
 
-    const shouldShoot = !options.panic && distTiles <= fireRange && withinFov && alignedYaw && alignedPitch;
+    let skillGrenade = false;
+    let skillEmp = false;
+    let weaponMode = null;
+
+    const gun = this.gun || null;
+    const hud = gun?.getHudState ? gun.getHudState() : null;
+    const skills = hud?.skills || null;
+
+    let closeCount = 0;
+    let midCount = 0;
+    for (const m of monsters) {
+      if (!m || m.isDead || m.isDying) continue;
+      const mg = m.getGridPosition ? m.getGridPosition() : null;
+      if (!mg) continue;
+      const d = Math.abs(mg.x - playerGrid.x) + Math.abs(mg.y - playerGrid.y);
+      if (d <= 2) closeCount += 1;
+      if (d <= 6) midCount += 1;
+    }
+
+    const empReady = Number(skills?.emp || 0) <= 0;
+    const grenadeReady = Number(skills?.grenade || 0) <= 0;
+
+    if (empReady && closeCount > 0 && (options.panic || distTiles <= 2)) {
+      skillEmp = true;
+    }
+    if (grenadeReady && !options.panic && midCount >= 2 && distTiles >= 3 && distTiles <= 9) {
+      skillGrenade = true;
+    }
+
+    const def = gun?.getActiveWeaponDef ? gun.getActiveWeaponDef() : null;
+    const state = gun?.getWeaponState ? gun.getWeaponState() : null;
+    if (def?.id === 'rifle' && def?.modes && state) {
+      const desired = distTiles >= 8 ? 'piercing' : 'standard';
+      if (def.modes[desired] && state.mode !== desired) {
+        weaponMode = desired;
+      }
+    }
+
+    const shouldShoot = !options.panic && !skillEmp && !skillGrenade && distTiles <= fireRange && withinFov && alignedYaw && alignedPitch;
     const fire = this.computeCombatFire(shouldShoot);
-    return { lookYaw: aimYaw, lookPitch: aimPitch, fire };
+    return { lookYaw: aimYaw, lookPitch: aimPitch, fire, skillGrenade, skillEmp, weaponMode };
   }
 
   computeCombatFire(shouldShoot) {
@@ -1396,6 +1627,7 @@ export class AutoPilot {
     const gun = this.gun || null;
     const hud = gun?.getHudState ? gun.getHudState() : null;
     const def = gun?.getActiveWeaponDef ? gun.getActiveWeaponDef() : null;
+    const ai = def?.ai || null;
 
     const weaponInterval = Math.max(
       0.04,
@@ -1418,10 +1650,10 @@ export class AutoPilot {
       return true;
     }
 
-    const burstMin = Math.max(1, Math.round(CONFIG.AUTOPILOT_COMBAT_BURST_MIN_SHOTS ?? 3));
-    const burstMax = Math.max(burstMin, Math.round(CONFIG.AUTOPILOT_COMBAT_BURST_MAX_SHOTS ?? 6));
-    const restMin = Math.max(0, Number(CONFIG.AUTOPILOT_COMBAT_BURST_REST_MIN_SECONDS ?? 0.35) || 0.35);
-    const restMax = Math.max(restMin, Number(CONFIG.AUTOPILOT_COMBAT_BURST_REST_MAX_SECONDS ?? 0.75) || 0.75);
+    const burstMin = Math.max(1, Math.round(Number(ai?.burstMinShots ?? CONFIG.AUTOPILOT_COMBAT_BURST_MIN_SHOTS ?? 3) || 3));
+    const burstMax = Math.max(burstMin, Math.round(Number(ai?.burstMaxShots ?? CONFIG.AUTOPILOT_COMBAT_BURST_MAX_SHOTS ?? 6) || 6));
+    const restMin = Math.max(0, Number(ai?.burstRestMinSeconds ?? CONFIG.AUTOPILOT_COMBAT_BURST_REST_MIN_SECONDS ?? 0.35) || 0.35);
+    const restMax = Math.max(restMin, Number(ai?.burstRestMaxSeconds ?? CONFIG.AUTOPILOT_COMBAT_BURST_REST_MAX_SECONDS ?? 0.75) || 0.75);
 
     if ((this.combatBurstRestTimer || 0) > 0) return false;
 

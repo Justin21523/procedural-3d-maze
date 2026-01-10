@@ -1,15 +1,15 @@
 {
   "id": 6,
-  "name": "L6 - Code Lock",
-  "maze": { "width": 29, "height": 29, "roomDensity": 2.7, "extraConnectionChance": 0.1 },
+  "name": "L6 - Blackout Drill",
+  "maze": { "width": 31, "height": 31, "roomDensity": 3.0, "extraConnectionChance": 0.12 },
   "rooms": {
     "typeWeights": {
       "CLASSROOM": 2.6,
       "CLASSROOMS_BLOCK": 1.6,
       "OFFICE": 1.5,
-      "LAB": 1.2,
+      "LAB": 1.35,
       "CAFETERIA": 0.75,
-      "STORAGE": 0.9,
+      "STORAGE": 1.15,
       "LIBRARY": 0.75,
       "BATHROOM": 0.65,
       "POOL": 0.2,
@@ -18,30 +18,65 @@
     }
   },
   "monsters": {
-    "count": 4,
-    "maxCount": 6,
-    "speedMultiplier": 1.0,
-    "visionMultiplier": 1.0,
-    "memoryMultiplier": 1.0,
-    "typeWeights": { "WANDERER": 0.5, "HUNTER": 0.25, "SENTINEL": 0.15, "GREETER": 0.1 },
-    "allowSprintTypes": ["HUNTER"]
+    "count": 6,
+    "maxCount": 7,
+    "speedMultiplier": 1.08,
+    "visionMultiplier": 1.1,
+    "memoryMultiplier": 1.1,
+    "typeWeights": { "WANDERER": 0.25, "HUNTER": 0.38, "SENTINEL": 0.2, "STALKER": 0.12, "GREETER": 0.05 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 65
   },
   "missions": {
     "timeLimitSec": 0,
     "list": [
       {
-        "id": "doorCode",
-        "template": "codeLock",
+        "id": "power",
+        "template": "restorePowerFuses",
         "required": true,
         "params": {
-          "clues": 3,
-          "roomTypesClues": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
-          "roomTypesKeypad": ["OFFICE", "LAB"],
+          "fuses": 4,
+          "itemId": "fuse",
+          "roomTypesFuses": ["STORAGE", "LAB", "OFFICE"],
+          "roomTypesPanel": ["LAB", "OFFICE"],
           "minDistFromSpawn": 7,
           "hints": [
-            "Find the three note clues (A/B/C).",
-            "Each note reveals one digit. The code order is A→B→C.",
-            "After collecting all three, find the keypad, press E, type the code, then press Enter."
+            "Collect the fuses.",
+            "Install fuses at the power panel (E), then press E again to restore power.",
+            "Power enables other devices in the map."
+          ]
+        }
+      },
+      {
+        "id": "upload",
+        "template": "uploadEvidence",
+        "required": true,
+        "params": {
+          "requiresPower": true,
+          "powerItemId": "power_on",
+          "count": 5,
+          "required": 4,
+          "itemId": "evidence",
+          "roomTypesEvidence": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
+          "roomTypesTerminal": ["OFFICE", "LAB"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Collect evidence pickups (you need 4).",
+            "After power is on, find the upload terminal and press E."
+          ]
+        }
+      },
+      {
+        "id": "calm",
+        "template": "surviveNoDamage",
+        "required": true,
+        "params": {
+          "seconds": 15,
+          "hints": [
+            "Avoid taking damage until the timer completes.",
+            "Break line of sight, then wait it out."
           ]
         }
       },
@@ -58,7 +93,7 @@
         }
       }
     ],
-    "exit": { "requires": ["doorCode", "unlockExit"] }
+    "exit": { "requires": ["power", "upload", "calm", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,
@@ -67,7 +102,7 @@
   },
   "autopilot": {
     "avoidRadius": 5,
-    "replanInterval": 0.5,
+    "replanInterval": 0.46,
     "stuckSeconds": 1.0,
     "noProgressSeconds": 0.7
   }

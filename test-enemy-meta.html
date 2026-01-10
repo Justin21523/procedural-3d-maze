@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Enemy Meta Preview</title>
+  <title>Model Meta Preview</title>
   <style>
     :root {
       color-scheme: dark;
@@ -145,11 +145,24 @@
 <body>
   <div id="app">
     <div id="panel">
-      <h1>Enemy Meta Preview</h1>
+      <h1>Model Meta Preview</h1>
       <p>
-        Loads a model from <span class="pill">/public/models</span>, previews upright/scale/ground offset,
-        and prints a <span class="pill">meta.json</span> snippet you can paste into the model folder.
+        Enemy: edits <span class="pill">scaleMultiplier</span>/<span class="pill">groundOffset</span>/<span class="pill">correctionRotationDeg</span> (saved into enemy <span class="pill">manifest.json</span>).
+        Weapon: edits <span class="pill">view.offset</span>/<span class="pill">view.rotationDeg</span>/<span class="pill">view.scale</span> (saved into <span class="pill">/models/weapon/meta.json</span>).
       </p>
+
+      <div class="row">
+        <div>
+          <label for="assetSelect">Asset Type</label>
+          <select id="assetSelect">
+            <option value="enemy">Enemy</option>
+            <option value="weapon">Weapon</option>
+          </select>
+        </div>
+        <div style="text-align:right;">
+          <button id="saveBtn" type="button">Save meta.json</button>
+        </div>
+      </div>
 
       <div class="row">
         <div>
@@ -161,6 +174,7 @@
         </div>
       </div>
 
+      <div id="enemyControls">
       <div class="row">
         <div>
           <label for="typeSelect">Monster Type (base stats.scale)</label>
@@ -174,11 +188,11 @@
       <div class="row">
         <div>
           <label for="scaleMul">scaleMultiplier <span id="scaleMulVal" class="pill">1.00</span></label>
-          <input id="scaleMul" type="range" min="0.20" max="6.00" step="0.05" value="1.00">
+          <input id="scaleMul" type="range" min="0.01" max="200.00" step="0.05" value="1.00">
         </div>
         <div style="width:110px;">
           <label for="scaleMulNum">Value</label>
-          <input id="scaleMulNum" type="number" min="0.01" max="100" step="0.05" value="1.00">
+          <input id="scaleMulNum" type="number" step="0.05" value="1.00">
         </div>
       </div>
 
@@ -189,7 +203,7 @@
         </div>
         <div style="width:110px;">
           <label for="groundOffsetNum">Value</label>
-          <input id="groundOffsetNum" type="number" min="-10" max="10" step="0.01" value="0.02">
+          <input id="groundOffsetNum" type="number" step="0.01" value="0.02">
         </div>
       </div>
 
@@ -213,6 +227,67 @@
           <textarea id="jsonOut" readonly spellcheck="false"></textarea>
         </div>
       </div>
+      </div>
+
+      <div id="weaponControls" style="display:none;">
+      <div class="row">
+        <div>
+          <label>Weapon Gizmo</label>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button id="weaponGizmoMove" type="button">Move</button>
+            <button id="weaponGizmoRotate" type="button">Rotate</button>
+            <button id="weaponGizmoOff" type="button">Off</button>
+            <button id="weaponReset" type="button" style="background: rgba(255, 180, 122, 0.15); border-color: rgba(255, 180, 122, 0.35);">Reset</button>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div class="pill">W/E/R: Move/Rotate/Scale</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>view.offset (X / Y / Z)</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+            <input id="wOffX" type="number" step="0.01" value="0">
+            <input id="wOffY" type="number" step="0.01" value="0">
+            <input id="wOffZ" type="number" step="0.01" value="0">
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div class="pill" id="weaponInfo">bbox: –</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>view.rotationDeg (X / Y / Z)</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+            <input id="wRotX" type="number" min="-180" max="180" step="1" value="0">
+            <input id="wRotY" type="number" min="-180" max="180" step="1" value="0">
+            <input id="wRotZ" type="number" min="-180" max="180" step="1" value="0">
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="wScale">view.scale <span id="wScaleVal" class="pill">1.00</span></label>
+          <input id="wScale" type="range" min="0.01" max="200.00" step="0.05" value="1.00">
+        </div>
+        <div style="width:110px;">
+          <label for="wScaleNum">Value</label>
+          <input id="wScaleNum" type="number" step="0.05" value="1.00">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="jsonOutWeapon">weapon meta entry</label>
+          <textarea id="jsonOutWeapon" readonly spellcheck="false"></textarea>
+        </div>
+      </div>
+      </div>
 
       <div class="row">
         <button id="copyBtn" type="button">Copy JSON</button>
@@ -230,14 +305,18 @@
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+    import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 
     import { ModelLoader } from '/src/entities/modelLoader.js';
     import { Monster } from '/src/entities/monster.js';
     import { MonsterTypes } from '/src/ai/monsterTypes.js';
     import { applyEnemyMetaToTypeConfig, applyEnemyModelMeta, getCandidateMetaUrls } from '/src/ai/enemyCatalog.js';
+    import { WeaponView } from '/src/player/weaponView.js';
     import { CONFIG } from '/src/core/config.js';
 
     const ui = {
+      assetSelect: document.getElementById('assetSelect'),
+      saveBtn: document.getElementById('saveBtn'),
       modelSelect: document.getElementById('modelSelect'),
       typeSelect: document.getElementById('typeSelect'),
       metaFileHint: document.getElementById('metaFileHint'),
@@ -252,11 +331,24 @@
       rotY: document.getElementById('rotY'),
       rotZ: document.getElementById('rotZ'),
       jsonOut: document.getElementById('jsonOut'),
+      jsonOutWeapon: document.getElementById('jsonOutWeapon'),
       reloadMetaBtn: document.getElementById('reloadMetaBtn'),
       copyBtn: document.getElementById('copyBtn'),
       status: document.getElementById('status'),
       hud: document.getElementById('hud'),
-      canvas: document.getElementById('viewport')
+      canvas: document.getElementById('viewport'),
+      enemyControls: document.getElementById('enemyControls'),
+      weaponControls: document.getElementById('weaponControls'),
+      weaponInfo: document.getElementById('weaponInfo'),
+      wOffX: document.getElementById('wOffX'),
+      wOffY: document.getElementById('wOffY'),
+      wOffZ: document.getElementById('wOffZ'),
+      wRotX: document.getElementById('wRotX'),
+      wRotY: document.getElementById('wRotY'),
+      wRotZ: document.getElementById('wRotZ'),
+      wScale: document.getElementById('wScale'),
+      wScaleNum: document.getElementById('wScaleNum'),
+      wScaleVal: document.getElementById('wScaleVal')
     };
 
     const DEG2RAD = Math.PI / 180;
@@ -285,9 +377,13 @@
       return obj ? JSON.parse(JSON.stringify(obj)) : obj;
     }
 
-    function buildMetaFromUI(baseMeta) {
-      const scaleMultiplier = clamp(toNum(ui.scaleMulNum.value, 1), 0.01, 100);
-      const groundOffset = clamp(toNum(ui.groundOffsetNum.value, 0.02), -10, 10);
+    function getAssetType() {
+      return ui.assetSelect?.value === 'weapon' ? 'weapon' : 'enemy';
+    }
+
+    function buildEnemyMetaFromUI(baseMeta) {
+      const scaleMultiplier = clamp(toNum(ui.scaleMulNum.value, 1), 0.0001, 1_000_000);
+      const groundOffset = clamp(toNum(ui.groundOffsetNum.value, 0.02), -1_000_000, 1_000_000);
       const correctionRotationDeg = {
         x: clamp(toNum(ui.rotX.value, 0), -180, 180),
         y: clamp(toNum(ui.rotY.value, 0), -180, 180),
@@ -303,7 +399,7 @@
       return next;
     }
 
-    function buildMetaForRuntime(metaJson) {
+    function buildEnemyMetaForRuntime(metaJson) {
       const deg = metaJson?.correctionRotationDeg || { x: 0, y: 0, z: 0 };
       return {
         correctionRotationRad: {
@@ -311,6 +407,47 @@
           y: (Number(deg.y) || 0) * DEG2RAD,
           z: (Number(deg.z) || 0) * DEG2RAD
         }
+      };
+    }
+
+    function buildWeaponMetaFromUI(baseMeta) {
+      void baseMeta;
+      const offset = {
+        x: clamp(toNum(ui.wOffX.value, 0), -1_000_000, 1_000_000),
+        y: clamp(toNum(ui.wOffY.value, 0), -1_000_000, 1_000_000),
+        z: clamp(toNum(ui.wOffZ.value, 0), -1_000_000, 1_000_000)
+      };
+      const rotationDeg = {
+        x: clamp(toNum(ui.wRotX.value, 0), -180, 180),
+        y: clamp(toNum(ui.wRotY.value, 0), -180, 180),
+        z: clamp(toNum(ui.wRotZ.value, 0), -180, 180)
+      };
+      const scale = clamp(toNum(ui.wScaleNum.value, 1), 0.0001, 1_000_000);
+      return {
+        view: {
+          offset,
+          rotationDeg,
+          scale
+        }
+      };
+    }
+
+    function buildWeaponViewForRuntime(metaJson) {
+      const view = metaJson?.view && typeof metaJson.view === 'object' ? metaJson.view : {};
+      const off = view?.offset && typeof view.offset === 'object' ? view.offset : { x: 0, y: 0, z: 0 };
+      const deg = view?.rotationDeg && typeof view.rotationDeg === 'object' ? view.rotationDeg : { x: 0, y: 0, z: 0 };
+      return {
+        offset: {
+          x: toNum(off.x, 0),
+          y: toNum(off.y, 0),
+          z: toNum(off.z, 0)
+        },
+        rotation: {
+          x: toNum(deg.x, 0) * DEG2RAD,
+          y: toNum(deg.y, 0) * DEG2RAD,
+          z: toNum(deg.z, 0) * DEG2RAD
+        },
+        scale: toNum(view.scale, 1.0)
       };
     }
 
@@ -325,6 +462,7 @@
     function updateSliderDisplays() {
       ui.scaleMulVal.textContent = format(toNum(ui.scaleMulNum.value, 1), 2);
       ui.groundOffsetVal.textContent = format(toNum(ui.groundOffsetNum.value, 0.02), 2);
+      ui.wScaleVal.textContent = format(toNum(ui.wScaleNum.value, 1), 2);
     }
 
     function syncRangeToNumber(rangeEl, numberEl) {
@@ -337,15 +475,29 @@
       updateSliderDisplays();
     }
 
-    async function fetchManifest() {
-      const res = await fetch('/models/manifest.json', { cache: 'no-store' });
-      const json = await res.json();
-      const models = Array.isArray(json) ? json : json?.models;
-      const list = Array.isArray(models) ? models.filter(p => typeof p === 'string') : [];
-      return list;
+    async function fetchManifest(assetType) {
+      const type = assetType === 'weapon' ? 'weapon' : 'enemy';
+      const urls = type === 'weapon'
+        ? ['/models/weapon/manifest.json', '/models/manifest.json']
+        : ['/models/enemy/manifest.json', '/models/manifest.json'];
+      for (const url of urls) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const json = await res.json();
+          const models = url.endsWith('/models/manifest.json')
+            ? (type === 'weapon' ? json?.weaponModels : json?.enemyModels)
+            : (Array.isArray(json) ? json : json?.models);
+          const list = Array.isArray(models) ? models.filter(p => typeof p === 'string') : [];
+          return list;
+        } catch (err) {
+          void err;
+        }
+      }
+      return [];
     }
 
-    async function fetchExistingMeta(modelPath) {
+    async function fetchExistingEnemyMeta(modelPath) {
       const urls = getCandidateMetaUrls(modelPath);
       for (const url of urls) {
         try {
@@ -360,7 +512,21 @@
       return { url: urls[0] || null, json: null };
     }
 
-    function applyMetaToUI(metaJson) {
+    async function fetchWeaponMetaFile() {
+      try {
+        const res = await fetch('/models/weapon/meta.json', { cache: 'no-store' });
+        if (!res.ok) return { schemaVersion: 1, weapons: {} };
+        const json = await res.json();
+        if (!json || typeof json !== 'object' || Array.isArray(json)) return { schemaVersion: 1, weapons: {} };
+        const weapons = json.weapons && typeof json.weapons === 'object' ? json.weapons : {};
+        return { ...json, schemaVersion: 1, weapons };
+      } catch (err) {
+        void err;
+        return { schemaVersion: 1, weapons: {} };
+      }
+    }
+
+    function applyEnemyMetaToUI(metaJson) {
       const scaleMultiplier = toNum(metaJson?.scaleMultiplier, 1);
       const groundOffset = toNum(metaJson?.groundOffset, 0.02);
 
@@ -386,12 +552,45 @@
       updateSliderDisplays();
     }
 
+    function applyWeaponMetaToUI(metaJson) {
+      const view = metaJson?.view && typeof metaJson.view === 'object' ? metaJson.view : {};
+      const off = view?.offset && typeof view.offset === 'object' ? view.offset : { x: 0, y: 0, z: 0 };
+      const rotDeg = view?.rotationDeg && typeof view.rotationDeg === 'object'
+        ? view.rotationDeg
+        : view?.rotationRad && typeof view.rotationRad === 'object'
+          ? {
+            x: toNum(view.rotationRad.x, 0) / DEG2RAD,
+            y: toNum(view.rotationRad.y, 0) / DEG2RAD,
+            z: toNum(view.rotationRad.z, 0) / DEG2RAD
+          }
+          : view?.rotation && typeof view.rotation === 'object'
+            ? {
+              x: toNum(view.rotation.x, 0) / DEG2RAD,
+              y: toNum(view.rotation.y, 0) / DEG2RAD,
+              z: toNum(view.rotation.z, 0) / DEG2RAD
+            }
+            : { x: 0, y: 0, z: 0 };
+
+      ui.wOffX.value = String(toNum(off.x, 0));
+      ui.wOffY.value = String(toNum(off.y, 0));
+      ui.wOffZ.value = String(toNum(off.z, 0));
+      ui.wRotX.value = String(Math.round(toNum(rotDeg.x, 0)));
+      ui.wRotY.value = String(Math.round(toNum(rotDeg.y, 0)));
+      ui.wRotZ.value = String(Math.round(toNum(rotDeg.z, 0)));
+
+      const scale = toNum(view.scale, 1);
+      ui.wScale.value = String(scale);
+      ui.wScaleNum.value = String(scale);
+      updateSliderDisplays();
+    }
+
     // Three.js scene
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0b0e14);
 
     const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 1000);
     camera.position.set(3.5, 2.4, 3.5);
+    scene.add(camera);
 
     const renderer = new THREE.WebGLRenderer({ canvas: ui.canvas, antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -400,6 +599,7 @@
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.target.set(0, 1.0, 0);
+    controls.enablePan = true;
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.55));
     const sun = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -415,22 +615,38 @@
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     scene.add(ground);
-    scene.add(new THREE.GridHelper(40, 40, 0x2a3246, 0x1e2638));
-    scene.add(new THREE.AxesHelper(1.2));
+    const gridHelper = new THREE.GridHelper(40, 40, 0x2a3246, 0x1e2638);
+    scene.add(gridHelper);
+    const axesHelper = new THREE.AxesHelper(1.2);
+    scene.add(axesHelper);
 
     const loader = new ModelLoader();
     let currentModel = null;
     let currentHelper = null;
     let baseMeta = null;
     let lastMetaUrl = null;
+    let weaponMetaFile = null;
     let loadToken = 0;
     let reloadTimer = null;
+    let weaponView = null;
+    let transformControls = null;
+    let weaponPreviewRoot = null;
+    let weaponTransformNode = null;
 
     function clearCurrentModel() {
       if (currentHelper) scene.remove(currentHelper);
       currentHelper = null;
       if (currentModel) scene.remove(currentModel);
       currentModel = null;
+      if (weaponPreviewRoot) {
+        scene.remove(weaponPreviewRoot);
+        weaponPreviewRoot = null;
+      }
+      weaponTransformNode = null;
+      if (transformControls) {
+        transformControls.detach();
+        transformControls.visible = false;
+      }
     }
 
     function setMetaHint(modelPath, metaUrl) {
@@ -442,8 +658,156 @@
     }
 
     function updateJsonOutput() {
-      const meta = buildMetaFromUI(baseMeta);
-      ui.jsonOut.value = JSON.stringify(meta, null, 2);
+      const modelPath = getSelectedModelPath();
+      if (getAssetType() === 'weapon') {
+        const entry = buildWeaponMetaFromUI(baseMeta);
+        ui.jsonOutWeapon.value = JSON.stringify({ [modelPath || '']: entry }, null, 2);
+        ui.jsonOut.value = '';
+      } else {
+        const meta = buildEnemyMetaFromUI(baseMeta);
+        ui.jsonOut.value = JSON.stringify(meta, null, 2);
+        ui.jsonOutWeapon.value = '';
+      }
+    }
+
+    async function postMeta(modelPath, meta) {
+      const res = await fetch('/api/model-meta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelPath, meta })
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || `HTTP ${res.status}`);
+      }
+      return json;
+    }
+
+    let autoSaveTimer = null;
+    function notifyMetaUpdated(kind, modelPath) {
+      try {
+        if (typeof BroadcastChannel === 'undefined') return;
+        const ch = new BroadcastChannel('p3dm-meta');
+        ch.postMessage({ kind, modelPath, at: Date.now() });
+        ch.close();
+      } catch (err) {
+        void err;
+      }
+    }
+
+    function scheduleAutoSave() {
+      if (autoSaveTimer) clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => {
+        void saveMetaForSelectedModel({ silent: true });
+      }, 500);
+    }
+
+    async function saveMetaForSelectedModel(options = {}) {
+      const modelPath = getSelectedModelPath();
+      if (!modelPath) return;
+
+      const silent = options?.silent === true;
+      if (!silent) setStatus('Saving…');
+      try {
+        if (getAssetType() === 'weapon') {
+          const entry = buildWeaponMetaFromUI(baseMeta);
+          const file = weaponMetaFile || await fetchWeaponMetaFile();
+          const next = {
+            schemaVersion: 1,
+            ...(file && typeof file === 'object' ? file : {}),
+            weapons: {
+              ...(file?.weapons && typeof file.weapons === 'object' ? file.weapons : {})
+            }
+          };
+          next.weapons[modelPath] = entry;
+          const saved = await postMeta(modelPath, next);
+          weaponMetaFile = next;
+          lastMetaUrl = saved?.metaUrl || '/models/weapon/meta.json';
+          setMetaHint(modelPath, lastMetaUrl);
+          notifyMetaUpdated('weapon', modelPath);
+        } else {
+          const meta = buildEnemyMetaFromUI(baseMeta);
+          const saved = await postMeta(modelPath, meta);
+          lastMetaUrl = saved?.metaUrl || lastMetaUrl;
+          setMetaHint(modelPath, lastMetaUrl);
+          notifyMetaUpdated('enemy', modelPath);
+        }
+
+        if (!silent) setStatus('Saved', true);
+      } catch (err) {
+        console.error(err);
+        if (!silent) setStatus(`Save failed: ${err?.message || err}`, false);
+      }
+    }
+
+    function setAssetUiMode(type) {
+      const isWeapon = type === 'weapon';
+      ui.enemyControls.style.display = isWeapon ? 'none' : 'block';
+      ui.weaponControls.style.display = isWeapon ? 'block' : 'none';
+      controls.enabled = true;
+      ground.visible = true;
+      gridHelper.visible = true;
+      axesHelper.visible = true;
+      ui.copyBtn.textContent = isWeapon ? 'Copy Entry JSON' : 'Copy JSON';
+      ui.weaponInfo.textContent = 'bbox: –';
+      ui.modelInfo.textContent = 'height: –';
+      if (weaponView?.setEnabled) weaponView.setEnabled(false);
+    }
+
+    function ensureWeaponView() {
+      if (weaponView) return weaponView;
+      const cameraController = {
+        getCamera: () => camera,
+        getYaw: () => 0,
+        getPitch: () => 0
+      };
+      const playerRef = { position: new THREE.Vector3() };
+      weaponView = new WeaponView(scene, cameraController, playerRef);
+      weaponView.setEnabled(false);
+      return weaponView;
+    }
+
+    function ensureTransformControls() {
+      if (transformControls) return transformControls;
+      transformControls = new TransformControls(camera, renderer.domElement);
+      transformControls.enabled = true;
+      transformControls.visible = false;
+      transformControls.setMode('translate');
+      transformControls.addEventListener('dragging-changed', (e) => {
+        controls.enabled = !e.value;
+      });
+      transformControls.addEventListener('objectChange', () => {
+        if (getAssetType() !== 'weapon') return;
+        const obj = transformControls.object;
+        if (!obj) return;
+        ui.wOffX.value = String(obj.position.x.toFixed(3));
+        ui.wOffY.value = String(obj.position.y.toFixed(3));
+        ui.wOffZ.value = String(obj.position.z.toFixed(3));
+        ui.wRotX.value = String(Math.round(THREE.MathUtils.radToDeg(obj.rotation.x)));
+        ui.wRotY.value = String(Math.round(THREE.MathUtils.radToDeg(obj.rotation.y)));
+        ui.wRotZ.value = String(Math.round(THREE.MathUtils.radToDeg(obj.rotation.z)));
+        ui.wScale.value = String(obj.scale.x.toFixed(3));
+        ui.wScaleNum.value = String(obj.scale.x.toFixed(3));
+        updateJsonOutput();
+        scheduleAutoSave();
+      });
+      scene.add(transformControls);
+      return transformControls;
+    }
+
+    function applyWeaponUiToObject(obj) {
+      obj.position.set(
+        toNum(ui.wOffX.value, 0),
+        toNum(ui.wOffY.value, 0),
+        toNum(ui.wOffZ.value, 0)
+      );
+      obj.rotation.set(
+        toNum(ui.wRotX.value, 0) * DEG2RAD,
+        toNum(ui.wRotY.value, 0) * DEG2RAD,
+        toNum(ui.wRotZ.value, 0) * DEG2RAD
+      );
+      const s = toNum(ui.wScaleNum.value, 1);
+      obj.scale.setScalar(Math.max(0.0001, s));
     }
 
     async function loadAndPreview() {
@@ -456,11 +820,62 @@
       updateJsonOutput();
 
       try {
+        const assetType = getAssetType();
+        setAssetUiMode(assetType);
+
+        if (assetType === 'weapon') {
+          const metaJson = buildWeaponMetaFromUI(baseMeta);
+          const viewRuntime = buildWeaponViewForRuntime(metaJson);
+          const view = ensureWeaponView();
+
+          // Build a world-space preview root using WeaponView's prepared model loader.
+          const obj = await view.loadModelObject(modelPath);
+          if (token !== loadToken) return;
+
+          if (!obj) throw new Error('Weapon model failed to load');
+
+          weaponPreviewRoot = new THREE.Group();
+          weaponPreviewRoot.name = '__weaponPreviewRoot';
+          weaponTransformNode = new THREE.Group();
+          weaponTransformNode.name = '__weaponTransform';
+          weaponTransformNode.add(obj);
+          weaponPreviewRoot.add(weaponTransformNode);
+          scene.add(weaponPreviewRoot);
+
+          // Apply view transform on a wrapper node so the model's internal normalization stays intact.
+          weaponTransformNode.position.set(viewRuntime.offset.x, viewRuntime.offset.y, viewRuntime.offset.z);
+          weaponTransformNode.rotation.set(viewRuntime.rotation.x, viewRuntime.rotation.y, viewRuntime.rotation.z);
+          weaponTransformNode.scale.setScalar(Math.max(0.0001, viewRuntime.scale));
+
+          // Attach gizmo to the weapon object for interactive tweaking.
+          const gizmo = ensureTransformControls();
+          gizmo.attach(weaponTransformNode);
+          gizmo.visible = true;
+
+          // Frame the camera so the weapon is visible, but keep it close to "first-person" scale.
+          controls.target.set(0, 0, -0.7);
+          camera.position.set(0.2, 0.05, 0.55);
+          camera.lookAt(controls.target);
+
+          const box = new THREE.Box3().setFromObject(weaponTransformNode);
+          const size = new THREE.Vector3();
+          box.getSize(size);
+          ui.weaponInfo.textContent = `bbox: ${format(size.x, 2)}×${format(size.y, 2)}×${format(size.z, 2)}`;
+
+          ui.hud.textContent =
+            `Weapon: ${modelPath}\n` +
+            `meta: /models/weapon/meta.json\n` +
+            `Tip: adjust view.offset / rotationDeg / scale.`;
+
+          setStatus('Ready', true);
+          return;
+        }
+
         const selectedTypeKey = getSelectedMonsterTypeKey();
         const typeConfig = deepClone(MonsterTypes[selectedTypeKey] || MonsterTypes.HUNTER || {});
 
-        const metaJson = buildMetaFromUI(baseMeta);
-        const runtimeMeta = buildMetaForRuntime(metaJson);
+        const metaJson = buildEnemyMetaFromUI(baseMeta);
+        const runtimeMeta = buildEnemyMetaForRuntime(metaJson);
 
         const model = await loader.loadModel(modelPath);
         if (token !== loadToken) return;
@@ -514,11 +929,26 @@
       if (!modelPath) return;
 
       setStatus('Loading meta.json…');
-      const { url, json } = await fetchExistingMeta(modelPath);
+      const assetType = getAssetType();
+      setAssetUiMode(assetType);
+
+      if (assetType === 'weapon') {
+        weaponMetaFile = await fetchWeaponMetaFile();
+        const entry = weaponMetaFile?.weapons?.[modelPath] || {};
+        baseMeta = entry || {};
+        lastMetaUrl = '/models/weapon/meta.json';
+        setMetaHint(modelPath, entry && Object.keys(entry).length > 0 ? lastMetaUrl : null);
+        applyWeaponMetaToUI(baseMeta);
+        updateJsonOutput();
+        schedulePreview();
+        return;
+      }
+
+      const { url, json } = await fetchExistingEnemyMeta(modelPath);
       baseMeta = json || {};
       lastMetaUrl = url;
       setMetaHint(modelPath, url && json ? url : null);
-      applyMetaToUI(baseMeta);
+      applyEnemyMetaToUI(baseMeta);
       updateJsonOutput();
       schedulePreview();
     }
@@ -535,6 +965,7 @@
     }
 
     function populateModelList(models) {
+      ui.modelSelect.innerHTML = '';
       const list = [...models];
       list.sort((a, b) => a.localeCompare(b));
       for (const path of list) {
@@ -547,34 +978,115 @@
     }
 
     function hookInputs() {
+      ui.assetSelect.addEventListener('change', async () => {
+        try {
+          baseMeta = {};
+          lastMetaUrl = null;
+          weaponMetaFile = null;
+          setMetaHint(null, null);
+          setAssetUiMode(getAssetType());
+          setStatus('Loading manifest…');
+          const models = await fetchManifest(getAssetType());
+          populateModelList(models);
+          await reloadMetaForSelectedModel();
+        } catch (err) {
+          console.error(err);
+          setStatus(`Manifest load failed: ${err?.message || err}`, false);
+        }
+      });
+
+      ui.saveBtn.addEventListener('click', () => {
+        void saveMetaForSelectedModel();
+      });
+
+      const weaponGizmoMove = document.getElementById('weaponGizmoMove');
+      const weaponGizmoRotate = document.getElementById('weaponGizmoRotate');
+      const weaponGizmoOff = document.getElementById('weaponGizmoOff');
+      const weaponReset = document.getElementById('weaponReset');
+      const setGizmoMode = (mode) => {
+        if (!transformControls) return;
+        transformControls.setMode(mode);
+      };
+      if (weaponGizmoMove) weaponGizmoMove.addEventListener('click', () => setGizmoMode('translate'));
+      if (weaponGizmoRotate) weaponGizmoRotate.addEventListener('click', () => setGizmoMode('rotate'));
+      if (weaponGizmoOff) weaponGizmoOff.addEventListener('click', () => {
+        if (!transformControls) return;
+        transformControls.detach();
+        transformControls.visible = false;
+      });
+      if (weaponReset) weaponReset.addEventListener('click', () => {
+        if (getAssetType() !== 'weapon') return;
+        ui.wOffX.value = '0';
+        ui.wOffY.value = '0';
+        ui.wOffZ.value = '0';
+        ui.wRotX.value = '0';
+        ui.wRotY.value = '0';
+        ui.wRotZ.value = '0';
+        ui.wScale.value = '1';
+        ui.wScaleNum.value = '1';
+        updateSliderDisplays();
+        updateJsonOutput();
+        scheduleAutoSave();
+        schedulePreview();
+      });
+
       ui.scaleMul.addEventListener('input', () => {
         syncRangeToNumber(ui.scaleMul, ui.scaleMulNum);
         updateJsonOutput();
+        scheduleAutoSave();
         schedulePreview();
       });
       ui.scaleMulNum.addEventListener('input', () => {
         syncNumberToRange(ui.scaleMulNum, ui.scaleMul);
         updateJsonOutput();
+        scheduleAutoSave();
         schedulePreview();
       });
 
       ui.groundOffset.addEventListener('input', () => {
         syncRangeToNumber(ui.groundOffset, ui.groundOffsetNum);
         updateJsonOutput();
+        scheduleAutoSave();
         schedulePreview();
       });
       ui.groundOffsetNum.addEventListener('input', () => {
         syncNumberToRange(ui.groundOffsetNum, ui.groundOffset);
         updateJsonOutput();
+        scheduleAutoSave();
         schedulePreview();
       });
 
       for (const el of [ui.rotX, ui.rotY, ui.rotZ]) {
         el.addEventListener('input', () => {
           updateJsonOutput();
+          scheduleAutoSave();
           schedulePreview();
         });
       }
+
+      for (const el of [ui.wOffX, ui.wOffY, ui.wOffZ, ui.wRotX, ui.wRotY, ui.wRotZ]) {
+        el.addEventListener('input', () => {
+          updateJsonOutput();
+          if (transformControls?.object) applyWeaponUiToObject(transformControls.object);
+          scheduleAutoSave();
+          schedulePreview();
+        });
+      }
+
+      ui.wScale.addEventListener('input', () => {
+        syncRangeToNumber(ui.wScale, ui.wScaleNum);
+        updateJsonOutput();
+        if (transformControls?.object) applyWeaponUiToObject(transformControls.object);
+        scheduleAutoSave();
+        schedulePreview();
+      });
+      ui.wScaleNum.addEventListener('input', () => {
+        syncNumberToRange(ui.wScaleNum, ui.wScale);
+        updateJsonOutput();
+        if (transformControls?.object) applyWeaponUiToObject(transformControls.object);
+        scheduleAutoSave();
+        schedulePreview();
+      });
 
       ui.modelSelect.addEventListener('change', () => {
         baseMeta = {};
@@ -593,7 +1105,8 @@
 
       ui.copyBtn.addEventListener('click', async () => {
         try {
-          await navigator.clipboard.writeText(ui.jsonOut.value);
+          const text = getAssetType() === 'weapon' ? ui.jsonOutWeapon.value : ui.jsonOut.value;
+          await navigator.clipboard.writeText(text);
           setStatus('Copied', true);
         } catch (err) {
           void err;
@@ -625,7 +1138,8 @@
       updateSliderDisplays();
 
       try {
-        const models = await fetchManifest();
+        setAssetUiMode(getAssetType());
+        const models = await fetchManifest(getAssetType());
         populateModelList(models);
         await reloadMetaForSelectedModel();
         resize();

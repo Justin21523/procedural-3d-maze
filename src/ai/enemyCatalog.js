@@ -496,10 +496,20 @@ export function getEnemyFolderFromModelPath(modelPath) {
   if (parts.length < 2) return null;
   const modelsIndex = parts.indexOf('models');
   if (modelsIndex === -1) return null;
-  const folder = parts[modelsIndex + 1] || null;
+  const category = parts[modelsIndex + 1] || null;
+
+  // New layout: /models/enemy/<Enemy>/<file>
+  if (category === 'enemy') {
+    const enemyName = parts[modelsIndex + 2] || null;
+    const file = parts[modelsIndex + 3] || null;
+    if (!enemyName || !file) return null;
+    return enemyName;
+  }
+
+  // Legacy layout: /models/<Enemy>/<file>
+  const folder = category;
   const file = parts[modelsIndex + 2] || null;
-  if (!folder) return null;
-  if (!file) return null;
+  if (!folder || !file) return null;
   return folder;
 }
 
@@ -517,6 +527,9 @@ export function getCandidateMetaUrls(modelPath) {
   const urls = [];
   const folder = getEnemyFolderFromModelPath(modelPath);
   if (folder) {
+    // Prefer new per-enemy manifest (can embed `meta`) then legacy meta.json.
+    urls.push(`/models/enemy/${folder}/manifest.json`);
+    urls.push(`/models/enemy/${folder}/meta.json`);
     urls.push(`/models/${folder}/meta.json`);
   } else {
     const base = getEnemyBaseName(modelPath);
@@ -527,7 +540,8 @@ export function getCandidateMetaUrls(modelPath) {
 
 /**
  * EnemyCatalog
- * - Loads optional per-model metadata from `public/models/<enemy>/meta.json`.
+ * - Loads optional per-model metadata from `public/models/enemy/<enemy>/manifest.json` (field: `meta`)
+ *   or `public/models/enemy/<enemy>/meta.json`.
  * - Falls back to an in-code catalog (optional).
  *
  * Supported meta fields (top-level):
@@ -592,7 +606,10 @@ export class EnemyCatalog {
         const res = await fetch(url, { cache: 'no-store' });
         if (!res.ok) continue;
         const json = await res.json();
-        meta = mergeMeta(meta, json);
+        const payload = (url.endsWith('/manifest.json') && isObject(json))
+          ? (isObject(json.meta) ? json.meta : (isObject(json.enemyMeta) ? json.enemyMeta : json))
+          : json;
+        meta = mergeMeta(meta, payload);
         break;
       } catch (err) {
         void err;

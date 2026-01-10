@@ -130,47 +130,170 @@
       box-shadow: 0 0 10px rgba(255, 120, 120, 0.6);
     }
 
+    /* Home menu (was the old instructions overlay) */
     #instructions {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background-color: rgba(0, 0, 0, 0.9);
-      padding: 30px;
-      border-radius: 10px;
-      text-align: center;
-      z-index: 200;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.92);
+      z-index: 2000;
+      padding: 24px;
+      overflow: auto;
+      pointer-events: auto;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
     }
 
-    #instructions h1 {
+    #home-shell {
+      width: min(1120px, 100%);
+      border: 1px solid rgba(255, 215, 0, 0.3);
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 14px;
+      padding: 18px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    #home-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    #home-title {
       color: #ffd700;
-      margin-bottom: 20px;
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: 0.2px;
     }
 
-    #instructions ul {
+    #home-status {
+      color: rgba(255, 255, 255, 0.85);
+      font-size: 12px;
+      text-align: right;
+      line-height: 1.35;
+    }
+
+    #home-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 14px 0;
+      padding: 0;
       list-style: none;
-      margin: 20px 0;
-      text-align: left;
     }
 
-    #instructions li {
-      margin: 10px 0;
+    .home-tab-btn {
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.92);
+      padding: 9px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      user-select: none;
     }
 
-    #instructions button {
+    .home-tab-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .home-tab-btn.active {
+      border-color: rgba(255, 215, 0, 0.55);
+      background: rgba(255, 215, 0, 0.16);
+      color: #ffd700;
+    }
+
+    .home-panel {
+      padding: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.35);
+    }
+
+    .home-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+
+    .home-actions button {
       background-color: #ffd700;
       color: #1a1a1a;
       border: none;
-      padding: 15px 30px;
-      font-size: 16px;
-      font-weight: bold;
-      border-radius: 5px;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 800;
+      border-radius: 10px;
       cursor: pointer;
-      margin-top: 20px;
     }
 
-    #instructions button:hover {
-      background-color: #ffed4e;
+    .home-actions button.secondary {
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: rgba(255, 255, 255, 0.92);
+      font-weight: 700;
+    }
+
+    .home-actions button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    #instructions h2 {
+      color: #ffd700;
+      margin: 0 0 10px 0;
+      font-size: 16px;
+    }
+
+    #home-controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 14px;
+      margin-top: 10px;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.92);
+    }
+
+    #home-controls .k {
+      color: #ffd700;
+      font-weight: 800;
+    }
+
+    /* Make existing panels usable inside the Home menu */
+    #instructions #settings-panel {
+      position: static;
+      bottom: auto;
+      left: auto;
+      z-index: auto;
+      min-width: 0;
+      margin: 0;
+      width: 100%;
+    }
+
+    #instructions #level-panel,
+    #instructions #debug-panel {
+      position: static !important;
+      top: auto !important;
+      right: auto !important;
+      left: auto !important;
+      bottom: auto !important;
+      z-index: auto !important;
+      min-width: 0;
+      max-width: none;
+      width: 100%;
+      display: block !important;
+      margin: 0;
+    }
+
+    body.mode-home #ui-overlay,
+    body.mode-home #crosshair,
+    body.mode-home #interact-prompt,
+    body.mode-home #minimap-container {
+      display: none !important;
     }
 
     #instructions.hidden {
@@ -323,7 +446,7 @@
     }
   </style>
 </head>
-<body>
+<body class="mode-home">
   <!-- Canvas container for Three.js -->
   <div id="canvas-container"></div>
   <div id="crosshair"></div>
@@ -332,6 +455,7 @@
   <!-- UI Overlay -->
   <div id="ui-overlay">
     <h3>Procedural 3D Maze</h3>
+    <p>Level: <span id="hud-level" style="color: #ffd700; font-weight: bold;">—</span> <span id="hud-campaign" style="color: #66aaff; font-size: 12px;"></span></p>
     <p>Time: <span id="game-time" style="color: #ffd700; font-weight: bold;">00:00</span></p>
     <p>Health: <span id="health-display" style="color: #ff4444; font-weight: bold;">100</span>/100</p>
     <div id="health-bar" style="width: 200px; height: 20px; background: #333; border: 2px solid #666; margin: 5px 0;">
@@ -375,22 +499,11 @@
       <div><span style="color: #ffeb3b;">■</span> Corridor <span style="color: #2196f3;">■</span> Classroom</div>
       <div><span style="color: #ff5722;">■</span> Office <span style="color: #00bcd4;">■</span> Bathroom</div>
       <div><span style="color: #9e9e9e;">■</span> Storage <span style="color: #9c27b0;">■</span> Library</div>
-      <div style="margin-top: 6px; text-align: left;">
-        <label style="display: block; margin-bottom: 3px;">Size</label>
-        <input id="minimap-size" type="range" min="140" max="320" step="10" value="240">
-        <div id="minimap-size-value" style="text-align: right; color: #ffd700;">240px</div>
-      </div>
-      <div style="margin-top: 6px; text-align: left;">
-        <label style="display: block; margin-bottom: 3px;">Zoom</label>
-        <input id="minimap-zoom" type="range" min="1" max="3" step="0.1" value="1.1">
-        <div id="minimap-zoom-value" style="text-align: right; color: #ffd700;">1.1x</div>
-      </div>
-      <button id="minimap-reset" style="margin-top: 8px; width: 100%; padding: 4px 6px; background: none; border: 1px solid #ffd700; color: #ffd700; border-radius: 4px; cursor: pointer; font-size: 10px;">Reset Minimap</button>
     </div>
   </div>
 
-  <!-- Level control panel -->
-  <div id="level-panel" style="position: fixed; top: 20px; left: 240px; background: rgba(0,0,0,0.85); border: 2px solid #ffd700; border-radius: 6px; padding: 10px; z-index: 999; min-width: 260px; max-width: 300px;">
+  <!-- Level control panel (moved into Home menu at runtime) -->
+  <div id="level-panel" class="hidden" style="position: fixed; top: 20px; left: 240px; background: rgba(0,0,0,0.85); border: 2px solid #ffd700; border-radius: 6px; padding: 10px; z-index: 999; min-width: 260px; max-width: 300px;">
     <h4 style="margin: 0 0 6px 0; color: #ffd700; font-size: 14px;">📚 Level Navigator</h4>
     <div style="font-size: 12px; color: #ccc; margin-bottom: 6px;">Current: <span id="level-label" style="color: #ffd700;">-</span></div>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
@@ -407,25 +520,82 @@
     </div>
   </div>
 
-  <!-- Instructions overlay -->
+  <!-- Home / Main Menu -->
   <div id="instructions">
-    <h1>Procedural 3D Maze</h1>
-    <p>Find the green exit and escape the maze!</p>
-    <ul>
-      <li><strong>WASD</strong> - Move</li>
-      <li><strong>Mouse</strong> - Look</li>
-      <li><strong>Mouse1</strong> - Fire</li>
-      <li><strong>1/2/3</strong> - Switch Weapon</li>
-      <li><strong>R</strong> - Reload</li>
-      <li><strong>B</strong> - Ammo Mode</li>
-      <li><strong>E</strong> - Interact</li>
-      <li><strong>Q</strong> - Grenade Skill</li>
-      <li><strong>X</strong> - EMP Skill</li>
-      <li><strong>H</strong> - Hint</li>
-      <li><strong>ESC</strong> - Release Mouse</li>
-      <li><strong>Tab</strong> - Settings</li>
-    </ul>
-    <button id="start-button">Start Game</button>
+    <div id="home-shell">
+      <div id="home-header">
+        <div id="home-title">Procedural 3D Maze</div>
+        <div id="home-status"></div>
+      </div>
+
+      <div id="home-tabs">
+        <button class="home-tab-btn active" type="button" data-home-tab="play">Play</button>
+        <button class="home-tab-btn" type="button" data-home-tab="settings">Settings</button>
+        <button class="home-tab-btn" type="button" data-home-tab="tools">Tools</button>
+        <button class="home-tab-btn" type="button" data-home-tab="debug">Debug</button>
+      </div>
+
+      <div class="home-panel" data-home-panel="play">
+        <h2>Play</h2>
+        <div style="color: rgba(255,255,255,0.9); font-size: 13px; line-height: 1.5;">
+          Change settings in the tabs, then start or continue. To change settings during a run, return here first.
+        </div>
+        <div id="home-campaign-info" style="margin-top: 10px; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.92); font-size: 13px; line-height: 1.45; white-space: pre-line;"></div>
+
+        <div class="home-actions">
+          <button id="home-start-new" type="button">Start New Run</button>
+          <button id="home-continue" type="button" class="secondary" disabled>Continue</button>
+          <button id="home-restart" type="button" class="secondary" disabled>Restart Current Run</button>
+          <button id="home-abandon" type="button" class="secondary" disabled>Abandon Run</button>
+          <button id="home-restart-campaign" type="button" class="secondary">Restart Campaign</button>
+        </div>
+
+        <div class="home-actions" style="margin-top: 10px;">
+          <button id="home-save" type="button" class="secondary" disabled>Save Game</button>
+          <button id="home-load" type="button" class="secondary" disabled>Load Save</button>
+          <button id="home-clear-save" type="button" class="secondary" disabled>Delete Save</button>
+        </div>
+        <div id="home-save-info" style="margin-top: 8px; color: rgba(255,255,255,0.75); font-size: 12px; line-height: 1.4;"></div>
+
+        <div id="home-controls">
+          <div><span class="k">WASD</span> Move</div>
+          <div><span class="k">Mouse</span> Look</div>
+          <div><span class="k">Mouse1</span> Fire</div>
+          <div><span class="k">1/2/3</span> Switch weapon</div>
+          <div><span class="k">R</span> Reload</div>
+          <div><span class="k">E</span> Interact</div>
+          <div><span class="k">Q</span> Grenade</div>
+          <div><span class="k">X</span> EMP</div>
+          <div><span class="k">H</span> Hint</div>
+          <div><span class="k">ESC</span> Menu</div>
+        </div>
+      </div>
+
+      <div class="home-panel hidden" data-home-panel="settings">
+        <h2>Settings</h2>
+        <div id="home-mount-settings"></div>
+      </div>
+
+      <div class="home-panel hidden" data-home-panel="tools">
+        <h2>Tools</h2>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+          <a href="/debug-hub.html" style="display:block; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.92); text-decoration: none;">Debug Hub</a>
+          <a href="/enemy-lab.html" style="display:block; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.92); text-decoration: none;">Enemy Lab</a>
+          <a href="/level-lab.html" style="display:block; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.92); text-decoration: none;">Level Lab</a>
+          <a href="/test-ai.html" style="display:block; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.92); text-decoration: none;">AI Test</a>
+          <a href="/diagnostic.html" style="display:block; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.92); text-decoration: none;">Diagnostics</a>
+          <a href="/test-enemy-meta.html" style="display:block; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.92); text-decoration: none;">Meta Preview</a>
+        </div>
+      </div>
+
+      <div class="home-panel hidden" data-home-panel="debug">
+        <h2>Debug</h2>
+        <div style="display: grid; gap: 12px;">
+          <div id="home-mount-level"></div>
+          <div id="home-mount-debug"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Game Over overlay -->
@@ -446,6 +616,17 @@
       <button id="next-level-button" style="background-color: #00d084; color: #0c1b0c; border: none; padding: 15px 32px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer; display: none;">Next Level</button>
       <button id="restart-button" style="background-color: #ffd700; color: #1a1a1a; border: none; padding: 15px 32px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer;">Restart</button>
       <button id="menu-button" style="background-color: #666; color: #fff; border: none; padding: 15px 32px; font-size: 18px; font-weight: bold; border-radius: 5px; cursor: pointer;">Main Menu</button>
+    </div>
+  </div>
+
+  <!-- Campaign Victory overlay -->
+  <div id="campaign-victory" class="hidden" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: rgba(0, 0, 0, 0.96); padding: 34px; border-radius: 10px; text-align: center; z-index: 350; width: min(920px, calc(100vw - 40px)); border: 3px solid #ffd700; max-height: 85vh; overflow: auto;">
+    <h1 id="campaign-victory-title" style="color: #ffd700; margin-bottom: 10px; font-size: 44px;">🏆 Campaign Summary</h1>
+    <div id="campaign-victory-summary" style="color: rgba(255,255,255,0.92); font-size: 14px; margin-bottom: 14px; line-height: 1.45;"></div>
+    <div id="campaign-victory-table" style="text-align: left; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); border-radius: 10px; padding: 12px;"></div>
+    <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 14px;">
+      <button id="campaign-new-button" style="background-color: #ffd700; color: #1a1a1a; border: none; padding: 12px 22px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer;">Start New Campaign</button>
+      <button id="campaign-menu-button" style="background-color: #666; color: #fff; border: none; padding: 12px 22px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer;">Main Menu</button>
     </div>
   </div>
 
@@ -497,10 +678,7 @@
       <div style="margin-bottom: 8px;">
         <label style="color: #ccc; font-size: 11px; display: block; margin-bottom: 5px;">Select Monster Model (global):</label>
         <select id="debug-monster-model" style="width: 100%; padding: 8px; font-size: 12px; background: rgba(40,40,40,0.9); color: white; border: 1px solid #666; border-radius: 3px; cursor: pointer;">
-          <option value="models/VascodaGama.dae">VascodaGama (Fox Skull)</option>
-          <option value="models/fuzzlefox__cute_stylized_cartoon_fox_character.glb">Fuzzle Fox (Cartoon Fox)</option>
-          <option value="models/cute_chick.glb">Cute Chick</option>
-          <option value="models/pbr_low-poly_fox_character.glb">Low-poly Fox</option>
+          <option value="">(loading…)</option>
         </select>
       </div>
       <button id="debug-apply-model" style="width: 100%; padding: 8px; font-size: 12px; background: #9C27B0; border: none; border-radius: 3px; color: white; cursor: pointer; font-weight: bold;">🔄 Apply Model</button>
@@ -549,10 +727,22 @@
     </div>
   </div>
 
-  <!-- Settings Panel -->
-  <button id="toggle-settings">⚙️ Settings</button>
+  <!-- Settings Panel (moved into Home menu at runtime) -->
   <div id="settings-panel" class="hidden">
     <h4>⚙️ Game Settings</h4>
+
+    <div style="margin-top: 10px; color: #ffd700; font-weight: bold;">Minimap</div>
+    <div style="margin-top: 6px;">
+      <label style="display: block; margin-bottom: 3px;">Size</label>
+      <input id="minimap-size" type="range" min="140" max="320" step="10" value="240">
+      <div id="minimap-size-value" style="text-align: right; color: #ffd700;">240px</div>
+    </div>
+    <div style="margin-top: 6px;">
+      <label style="display: block; margin-bottom: 3px;">Zoom</label>
+      <input id="minimap-zoom" type="range" min="1" max="3" step="0.1" value="1.1">
+      <div id="minimap-zoom-value" style="text-align: right; color: #ffd700;">1.1x</div>
+    </div>
+    <button id="minimap-reset" style="margin-top: 8px; width: 100%; padding: 4px 6px; background: none; border: 1px solid #ffd700; color: #ffd700; border-radius: 4px; cursor: pointer; font-size: 10px;">Reset Minimap</button>
 
     <div class="setting-item">
       <label>Move Speed:</label>

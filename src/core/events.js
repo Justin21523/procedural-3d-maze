@@ -31,6 +31,7 @@ export const EVENTS = Object.freeze({
   // Game state
   PLAYER_DAMAGED: 'player:damaged',
   PLAYER_HEALED: 'player:healed',
+  PLAYER_MAX_HEALTH_CHANGED: 'player:maxHealthChanged',
   GAME_WON: 'game:won',
   GAME_LOST: 'game:lost',
 

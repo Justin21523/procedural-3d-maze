@@ -33,6 +33,9 @@ import { InventorySystem } from './core/inventorySystem.js';
 import { NoiseBridgeSystem } from './core/noiseBridgeSystem.js';
 import { ToolSystem } from './core/toolSystem.js';
 import { UIManager } from './ui/uiManager.js';
+import { HomeMenu } from './ui/homeMenu.js';
+import { CampaignManager } from './core/campaignManager.js';
+import { SaveManager } from './core/saveManager.js';
 import { InteractableSystem } from './core/interactions/interactableSystem.js';
 import { HidingSpotSystem } from './core/interactions/hidingSpotSystem.js';
 import { MissionDirector } from './core/missions/missionDirector.js';
@@ -52,7 +55,6 @@ async function initGame() {
   // Get container elements
   const container = document.getElementById('canvas-container');
   const instructionsOverlay = document.getElementById('instructions');
-  const startButton = document.getElementById('start-button');
 	  const minimapCanvas = document.getElementById('minimap');
 	  const minimapViewport = document.getElementById('minimap-viewport');
 	  const minimapToggle = document.getElementById('minimap-toggle');
@@ -62,6 +64,15 @@ async function initGame() {
 	  const minimapZoomValue = document.getElementById('minimap-zoom-value');
 	  const minimapResetButton = document.getElementById('minimap-reset');
   const levelLabel = document.getElementById('level-label');
+  const hudLevelEl = document.getElementById('hud-level');
+  const hudCampaignEl = document.getElementById('hud-campaign');
+  const homeCampaignInfoEl = document.getElementById('home-campaign-info');
+  const campaignVictoryEl = document.getElementById('campaign-victory');
+  const campaignVictoryTitleEl = document.getElementById('campaign-victory-title');
+  const campaignVictorySummaryEl = document.getElementById('campaign-victory-summary');
+  const campaignVictoryTableEl = document.getElementById('campaign-victory-table');
+  const campaignNewButton = document.getElementById('campaign-new-button');
+  const campaignMenuButton = document.getElementById('campaign-menu-button');
   const levelPrevBtn = document.getElementById('level-prev');
   const levelNextBtn = document.getElementById('level-next');
   const levelJumpInput = document.getElementById('level-jump-input');
@@ -83,7 +94,6 @@ async function initGame() {
   console.log('DOM Elements check:');
   console.log('  canvas-container:', container ? '✓' : '✗');
   console.log('  instructions:', instructionsOverlay ? '✓' : '✗');
-  console.log('  start-button:', startButton ? '✓' : '✗');
   console.log('  minimap canvas:', minimapCanvas ? '✓' : '✗');
   if (minimapCanvas) {
     console.log(`  minimap size: ${minimapCanvas.width}x${minimapCanvas.height}`);
@@ -94,7 +104,14 @@ async function initGame() {
     manifestUrl: '/levels/manifest.json',
     fallbackLevels: LEVEL_CATALOG
   });
-  let currentLevelIndex = 0;
+
+  // Campaign state (10 authored levels)
+  const campaignLevelCount = Math.max(1, Math.min(10, levelDirector.getLevelCount?.() || 10));
+  const campaignManager = new CampaignManager({ levelCount: campaignLevelCount, failureLimit: 2 });
+  let campaignState = campaignManager.load();
+  const saveManager = new SaveManager();
+
+  let currentLevelIndex = clampLevelIndex(campaignState?.run?.currentLevelIndex ?? 0);
   let levelConfig = levelDirector.getLevelConfig(currentLevelIndex);
   let missionDirector = null;
   let interactableSystem = null;
@@ -110,6 +127,96 @@ async function initGame() {
   let lastOutcome = null;
   let lastRunStats = null;
   let minimapHidden = false;
+  let hasRunStarted = false;
+  let homeMenu = null;
+
+  function getCampaignLevelCount() {
+    return campaignManager.levelCount;
+  }
+
+  function renderCampaignInfo() {
+    const run = campaignState?.run || {};
+    const levelCount = getCampaignLevelCount();
+    const failures = run.failures ?? 0;
+    const limit = run.failureLimit ?? 2;
+    const nextRaw = Math.round(Number(run.currentLevelIndex ?? 0));
+    const isComplete = nextRaw >= levelCount && campaignManager.isComplete(campaignState);
+    const nextPlayable = isComplete ? (levelCount - 1) : clampLevelIndex(nextRaw);
+    const completed = campaignManager.computeSummary(campaignState).completedLevels || 0;
+    const nextLevelConfig = levelDirector?.getLevelConfig ? levelDirector.getLevelConfig(nextPlayable) : null;
+    const nextName = nextLevelConfig?.name ? String(nextLevelConfig.name) : `L${nextPlayable + 1}`;
+
+    if (hudCampaignEl) {
+      hudCampaignEl.textContent = isComplete
+        ? `Campaign Complete • Failures ${failures}/${limit}`
+        : `Campaign ${Math.min(nextPlayable + 1, levelCount)}/${levelCount} • Failures ${failures}/${limit}`;
+    }
+
+    if (homeCampaignInfoEl) {
+      const last = campaignState?.lastRunSummary;
+      const lastLine = last
+        ? `Last run: ${last.completedLevels}/${levelCount} cleared • Avg ${last.averages?.timeFormatted || '00:00'} • Score ${Math.round(last.averages?.score || 0)}`
+        : 'Last run: —';
+      homeCampaignInfoEl.textContent =
+        (isComplete ? `Next: Campaign complete (open Victory screen)\n` : `Next: ${nextName} (${nextPlayable + 1}/${levelCount})\n`) +
+        `Progress: ${completed}/${levelCount} cleared • Failures ${failures}/${limit}\n` +
+        `${lastLine}`;
+    }
+  }
+
+  function clampLevelIndex(idx) {
+    const n = Math.round(Number(idx));
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(getCampaignLevelCount() - 1, n));
+  }
+
+  function showCampaignSummary(summary, title = '🏆 Campaign Summary') {
+    if (!campaignVictoryEl) return;
+    if (campaignVictoryTitleEl) campaignVictoryTitleEl.textContent = String(title || '🏆 Campaign Summary');
+    if (campaignVictorySummaryEl) {
+      const avg = summary.averages || {};
+      campaignVictorySummaryEl.textContent =
+        `Cleared ${summary.completedLevels}/${summary.levelCount} levels • Failures ${summary.failures}/${summary.failureLimit}\n` +
+        `Avg Time ${avg.timeFormatted || '00:00'} • Avg Steps ${Math.round(avg.steps || 0)} • Avg Rooms ${Math.round(avg.roomsVisited || 0)} • Weighted Score ${Math.round(avg.score || 0)}`;
+    }
+    if (campaignVictoryTableEl) {
+      const rows = summary.completed || [];
+      const header =
+        `<div style="display:grid; grid-template-columns: 60px 1fr 120px 90px 90px 90px; gap: 8px; padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.14); color: rgba(255,255,255,0.82); font-size: 12px;">` +
+        `<div>#</div><div>Level</div><div>Time</div><div>Steps</div><div>Rooms</div><div>Score</div></div>`;
+      const body = rows.map((r) => {
+        return `<div style="display:grid; grid-template-columns: 60px 1fr 120px 90px 90px 90px; gap: 8px; padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.92); font-size: 13px;">` +
+          `<div>${r.levelIndex + 1}</div>` +
+          `<div>${escapeHtml(r.name)}</div>` +
+          `<div>${escapeHtml(r.timeFormatted)}</div>` +
+          `<div>${r.steps}</div>` +
+          `<div>${r.roomsVisited}</div>` +
+          `<div>${r.score}</div>` +
+          `</div>`;
+      }).join('');
+      campaignVictoryTableEl.innerHTML = header + body;
+    }
+
+    campaignVictoryEl.classList.remove('hidden');
+  }
+
+  function showCampaignVictory() {
+    const summary = campaignManager.computeSummary(campaignState);
+    showCampaignSummary(summary, '🏆 Campaign Complete!');
+  }
+
+  function hideCampaignVictory() {
+    campaignVictoryEl?.classList.add('hidden');
+  }
+
+  function escapeHtml(text) {
+    return String(text || '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
 
   // Auto-advance / auto-restart after game over
   const AUTO_GAMEOVER_DELAY_MS = 3000;
@@ -271,6 +378,12 @@ async function initGame() {
     const label = `${levelConfig.name || 'Endless'} (L${currentLevelIndex + 1})`;
     if (levelLabel) {
       levelLabel.textContent = label;
+    }
+    if (hudLevelEl) {
+      hudLevelEl.textContent = label;
+    }
+    if (hudCampaignEl) {
+      renderCampaignInfo();
     }
     if (levelJumpInput) {
       const maxJump = levelDirector.getMaxJump();
@@ -449,7 +562,8 @@ async function initGame() {
     eventBus,
     gameState,
     lights,
-    audioManager
+    audioManager,
+    powerOffMultiplier: CONFIG.POWER_OFF_LIGHT_MULTIPLIER
   });
 
   // Create player controller (with gameState and audioManager)
@@ -465,6 +579,7 @@ async function initGame() {
   // Create monster manager
   const monsterManager = new MonsterManager(sceneManager.getScene(), worldState, player, eventBus);
   console.log('👹 Monster manager created');
+  monsterManager.setAudioManager?.(audioManager);
   noiseBridgeSystem = new NoiseBridgeSystem({ eventBus, monsterManager });
   void noiseBridgeSystem;
   toolSystem = new ToolSystem({
@@ -552,6 +667,22 @@ async function initGame() {
   );
   autopilot?.setGun?.(gun);
 
+  // Live meta updates (from Meta Preview page) for weapon view tuning.
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const metaChannel = new BroadcastChannel('p3dm-meta');
+      metaChannel.onmessage = (ev) => {
+        const msg = ev?.data || null;
+        if (!msg || typeof msg !== 'object') return;
+        if (msg.kind === 'weapon') {
+          void gun.reloadWeaponMetaOverrides?.();
+        }
+      };
+    }
+  } catch (err) {
+    void err;
+  }
+
   const uiManager = new UIManager({
     eventBus,
     player,
@@ -561,7 +692,8 @@ async function initGame() {
     monsterManager,
     projectileManager,
     toolSystem,
-    missionDirector
+    missionDirector,
+    sceneManager
   });
   missionDirector?.syncStatus?.(true);
 
@@ -591,7 +723,8 @@ async function initGame() {
 	    monsterManager,
     projectileManager,
     playerRef: player,
-    gameState
+    gameState,
+    audioManager
   });
   void combatSystem;
 
@@ -635,6 +768,72 @@ async function initGame() {
   );
   console.log('✅ Initial minimap rendered');
   updateLevelUI();
+  renderCampaignInfo();
+
+  if (campaignNewButton) {
+    campaignNewButton.addEventListener('click', () => {
+      void resetCampaign('New campaign started. Configure settings, then start.');
+    });
+  }
+  if (campaignMenuButton) {
+    campaignMenuButton.addEventListener('click', () => {
+      hideCampaignVictory();
+      homeMenu?.setVisible?.(true);
+      homeMenu?.setActiveTab?.('play');
+    });
+  }
+
+  // Home menu: mount panels into tabs (keeps gameplay HUD clean).
+  const homeMountSettings = document.getElementById('home-mount-settings');
+  const homeMountLevel = document.getElementById('home-mount-level');
+  const homeMountDebug = document.getElementById('home-mount-debug');
+  const settingsPanelEl = document.getElementById('settings-panel');
+  const levelPanelEl = document.getElementById('level-panel');
+  const debugPanelEl = document.getElementById('debug-panel');
+
+  if (homeMountSettings && settingsPanelEl) {
+    homeMountSettings.appendChild(settingsPanelEl);
+    settingsPanelEl.classList.remove('hidden');
+  }
+  if (homeMountLevel && levelPanelEl) {
+    homeMountLevel.appendChild(levelPanelEl);
+    levelPanelEl.classList.remove('hidden');
+  }
+  if (homeMountDebug && debugPanelEl) {
+    homeMountDebug.appendChild(debugPanelEl);
+  }
+
+  homeMenu = new HomeMenu({
+    root: instructionsOverlay,
+    onStartNew: () => void startNewRun(),
+    onContinue: () => {
+      if (hasRunStarted && !gameState?.gameOver) {
+        void continueRun();
+        return;
+      }
+      if (saveManager.hasSave()) {
+        void loadSavedGame();
+        return;
+      }
+      homeMenu?.setStatus?.('No active run or save found.');
+    },
+    onRestart: () => void restartRun(),
+    onAbandon: () => void abandonRun(),
+    onRestartCampaign: () => void resetCampaign('Campaign restarted. Configure settings, then start.'),
+    onSave: () => saveGame(),
+    onLoadSave: () => void loadSavedGame(),
+    onClearSave: () => clearSavedGame()
+  });
+  homeMenu.setActiveTab('play');
+  homeMenu.setVisible(true);
+  homeMenu.setCanContinue(saveManager.hasSave(), saveManager.hasSave() ? '' : 'No active run or save yet');
+  homeMenu.setCanRestart(false, 'No active run yet');
+  homeMenu.setCanAbandon(false, 'No active run yet');
+  homeMenu.setStatus('Configure settings, then start.');
+  homeMenu.setCanSave(false, 'Start a run first');
+  homeMenu.setCanLoadSave(saveManager.hasSave(), 'No save found');
+  homeMenu.setCanClearSave(saveManager.hasSave(), 'No save found');
+  homeMenu.setSaveInfo(saveManager.hasSave() ? 'Save found. You can load it any time from here.' : 'No save found yet.');
 
   // Minimap controls
   function applyMinimapZoom(zoom) {
@@ -726,7 +925,7 @@ async function initGame() {
   async function loadLevel(levelIndex, { startLoop = false, resetGameState = true } = {}) {
     levelLoading = (async () => {
       clearAutoGameOverTimer();
-      currentLevelIndex = Math.max(0, levelIndex);
+      currentLevelIndex = clampLevelIndex(levelIndex);
       levelConfig = levelDirector.getLevelConfig(currentLevelIndex, lastRunStats, lastOutcome);
       console.log(`🔄 Loading level: ${levelConfig.name}`);
       lastOutcome = null;
@@ -830,9 +1029,14 @@ async function initGame() {
       gameLoop.missionDirector = missionDirector;
       gameLoop.interactableSystem = interactableSystem;
 
-      // 隱藏 overlay，保持連續遊戲
+      // Hide overlays when entering gameplay.
       document.getElementById('game-over').classList.add('hidden');
-      document.getElementById('instructions').classList.add('hidden');
+      if (startLoop) {
+        homeMenu?.setVisible?.(false);
+        hasRunStarted = true;
+        homeMenu?.setCanContinue?.(true);
+        homeMenu?.setCanRestart?.(true);
+      }
 
       // 重建怪物
       monsterManager.clear();
@@ -879,6 +1083,8 @@ async function initGame() {
       );
 
       if (startLoop) {
+        campaignState = campaignManager.recordAttempt(campaignState, currentLevelIndex);
+        renderCampaignInfo();
         gameState.startTimer();
         gameLoop.start();
       }
@@ -914,6 +1120,19 @@ async function initGame() {
     lastOutcome = 'win';
     lastRunStats = gameState.getStats();
     applyGameOverButtons(true);
+    campaignState = campaignManager.recordWin(campaignState, currentLevelIndex, levelConfig, lastRunStats);
+    renderCampaignInfo();
+
+    const levelCount = getCampaignLevelCount();
+    const completedAll = campaignState?.run?.currentLevelIndex >= levelCount;
+    if (completedAll) {
+      clearAutoGameOverTimer();
+      document.getElementById('game-over')?.classList.add('hidden');
+      input.exitPointerLock();
+      gameLoop.stop();
+      showCampaignVictory();
+      return;
+    }
     startAutoGameOverCountdown('win', () => {
       if (!gameState?.gameOver || !gameState?.hasWon) return;
       void loadLevel(currentLevelIndex + 1, { startLoop: true, resetGameState: true });
@@ -923,9 +1142,40 @@ async function initGame() {
     lastOutcome = 'lose';
     lastRunStats = gameState.getStats();
     applyGameOverButtons(false);
+    const prevFailures = campaignState?.run?.failures ?? 0;
+    campaignState = campaignManager.recordLoss(campaignState, currentLevelIndex, levelConfig, lastRunStats);
+    renderCampaignInfo();
+
+    const resetTriggered =
+      (prevFailures + 1 >= (campaignState?.lastRunSummary?.failureLimit ?? 2)) &&
+      (campaignState?.run?.failures ?? 0) === 0 &&
+      campaignState?.lastRunSummary?.endReason === 'failureLimit';
+
+    if (resetTriggered) {
+      clearAutoGameOverTimer();
+      document.getElementById('game-over')?.classList.add('hidden');
+      input.exitPointerLock();
+      gameLoop.stop();
+      hasRunStarted = false;
+
+      currentLevelIndex = 0;
+      levelConfig = levelDirector.getLevelConfig(0);
+      updateLevelUI();
+
+    homeMenu?.setActiveTab?.('play');
+    homeMenu?.setCanContinue?.(false, 'No active run');
+    homeMenu?.setCanRestart?.(false, 'No active run');
+    homeMenu?.setCanAbandon?.(false, 'No active run');
+    homeMenu?.setStatus?.('Reached 2 failures → campaign reset to Level 1.');
+    homeMenu?.setVisible?.(true);
+    return;
+  }
+
     startAutoGameOverCountdown('lose', () => {
       if (!gameState?.gameOver || !gameState?.hasLost) return;
-      void loadLevel(currentLevelIndex, { startLoop: true, resetGameState: true });
+      // If we hit the failure limit, CampaignManager already reset the run to level 1.
+      const nextIdx = clampLevelIndex(campaignState?.run?.currentLevelIndex ?? 0);
+      void loadLevel(nextIdx, { startLoop: true, resetGameState: true });
     });
   };
 
@@ -960,6 +1210,16 @@ async function initGame() {
 
   if (restartFirstBtn) {
     restartFirstBtn.addEventListener('click', async () => {
+      // "Go to L1" should actually restart the campaign, not just load level 1
+      // with old progress still marked as cleared/complete.
+      clearAutoGameOverTimer();
+      document.getElementById('game-over')?.classList.add('hidden');
+      hideCampaignVictory();
+
+      saveManager?.clear?.();
+      campaignState = campaignManager.startNewRun(campaignState);
+      renderCampaignInfo();
+
       await loadLevel(0, { startLoop: true, resetGameState: true });
     });
   }
@@ -985,53 +1245,421 @@ async function initGame() {
     }
   });
 
-  // Click canvas to re-lock pointer (when panels are closed)
+  // Click canvas to re-lock pointer (only during active gameplay)
   container.addEventListener('click', () => {
-    const instructions = document.getElementById('instructions');
-    const debugPanel = document.getElementById('debug-panel');
-    const settingsPanel = document.getElementById('settings-panel');
-
-    // Only lock if game is running and no panels are open
-    if (instructions.classList.contains('hidden') &&
-        debugPanel.style.display !== 'block' &&
-        settingsPanel.classList.contains('hidden')) {
-      input.requestPointerLock();
+    if (!document.body.classList.contains('mode-game')) return;
+    if (!instructionsOverlay?.classList.contains('hidden')) return;
+    if (gameState?.gameOver) return;
+    if (gameLoop?.running !== true) return;
+    if (input?.requestPointerLock) {
+      input.requestPointerLock(container);
       console.log('🖱️ Click detected, requesting pointer lock');
     }
   });
 
-  // Setup start button
-  startButton.addEventListener('click', async () => {
-    console.log('🎮 Start button clicked!');
+  async function startNewRun() {
+    console.log('🎮 Home: start campaign run');
+    clearAutoGameOverTimer();
+    document.getElementById('game-over')?.classList.add('hidden');
 
-    // Hide instructions
-    instructionsOverlay.classList.add('hidden');
+    if (campaignManager.isComplete(campaignState)) {
+      showCampaignVictory();
+      return;
+    }
 
-    // Show settings toggle button
-    document.getElementById('toggle-settings').classList.remove('hidden');
+    homeMenu.setStatus('Starting…');
+    homeMenu.setVisible(false);
 
-    // Start ambient audio (user interaction required for Web Audio API)
+    input.resetState?.();
+    input.requestPointerLock(container);
     audioManager.playAmbient();
-    console.log('🔊 Ambient audio started');
+    await loadLevel(clampLevelIndex(campaignState?.run?.currentLevelIndex ?? 0), { startLoop: true, resetGameState: true });
 
-    // Start game loop FIRST (important!)
-    console.log('🎬 Starting game loop...');
-    await levelLoading;
+    homeMenu.setCanContinue(true);
+    homeMenu.setCanRestart(true);
+    homeMenu.setCanAbandon(true);
+    homeMenu.setCanSave(true);
+    homeMenu.setStatus('');
+    input.requestPointerLock(container);
+  }
+
+  async function continueRun() {
+    if (!hasRunStarted || gameState?.gameOver) return;
+    console.log('▶️ Home: continue');
+    homeMenu.setVisible(false);
+    gameState?.resumeTimer?.();
+    audioManager.playAmbient();
     gameLoop.start();
+    input.requestPointerLock(container);
+  }
 
-    // Request pointer lock immediately in the user gesture
-    console.log('🔒 Requesting pointer lock...');
-    input.requestPointerLock();
+  function resetCampaign(statusText) {
+    // Reset progress AND avoid old saves restoring a completed run.
+    saveManager?.clear?.();
+    campaignState = campaignManager.startNewRun(campaignState);
+    hideCampaignVictory();
+    renderCampaignInfo();
 
-    console.log('✅ Game initialization complete!');
-  });
+    clearAutoGameOverTimer();
+    input.exitPointerLock();
+    input.resetState?.();
+    gameLoop.stop();
+    gameLoop.resetRoundState?.();
 
-  // Handle ESC key to show instructions again
+    // Keep gameState intact for debugging if it exists, but make sure we're not in a "game over" overlay.
+    document.getElementById('game-over')?.classList.add('hidden');
+    gameState?.reset?.();
+    hasRunStarted = false;
+
+    currentLevelIndex = 0;
+    levelConfig = levelDirector.getLevelConfig(0);
+    updateLevelUI();
+
+    homeMenu?.setActiveTab?.('play');
+    homeMenu?.setVisible?.(true);
+    homeMenu?.setCanContinue?.(false, 'No active run or save yet');
+    homeMenu?.setCanRestart?.(false, 'No active run');
+    homeMenu?.setCanAbandon?.(false, 'No active run');
+    homeMenu?.setCanSave?.(false, 'Start a run first');
+    homeMenu?.setCanLoadSave?.(saveManager.hasSave(), 'No save found');
+    homeMenu?.setCanClearSave?.(saveManager.hasSave(), 'No save found');
+    homeMenu?.setSaveInfo?.('Save cleared for new campaign.');
+    homeMenu?.setStatus?.(statusText || 'Campaign restarted.');
+  }
+
+  function buildSavePayload() {
+    const pos = player.getPosition();
+    const yaw = typeof camera.getYaw === 'function' ? camera.getYaw() : 0;
+    const pitch = typeof camera.getPitch === 'function' ? camera.getPitch() : 0;
+    const exitGrid = exitPoint?.getGridPosition?.() || worldState.getExitPoint();
+    if (exitGrid) {
+      worldState.exitPoint = { x: exitGrid.x, y: exitGrid.y };
+    }
+
+    return {
+      version: 1,
+      savedAtMs: Date.now(),
+      campaignState,
+      currentLevelIndex,
+      levelId: levelConfig?.id ?? null,
+      world: worldState.toSaveData(),
+      player: {
+        position: [pos.x, pos.y, pos.z],
+        yaw,
+        pitch
+      },
+      gameState: gameState.toSaveData(),
+      gun: gun?.toSaveData?.() || null
+    };
+  }
+
+  function saveGame() {
+    if (!hasRunStarted) {
+      homeMenu?.setStatus?.('No active run to save.');
+      return;
+    }
+    const payload = buildSavePayload();
+    const ok = saveManager.save(payload);
+    if (!ok) {
+      console.warn('⚠️ Save failed (storage quota blocked?)');
+    }
+    homeMenu?.setCanLoadSave?.(saveManager.hasSave());
+    homeMenu?.setCanClearSave?.(saveManager.hasSave());
+    homeMenu?.setSaveInfo?.(ok ? `Saved at ${new Date(payload.savedAtMs).toLocaleString()}` : 'Save failed (storage blocked).');
+    if (ok) homeMenu?.setStatus?.('Saved.');
+  }
+
+  function clearSavedGame() {
+    const ok = saveManager.clear();
+    homeMenu?.setCanLoadSave?.(saveManager.hasSave(), 'No save found');
+    homeMenu?.setCanClearSave?.(saveManager.hasSave(), 'No save found');
+    homeMenu?.setSaveInfo?.(ok ? 'Save deleted.' : 'Delete failed.');
+  }
+
+  async function loadSavedGame() {
+    const save = saveManager.load();
+    if (!save) {
+      homeMenu?.setStatus?.('No save found.');
+      homeMenu?.setCanLoadSave?.(false, 'No save found');
+      homeMenu?.setCanClearSave?.(false, 'No save found');
+      return;
+    }
+
+    homeMenu?.setStatus?.('Loading save…');
+    homeMenu?.setVisible?.(false);
+    clearAutoGameOverTimer();
+    document.getElementById('game-over')?.classList.add('hidden');
+
+    // Campaign metadata
+    if (save.campaignState && typeof save.campaignState === 'object') {
+      campaignState = save.campaignState;
+      campaignManager.save(campaignState);
+      renderCampaignInfo();
+    }
+
+    // Stop the current loop and clear round state
+    gameLoop.stop();
+    gameLoop.resetRoundState();
+
+    // Clear previous level objectives/interactables before rebuilding the scene
+    missionDirector?.clear?.();
+    hidingSpotSystem?.clear?.();
+    interactableSystem?.clear?.();
+    toolSystem?.clear?.();
+
+    currentLevelIndex = clampLevelIndex(save.currentLevelIndex ?? 0);
+    levelConfig = levelDirector.getLevelConfig(currentLevelIndex, lastRunStats, lastOutcome);
+    updateLevelUI();
+
+    // Rebuild world from save data
+    const okWorld = worldState.applySaveData(save.world, levelConfig);
+    if (!okWorld) {
+      homeMenu?.setVisible?.(true);
+      homeMenu?.setStatus?.('Save data is incompatible; starting fresh level instead.');
+      await loadLevel(currentLevelIndex, { startLoop: true, resetGameState: true });
+      return;
+    }
+    sceneManager.buildWorldFromGrid(worldState);
+
+    toolSystem?.setRefs?.({
+      eventBus,
+      scene: sceneManager.getScene(),
+      worldState,
+      player,
+      monsterManager,
+      gameState,
+      projectileManager,
+      audioManager
+    });
+    toolSystem?.startLevel?.(levelConfig);
+
+    // Exit point (use saved/cached value)
+    const ep = worldState.getExitPoint();
+    if (exitPoint) {
+      sceneManager.getScene().remove(exitPoint.getMesh());
+    }
+    exitPoint = new ExitPoint(ep);
+    sceneManager.getScene().add(exitPoint.getMesh());
+    gameLoop.exitPoint = exitPoint;
+    exitPoint?.registerInteractable?.(interactableSystem, { eventBus, gameState });
+
+    // Missions / world markers / hiding spots
+    if (missionDirector) {
+      missionDirector.setRefs({
+        worldState,
+        scene: sceneManager.getScene(),
+        gameState,
+        exitPoint,
+        interactableSystem,
+        eventBus
+      });
+      missionDirector.startLevel(levelConfig);
+    }
+    worldMarkerSystem?.setRefs?.({
+      eventBus,
+      scene: sceneManager.getScene(),
+      camera,
+      player,
+      worldState,
+      pickupManager,
+      toolSystem,
+      missionDirector,
+      exitPoint
+    });
+    if (hidingSpotSystem) {
+      hidingSpotSystem.setRefs({
+        worldState,
+        scene: sceneManager.getScene(),
+        interactableSystem,
+        eventBus,
+        player
+      });
+      hidingSpotSystem.startLevel(levelConfig);
+    }
+    worldStateEffectsSystem?.startLevel?.(levelConfig);
+    gameLoop.missionDirector = missionDirector;
+    gameLoop.interactableSystem = interactableSystem;
+
+    // Restore player
+    const p = save.player && typeof save.player === 'object' ? save.player : null;
+    const arr = Array.isArray(p?.position) ? p.position : null;
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const sp = worldState.getSpawnPoint();
+    const x = arr && arr.length >= 3 ? Number(arr[0]) : (sp.x * tileSize + tileSize / 2);
+    const y = arr && arr.length >= 3 ? Number(arr[1]) : CONFIG.PLAYER_HEIGHT;
+    const z = arr && arr.length >= 3 ? Number(arr[2]) : (sp.y * tileSize + tileSize / 2);
+    player.setPosition(x, y, z);
+    camera.setYawPitch?.(Number(p?.yaw) || 0, Number(p?.pitch) || 0);
+
+    // Restore game state + weapon state
+    gameState.reset();
+    gameState.applySaveData(save.gameState);
+    gameState.resumeTimer?.();
+    gun.reset?.();
+    gun.applySaveData?.(save.gun);
+
+    // Rebuild monsters (we don't restore individual monster state yet)
+    monsterManager.clear();
+    if (spawnDirector) {
+      await spawnDirector.startLevel(levelConfig);
+    } else {
+      await monsterManager.initializeForLevel(levelConfig);
+    }
+    monsterManager.setProjectileManager(projectileManager);
+
+    // Rebuild autopilot + projectile system
+    autopilot = new AutoPilot(
+      worldState,
+      monsterManager,
+      () => (missionDirector?.getAutopilotState ? missionDirector.getAutopilotState() : []),
+      exitPoint,
+      player,
+      levelConfig,
+      () => (pickupManager?.getPickupMarkers?.() || [])
+    );
+    autopilot?.setGun?.(gun);
+    gameLoop.autopilot = autopilot;
+    gameLoop.autopilotActive = CONFIG.AUTOPILOT_ENABLED;
+    projectileManager.worldState = worldState;
+    projectileManager.monsterManager = monsterManager;
+    projectileManager.setPlayerRef?.(player);
+    projectileManager.reset?.();
+    gameLoop.projectileManager = projectileManager;
+    gameLoop.gun = gun;
+    gameLoop.spawnDirector = spawnDirector;
+
+    // Update minimap
+    minimap.updateScale();
+    minimap.render(
+      player.getGridPosition(),
+      monsterManager.getMonsterPositions(),
+      ep,
+      missionDirector?.getAutopilotTargets ? missionDirector.getAutopilotTargets().map(t => t.gridPos) : [],
+      {
+        pickupPositions: pickupManager?.getPickupMarkers?.() || [],
+        devicePositions: toolSystem?.getDeviceMarkers?.() || []
+      }
+    );
+
+    hasRunStarted = true;
+    homeMenu?.setCanContinue?.(true);
+    homeMenu?.setCanRestart?.(true);
+    homeMenu?.setCanAbandon?.(true);
+    homeMenu?.setCanSave?.(true);
+    homeMenu?.setStatus?.('');
+
+    input.resetState?.();
+    audioManager.playAmbient();
+    gameLoop.start();
+    input.requestPointerLock(container);
+    homeMenu?.setSaveInfo?.(`Loaded save from ${new Date(save.savedAtMs).toLocaleString()}`);
+  }
+
+  async function restartRun() {
+    if (!hasRunStarted) return;
+    console.log('🔄 Home: restart current run');
+    clearAutoGameOverTimer();
+    document.getElementById('game-over')?.classList.add('hidden');
+
+    homeMenu.setStatus('Restarting…');
+    homeMenu.setVisible(false);
+    input.resetState?.();
+    input.requestPointerLock(container);
+    audioManager.playAmbient();
+    await loadLevel(currentLevelIndex, { startLoop: true, resetGameState: true });
+    homeMenu.setCanContinue(true);
+    homeMenu.setCanRestart(true);
+    homeMenu.setCanAbandon(true);
+    homeMenu.setStatus('');
+    input.requestPointerLock(container);
+  }
+
+  async function abandonRun() {
+    if (!hasRunStarted) return;
+    console.log('🏳️ Home: abandon run');
+
+    clearAutoGameOverTimer();
+    document.getElementById('game-over')?.classList.add('hidden');
+
+    const currentStats = gameState?.getStats ? gameState.getStats() : null;
+    const { next, summary } = campaignManager.endRun(campaignState, {
+      reason: 'abandon',
+      atLevelIndex: currentLevelIndex,
+      levelConfig,
+      stats: currentStats
+    });
+    campaignState = next;
+    renderCampaignInfo();
+
+    input.exitPointerLock();
+    input.resetState?.();
+    gameLoop.stop();
+    gameState.reset();
+    hasRunStarted = false;
+
+    // Show the "celebration" summary screen using cleared levels only.
+    showCampaignSummary(summary, '🏁 Run Summary');
+  }
+
+  // Handle ESC key to open/close Home menu (and pause game)
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') {
+      e.preventDefault();
+
+      if (!instructionsOverlay?.classList.contains('hidden')) {
+        // Menu is open: allow quick resume if possible.
+        if (hasRunStarted && !gameState?.gameOver) {
+          void continueRun();
+        }
+        return;
+      }
+
       input.exitPointerLock();
-      instructionsOverlay.classList.remove('hidden');
-      console.log('Game paused - Press start to continue');
+      input.resetState?.();
+      gameState?.pauseTimer?.();
+      gameLoop.stop();
+      homeMenu.setVisible(true);
+      homeMenu.setActiveTab('play');
+      const canContinue = (hasRunStarted && !gameState?.gameOver) || saveManager.hasSave();
+      const continueReason =
+        gameState?.gameOver ? 'Run ended' :
+        (!hasRunStarted && !saveManager.hasSave()) ? 'No active run or save yet' :
+        '';
+      homeMenu.setCanContinue(canContinue, continueReason);
+      homeMenu.setCanRestart(hasRunStarted, 'No active run');
+      homeMenu.setCanAbandon(hasRunStarted, 'No active run');
+      homeMenu.setCanSave(hasRunStarted, 'No active run');
+      homeMenu.setCanLoadSave(saveManager.hasSave(), 'No save found');
+      homeMenu.setCanClearSave(saveManager.hasSave(), 'No save found');
+      if (gameState?.gameOver) {
+        homeMenu.setStatus('Run ended. Start a new run.');
+      } else {
+        homeMenu.setStatus('Paused. Continue or restart.');
+      }
+      console.log('⏸️ Opened Home menu');
+    }
+  });
+
+  // Quick save/load hotkeys (work even during gameplay)
+  window.addEventListener('keydown', (e) => {
+    const tag = String(e.target?.tagName || '').toLowerCase();
+    const isTyping = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
+    if (isTyping) return;
+
+    if (e.code === 'F5') {
+      e.preventDefault();
+      saveGame();
+      return;
+    }
+    if (e.code === 'F9') {
+      e.preventDefault();
+      void loadSavedGame();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+      e.preventDefault();
+      saveGame();
+      return;
     }
   });
 
@@ -1063,6 +1691,31 @@ async function initGame() {
     });
   }
 
+  // Auto-save system (tracks progress without manual intervention)
+  const autosave = {
+    accumulator: 0,
+    lastSavedAtMs: 0
+  };
+  const autosaveUnsub = gameLoop?.systemRegistry?.add?.('autosave', (dt) => {
+    if (!(CONFIG.AUTO_SAVE_ENABLED ?? true)) return;
+    if (!hasRunStarted) return;
+    if (gameState?.gameOver) return;
+    if (homeMenu && !instructionsOverlay?.classList.contains('hidden')) return; // menu open
+
+    autosave.accumulator += Math.max(0, Number(dt) || 0);
+    const interval = Math.max(10, Number(CONFIG.AUTO_SAVE_INTERVAL_SECONDS) || 45);
+    if (autosave.accumulator < interval) return;
+    autosave.accumulator = autosave.accumulator % interval;
+
+    const before = autosave.lastSavedAtMs;
+    saveGame();
+    autosave.lastSavedAtMs = Date.now();
+    if (autosave.lastSavedAtMs !== before) {
+      console.log(`💾 Auto-saved (${interval}s)`);
+    }
+  }, { order: 175 });
+  void autosaveUnsub;
+
   menuButton.addEventListener('click', () => {
     console.log('📋 Returning to menu...');
     clearAutoGameOverTimer();
@@ -1070,14 +1723,21 @@ async function initGame() {
     // Hide game over screen
     document.getElementById('game-over').classList.add('hidden');
 
-    // Show instructions
-    instructionsOverlay.classList.remove('hidden');
-
     // Stop game loop
     gameLoop.stop();
+    input.exitPointerLock();
+    gameState?.pauseTimer?.();
 
-    // Reset game state
-    gameState.reset();
+    homeMenu.setActiveTab('play');
+    homeMenu.setCanContinue(saveManager.hasSave(), saveManager.hasSave() ? '' : 'No active run or save yet');
+    homeMenu.setCanRestart(hasRunStarted, 'No active run');
+    homeMenu.setCanAbandon(hasRunStarted, 'No active run');
+    homeMenu.setCanSave(hasRunStarted, 'No active run');
+    homeMenu.setCanLoadSave(saveManager.hasSave(), 'No save found');
+    homeMenu.setCanClearSave(saveManager.hasSave(), 'No save found');
+    renderCampaignInfo();
+    homeMenu.setStatus('Run ended. Restart, abandon, or start a new run.');
+    homeMenu.setVisible(true);
 
     console.log('✅ Returned to menu');
   });
@@ -1107,8 +1767,8 @@ async function initGame() {
     weaponView
   });
 
-  // Setup debug panel
-  setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, monsterManager, sceneManager);
+  // Setup debug panel (safe/no-op if elements removed)
+  setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, monsterManager, sceneManager, input);
 
   // Log success
   console.log('='.repeat(50));
@@ -1119,8 +1779,7 @@ async function initGame() {
   console.log('  WASD - Move');
   console.log('  Mouse - Look around');
   console.log('  Shift - Sprint');
-  console.log('  ESC - Pause / Release mouse');
-  console.log('  Tab - Toggle Settings');
+  console.log('  ESC - Home menu / Pause');
   console.log('='.repeat(50));
 }
 
@@ -1128,8 +1787,8 @@ async function initGame() {
  * Setup settings panel controls
  */
 	function setupSettingsPanel(sceneManager, camera, input, worldState, player, gameLoop, minimap, gameState, hooks = {}) {
-	  const toggleButton = document.getElementById('toggle-settings');
 	  const settingsPanel = document.getElementById('settings-panel');
+	  if (!settingsPanel) return;
 	  const autopilotToggle = document.getElementById('autopilot-toggle');
 	  const autopilotDelaySlider = document.getElementById('autopilot-delay');
 	  const autopilotDelayValue = document.getElementById('autopilot-delay-value');
@@ -1203,8 +1862,6 @@ async function initGame() {
 	  const openAiTestButton = document.getElementById('open-ai-test');
 	  const openDiagnosticsButton = document.getElementById('open-diagnostics');
 
-		  let settingsVisible = false;
-
 	  function openToolPage(path) {
 	    const href = String(path || '').trim();
 	    if (!href) return;
@@ -1222,36 +1879,6 @@ async function initGame() {
 	    worldState.applyPropObstacles(null);
 	    sceneManager?.buildWorldFromGrid?.(worldState);
 	  }
-
-	  // Toggle settings panel
-	  function toggleSettings() {
-    settingsVisible = !settingsVisible;
-    if (settingsVisible) {
-      settingsPanel.classList.remove('hidden');
-      toggleButton.classList.add('hidden');
-      // Release pointer lock when opening panel
-      input.exitPointerLock();
-      console.log('⚙️ Settings panel opened, mouse unlocked');
-    } else {
-      settingsPanel.classList.add('hidden');
-      toggleButton.classList.remove('hidden');
-    }
-  }
-
-  // Show toggle button after game starts
-  window.addEventListener('keydown', (e) => {
-    if (e.code === 'Tab') {
-      e.preventDefault();
-      const instructions = document.getElementById('instructions');
-      // Only toggle if game has started (instructions hidden)
-      if (instructions.classList.contains('hidden')) {
-        toggleSettings();
-      }
-    }
-  });
-
-	  // Click toggle button
-	  toggleButton.addEventListener('click', toggleSettings);
 
 	  if (openDebugHubButton) openDebugHubButton.addEventListener('click', () => openToolPage('/debug-hub.html'));
 	  if (openEnemyLabButton) openEnemyLabButton.addEventListener('click', () => openToolPage('/enemy-lab.html'));
@@ -1648,11 +2275,14 @@ async function initGame() {
 /**
  * Setup debug/cheat panel controls
  */
-function setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, monsterManager, sceneManager) {
+function setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, monsterManager, sceneManager, input) {
   const toggleButton = document.getElementById('toggle-debug');
   const debugPanel = document.getElementById('debug-panel');
+  if (!debugPanel) return;
 
-  let debugVisible = false;
+  // Debug UI now lives inside the Home menu; keep the old toggle button hidden.
+  if (toggleButton) toggleButton.style.display = 'none';
+
   let godMode = false;
 
   // Expose objects for debugging
@@ -1666,32 +2296,73 @@ function setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, mon
     sceneManager
   };
 
-  // Show debug button after game starts (use ` key to toggle)
-  window.addEventListener('keydown', (e) => {
-    if (e.code === 'Backquote') { // ` key
-      e.preventDefault();
-      const instructions = document.getElementById('instructions');
-      if (instructions.classList.contains('hidden')) {
-        toggleButton.style.display = toggleButton.style.display === 'none' ? 'block' : 'none';
+  // Ensure panel is not stuck hidden by legacy inline styles.
+  debugPanel.style.display = 'block';
+
+  const monsterModelSelect = document.getElementById('debug-monster-model');
+  const prettyEnemyLabel = (modelPath) => {
+    const raw = String(modelPath || '');
+    const parts = raw.split('/').filter(Boolean);
+    const idx = parts.indexOf('enemy');
+    if (idx >= 0 && parts.length >= idx + 3) {
+      const enemyName = parts[idx + 1];
+      const file = parts.slice(idx + 2).join('/');
+      return `${enemyName} / ${file}`;
+    }
+    return raw;
+  };
+
+  const populateMonsterModelSelect = async () => {
+    if (!monsterModelSelect) return;
+    monsterModelSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '(loading…)';
+    monsterModelSelect.appendChild(placeholder);
+
+    try {
+      const res = await fetch('/models/enemy/manifest.json', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const list = Array.isArray(json?.models) ? json.models : [];
+      const models = list.filter((p) => typeof p === 'string' && p.startsWith('/models/enemy/'));
+
+      monsterModelSelect.innerHTML = '';
+      for (const modelPath of models) {
+        const opt = document.createElement('option');
+        opt.value = modelPath;
+        opt.textContent = prettyEnemyLabel(modelPath);
+        opt.title = modelPath;
+        monsterModelSelect.appendChild(opt);
       }
+
+      const preferred = CONFIG.MONSTER_MODEL;
+      if (preferred && models.includes(preferred)) {
+        monsterModelSelect.value = preferred;
+      } else if (models.length > 0) {
+        monsterModelSelect.value = models[0];
+      } else {
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = '(no enemy models found)';
+        monsterModelSelect.appendChild(none);
+        monsterModelSelect.value = '';
+      }
+    } catch (err) {
+      console.warn('⚠️ DEBUG: Failed to load enemy manifest:', err);
+      monsterModelSelect.innerHTML = '';
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '(manifest load failed)';
+      monsterModelSelect.appendChild(opt);
     }
-  });
+  };
 
-  // Toggle debug panel
-  toggleButton.addEventListener('click', () => {
-    debugVisible = !debugVisible;
-    debugPanel.style.display = debugVisible ? 'block' : 'none';
+  void populateMonsterModelSelect();
 
-    // Release pointer lock when opening panel
-    if (debugVisible) {
-      input.exitPointerLock();
-      console.log('🔧 DEBUG: Panel opened, mouse unlocked');
-    }
-  });
-
-  // Update debug info every frame
+  // Update debug info every frame (only when visible)
   setInterval(() => {
-    if (debugVisible) {
+    if (debugPanel.offsetParent !== null) {
       const gridPos = player.getGridPosition();
       const roomType = worldState.getRoomType(gridPos.x, gridPos.y);
       const spawn = worldState.getSpawnPoint();
@@ -1851,6 +2522,11 @@ function setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, mon
     const selectedModel = selectElement.value;
     const button = document.getElementById('debug-apply-model');
 
+    if (!selectedModel) {
+      console.warn('🔧 DEBUG: No monster model selected');
+      return;
+    }
+
     console.log(`🔧 DEBUG: Changing monster model to ${selectedModel}`);
     button.textContent = '⏳ Loading...';
     button.disabled = true;
@@ -1907,7 +2583,7 @@ function setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, mon
       console.error('Debug failed:', e);
     }
   };
-  console.log('🔧 Debug panel initialized (Press ` key)');
+  console.log('🔧 Debug panel initialized (Home menu → Debug)');
 
   // Expose debug functions globally for browser console
   window.debugMonsters = () => {
@@ -1915,12 +2591,14 @@ function setupDebugPanel(worldState, player, gameState, gameLoop, exitPoint, mon
     console.log('Monster count:', monsterManager.getMonsters().length);
     monsterManager.getMonsters().forEach((monster, i) => {
       console.log(`\nMonster ${i + 1}:`);
-      console.log('  Position:', monster.position);
-      console.log('  Grid:', `(${monster.gridX}, ${monster.gridY})`);
-      console.log('  State:', monster.state);
-      console.log('  Model type:', monster.model.type);
-      console.log('  Model children:', monster.model.children.length);
-      console.log('  Has animations:', monster.mixer !== null);
+      console.log('  ID:', monster.id);
+      console.log('  Type:', monster.type);
+      console.log('  Grid:', monster.getGridPosition());
+      console.log('  World:', monster.getWorldPosition?.() || monster.position);
+      console.log('  Health:', `${monster.health}/${monster.maxHealth}`);
+      console.log('  Dead:', monster.isDead);
+      console.log('  Model:', monster.getModel?.()?.name || monster.getModel?.()?.type);
+      console.log('  Has animations:', !!monster.mixer);
     });
   };
 

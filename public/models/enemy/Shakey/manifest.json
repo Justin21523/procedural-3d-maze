@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "Shakey",
+  "displayName": "Shakey",
+  "modelFile": "Shakey.dae",
+  "textureFiles": [
+    "y615000_01.png"
+  ],
+  "scaleMultiplier": 1,
+  "groundOffset": 0.02,
+  "stats": {
+    "hitRadius": 1
+  }
+}

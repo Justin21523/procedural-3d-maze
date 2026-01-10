@@ -1,18 +1,13 @@
 {
+  "schemaVersion": 1,
+  "id": "sonic-hd",
+  "displayName": "sonic-hd",
+  "modelFile": "sonic-hd.glb",
+  "textureFiles": [],
   "scaleMultiplier": 1,
   "groundOffset": 0.02,
   "stats": {
     "hitRadius": 1
-  },
-  "correctionRotationDeg": {
-    "x": 92,
-    "y": -1,
-    "z": 90
-  },
-  "correctionOffset": {
-    "x": 0,
-    "y": 13.48,
-    "z": 0
   },
   "combat": {
     "ranged": {

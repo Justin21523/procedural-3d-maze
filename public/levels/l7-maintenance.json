@@ -1,66 +1,76 @@
 {
   "id": 7,
-  "name": "L7 - Maintenance",
-  "maze": { "width": 31, "height": 31, "roomDensity": 2.7, "extraConnectionChance": 0.12 },
+  "name": "L7 - Shrine Network",
+  "maze": { "width": 31, "height": 31, "roomDensity": 3.1, "extraConnectionChance": 0.12 },
   "rooms": {
     "typeWeights": {
-      "CLASSROOM": 2.6,
-      "CLASSROOMS_BLOCK": 1.6,
-      "OFFICE": 1.5,
-      "LAB": 1.4,
-      "STORAGE": 1.1,
+      "CLASSROOM": 2.4,
+      "CLASSROOMS_BLOCK": 1.55,
+      "OFFICE": 1.45,
+      "LAB": 1.35,
+      "STORAGE": 1.0,
       "CAFETERIA": 0.75,
       "BATHROOM": 0.65,
-      "LIBRARY": 0.7,
-      "POOL": 0.2,
+      "LIBRARY": 0.9,
+      "POOL": 0.45,
       "GYM": 0.25,
       "BEDROOM": 0.35
     }
   },
   "monsters": {
-    "count": 4,
-    "maxCount": 6,
-    "speedMultiplier": 1.0,
-    "visionMultiplier": 1.0,
-    "memoryMultiplier": 1.0,
-    "typeWeights": { "WANDERER": 0.5, "HUNTER": 0.25, "SENTINEL": 0.15, "GREETER": 0.1 },
-    "allowSprintTypes": ["HUNTER"]
+    "count": 6,
+    "maxCount": 7,
+    "speedMultiplier": 1.1,
+    "visionMultiplier": 1.12,
+    "memoryMultiplier": 1.14,
+    "typeWeights": { "WANDERER": 0.22, "HUNTER": 0.35, "SENTINEL": 0.2, "STALKER": 0.15, "WEEPING_ANGEL": 0.08 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL", "WEEPING_ANGEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 55
   },
   "missions": {
     "timeLimitSec": 0,
     "list": [
       {
-        "id": "power",
-        "template": "restorePowerFuses",
+        "id": "shrines",
+        "template": "activateShrines",
         "required": true,
         "params": {
-          "fuses": 3,
-          "itemId": "fuse",
-          "roomTypesFuses": ["STORAGE", "LAB", "OFFICE"],
-          "roomTypesPanel": ["LAB", "OFFICE"],
+          "shrines": 2,
+          "roomTypesShrines": ["LAB", "LIBRARY", "CLASSROOMS_BLOCK", "OFFICE"],
           "minDistFromSpawn": 7,
           "hints": [
-            "Collect the fuses.",
-            "After collecting all fuses, find the power panel and press E to install them.",
-            "Press E again on the power panel to restore power."
+            "Find and activate the shrines (press E).",
+            "Shrines favor Labs/Library/Classrooms Block/Offices.",
+            "After all shrines are active, move to the next objective."
           ]
         }
       },
       {
-        "id": "upload",
-        "template": "uploadEvidence",
+        "id": "sequence",
+        "template": "enterRoomSequence",
         "required": true,
         "params": {
-          "count": 4,
-          "required": 4,
-          "itemId": "evidence",
-          "roomTypesEvidence": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
-          "roomTypesTerminal": ["OFFICE", "LAB"],
-          "minDistFromSpawn": 7,
+          "sequence": ["LAB", "POOL", "OFFICE"],
+          "resetOnWrong": false,
+          "ignoreCorridor": true,
           "hints": [
-            "Collect all evidence pickups.",
-            "After collecting enough evidence, find the upload terminal.",
-            "Press E at the terminal to upload (it consumes your evidence)."
+            "Enter the room sequence in order.",
+            "Corridors won't reset the sequence.",
+            "The sequence adapts if a required room type is missing in this map."
+          ]
+        }
+      },
+      {
+        "id": "kills",
+        "template": "killCount",
+        "required": true,
+        "params": {
+          "count": 6,
+          "hints": [
+            "Defeat monsters to stabilize the route.",
+            "Watch for guarding monsters: keep pressure with sustained fire."
           ]
         }
       },
@@ -77,7 +87,7 @@
         }
       }
     ],
-    "exit": { "requires": ["power", "upload", "unlockExit"] }
+    "exit": { "requires": ["shrines", "sequence", "kills", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,
@@ -86,9 +96,8 @@
   },
   "autopilot": {
     "avoidRadius": 5,
-    "replanInterval": 0.5,
+    "replanInterval": 0.44,
     "stuckSeconds": 1.0,
     "noProgressSeconds": 0.7
   }
 }
-

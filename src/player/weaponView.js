@@ -55,12 +55,51 @@ export class WeaponView {
     this.modelGroup.name = '__weaponModel';
     this.root.add(this.modelGroup);
 
+    // Per-weapon local presentation (offset/rotation/scale)
+    this.modelOffset = new THREE.Vector3(0, 0, 0);
+    this.modelRotation = new THREE.Euler(0, 0, 0, 'XYZ');
+    this.modelScale = 1.0;
+    this.applyModelTransform();
+
     this.modelGroup.add(this.createFallbackGun());
+
+    this.modelCache = new Map(); // path -> THREE.Object3D (prepared/scaled)
+    this.currentModelPath = null;
+    this.modelLoadToken = 0;
 
     cam.add(this.root);
 
     // Load external model (optional)
-    this.loadModel(CONFIG.PLAYER_WEAPON_MODEL_PATH || '/models/assault_rifle_pbr.glb').catch(() => {});
+    void this.setModelPath(CONFIG.PLAYER_WEAPON_MODEL_PATH || '/models/weapon/assault_rifle_pbr.glb');
+  }
+
+  applyModelTransform() {
+    if (!this.modelGroup) return;
+    this.modelGroup.position.copy(this.modelOffset);
+    this.modelGroup.rotation.copy(this.modelRotation);
+    const s = Number.isFinite(this.modelScale) ? this.modelScale : 1.0;
+    this.modelGroup.scale.setScalar(Math.max(0.0001, s));
+  }
+
+  setViewTransform(view = null) {
+    const v = view && typeof view === 'object' ? view : null;
+    const off = v?.offset && typeof v.offset === 'object' ? v.offset : null;
+    const rot = v?.rotation && typeof v.rotation === 'object' ? v.rotation : null;
+    const scale = v?.scale;
+
+    this.modelOffset.set(
+      Number.isFinite(off?.x) ? off.x : 0,
+      Number.isFinite(off?.y) ? off.y : 0,
+      Number.isFinite(off?.z) ? off.z : 0
+    );
+    this.modelRotation.set(
+      Number.isFinite(rot?.x) ? rot.x : 0,
+      Number.isFinite(rot?.y) ? rot.y : 0,
+      Number.isFinite(rot?.z) ? rot.z : 0,
+      'XYZ'
+    );
+    this.modelScale = Number.isFinite(scale) ? scale : 1.0;
+    this.applyModelTransform();
   }
 
   onWeaponSwitch() {
@@ -85,6 +124,40 @@ export class WeaponView {
   setEnabled(enabled) {
     this.enabled = !!enabled;
     if (this.root) this.root.visible = this.enabled;
+  }
+
+  async setModelPath(path) {
+    if (!this.modelGroup) return;
+    const next = String(path || '').trim();
+    if (!next) return;
+    if (next === this.currentModelPath) return;
+
+    this.currentModelPath = next;
+    const token = ++this.modelLoadToken;
+
+    const cached = this.modelCache.get(next) || null;
+    if (cached) {
+      this.setModelObject(cached.clone(true));
+      return;
+    }
+
+    try {
+      const prepared = await this.loadModelObject(next);
+      if (!prepared) return;
+      if (token !== this.modelLoadToken) return;
+      this.modelCache.set(next, prepared);
+      this.setModelObject(prepared.clone(true));
+    } catch (err) {
+      void err;
+    }
+  }
+
+  setModelObject(obj) {
+    if (!this.modelGroup || !obj) return;
+    while (this.modelGroup.children.length > 0) {
+      this.modelGroup.remove(this.modelGroup.children[0]);
+    }
+    this.modelGroup.add(obj);
   }
 
   createFallbackGun() {
@@ -130,8 +203,8 @@ export class WeaponView {
     return group;
   }
 
-  async loadModel(path) {
-    if (!path || !this.modelGroup) return;
+  async loadModelObject(path) {
+    if (!path) return null;
 
     const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
 
@@ -148,33 +221,123 @@ export class WeaponView {
     });
 
     const scene = gltf?.scene;
-    if (!scene) return;
+    if (!scene) return null;
+    scene.frustumCulled = false;
 
-    // Clear fallback
-    while (this.modelGroup.children.length > 0) {
-      this.modelGroup.remove(this.modelGroup.children[0]);
-    }
-
+    let meshCount = 0;
     scene.traverse((child) => {
       if (child?.isMesh) {
+        meshCount += 1;
         child.castShadow = false;
         child.receiveShadow = false;
+        child.frustumCulled = false;
+        child.renderOrder = 1000;
+        const mat = child.material;
+        if (Array.isArray(mat)) {
+          for (const m of mat) {
+            if (!m) continue;
+            m.side = THREE.DoubleSide;
+            m.transparent = false;
+            m.opacity = 1.0;
+            m.depthTest = false;
+            m.depthWrite = false;
+            m.needsUpdate = true;
+          }
+        } else if (mat) {
+          mat.side = THREE.DoubleSide;
+          mat.transparent = false;
+          mat.opacity = 1.0;
+          mat.depthTest = false;
+          mat.depthWrite = false;
+          mat.needsUpdate = true;
+        }
       }
     });
 
+    if (meshCount === 0) {
+      console.warn(`⚠️ WeaponView: model has no meshes: ${path}`);
+      return null;
+    }
+
     // Normalize model size to a reasonable first-person weapon scale
     scene.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(scene);
+
+    const median = (values) => {
+      const nums = values.filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+      if (nums.length === 0) return 0;
+      const mid = Math.floor(nums.length / 2);
+      if (nums.length % 2 === 1) return nums[mid];
+      return (nums[mid - 1] + nums[mid]) / 2;
+    };
+
+    const robustBoxFromMeshes = (root) => {
+      const entries = [];
+      root.traverse((child) => {
+        if (!child?.isMesh || !child.geometry) return;
+        const geom = child.geometry;
+        if (!geom.boundingBox) geom.computeBoundingBox();
+        if (!geom.boundingBox) return;
+
+        child.updateWorldMatrix(true, false);
+        const b = geom.boundingBox.clone();
+        b.applyMatrix4(child.matrixWorld);
+
+        const size = new THREE.Vector3();
+        b.getSize(size);
+        const longest = Math.max(size.x, size.y, size.z);
+        if (!Number.isFinite(longest) || longest <= 1e-6) return;
+
+        const center = new THREE.Vector3();
+        b.getCenter(center);
+        entries.push({ box: b, center, longest });
+      });
+
+      if (entries.length === 0) return null;
+
+      const xs = entries.map((e) => e.center.x);
+      const ys = entries.map((e) => e.center.y);
+      const zs = entries.map((e) => e.center.z);
+      const medianCenter = new THREE.Vector3(median(xs), median(ys), median(zs));
+      const medianLongest = median(entries.map((e) => e.longest));
+      const distThreshold = Math.max(0.6, medianLongest * 8);
+
+      const filtered = entries.filter((e) => e.center.distanceTo(medianCenter) <= distThreshold);
+      const use = filtered.length >= Math.max(1, Math.floor(entries.length * 0.5)) ? filtered : entries;
+
+      const box = new THREE.Box3();
+      for (const e of use) box.union(e.box);
+      return box;
+    };
+
+    const box = robustBoxFromMeshes(scene) || new THREE.Box3().setFromObject(scene);
     const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
     box.getSize(size);
+    box.getCenter(center);
     const longest = Math.max(size.x, size.y, size.z);
+
     const target = 0.9;
-    const s = longest > 0.0001 ? (target / longest) : 1.0;
+    let s = longest > 0.0001 ? (target / longest) : 1.0;
+    if (!Number.isFinite(s) || s <= 0) s = 1.0;
+    // Guard against extreme bounding boxes producing an invisible model.
+    s = Math.max(0.002, Math.min(200, s));
+
+    // Some GLBs have a far-away pivot causing the model to be off-screen (even if the view root is correct).
+    // Recenter only when clearly off-origin to preserve the "feel" of well-behaved models.
+    const centerDist = center.length();
+    if (Number.isFinite(centerDist) && Number.isFinite(longest)) {
+      const threshold = Math.max(0.6, longest * 0.75);
+      const pathLower = String(path || '').toLowerCase();
+      const forceRecentre = pathLower.includes('pistol');
+      if (forceRecentre || centerDist > threshold) {
+        scene.position.sub(center);
+      }
+    }
 
     const userScale = CONFIG.PLAYER_WEAPON_SCALE ?? 1.0;
     scene.scale.setScalar(s * userScale);
 
-    this.modelGroup.add(scene);
+    return scene;
   }
 
   kick(intensity = null) {

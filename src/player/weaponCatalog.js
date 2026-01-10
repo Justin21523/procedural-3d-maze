@@ -1,12 +1,18 @@
 import { CONFIG } from '../core/config.js';
 
-export const DEFAULT_WEAPON_ORDER = Object.freeze(['rifle', 'shotgun', 'launcher']);
+export const DEFAULT_WEAPON_ORDER = Object.freeze(['rifle', 'pistol', 'flare']);
 
 export function createWeaponCatalog() {
   const rifleInterval = CONFIG.PLAYER_FIRE_INTERVAL ?? 0.08;
   const bulletSpeed = CONFIG.PLAYER_BULLET_SPEED ?? 42;
   const bulletLifetime = CONFIG.PLAYER_BULLET_LIFETIME ?? 2.2;
   const baseDamage = CONFIG.PLAYER_BULLET_DAMAGE ?? 1;
+
+  const sharedView = {
+    offset: { x: 0, y: 0, z: 0 },
+    rotation: { x: 0, y: 0, z: 0 },
+    scale: 1.0
+  };
 
   return {
     rifle: {
@@ -20,12 +26,23 @@ export function createWeaponCatalog() {
       reloadSeconds: 1.55,
       recoilKick: 1.0,
       muzzleColor: 0xffdd88,
+      viewModelPath: '/models/weapon/assault_rifle_pbr.glb',
+      view: { ...sharedView },
       projectile: {
         kind: 'bullet',
-        speed: bulletSpeed,
+        speed: Math.max(30, bulletSpeed * 1.05),
         lifetime: bulletLifetime,
-        damage: baseDamage,
+        damage: Math.max(1, Math.round(baseDamage * 1.1)),
         color: 0xffee88
+      },
+      ai: {
+        minRangeTiles: 2,
+        maxRangeTiles: 14,
+        burstMinShots: 5,
+        burstMaxShots: 9,
+        burstRestMinSeconds: 0.22,
+        burstRestMaxSeconds: 0.55,
+        crowdBias: 0.2
       },
       modes: {
         standard: {
@@ -39,51 +56,70 @@ export function createWeaponCatalog() {
       },
       defaultMode: 'standard'
     },
-    shotgun: {
-      id: 'shotgun',
-      name: 'Shotgun',
+    pistol: {
+      id: 'pistol',
+      name: 'Pistol',
       fireMode: 'semi',
-      fireInterval: 0.85,
-      magSize: 6,
-      reserveStart: 36,
-      reserveMax: 60,
-      reloadSeconds: 2.1,
-      recoilKick: 1.35,
+      fireInterval: 0.24,
+      magSize: 12,
+      reserveStart: 72,
+      reserveMax: 120,
+      reloadSeconds: 1.25,
+      recoilKick: 0.85,
       muzzleColor: 0xffccaa,
-      pellets: 7,
-      spread: 0.11,
+      viewModelPath: '/models/weapon/en_pistol.glb',
+      view: { ...sharedView },
       projectile: {
-        kind: 'pellet',
-        speed: Math.max(26, bulletSpeed * 0.75),
-        lifetime: Math.min(1.6, bulletLifetime),
-        damage: Math.max(1, Math.round(baseDamage * 0.85)),
+        kind: 'bullet',
+        speed: Math.max(34, bulletSpeed * 1.2),
+        lifetime: Math.max(1.2, bulletLifetime * 0.95),
+        damage: Math.max(1, Math.round(baseDamage * 2.0)),
         color: 0xffddaa,
-        stunSeconds: 0.3
+        stunSeconds: 0.2
+      },
+      ai: {
+        minRangeTiles: 0,
+        maxRangeTiles: 8,
+        burstMinShots: 2,
+        burstMaxShots: 3,
+        burstRestMinSeconds: 0.18,
+        burstRestMaxSeconds: 0.35,
+        crowdBias: 0.4
       }
     },
-    launcher: {
-      id: 'launcher',
-      name: 'Grenade Launcher',
+    flare: {
+      id: 'flare',
+      name: 'Flare Gun',
       fireMode: 'semi',
-      fireInterval: 0.95,
-      magSize: 4,
-      reserveStart: 16,
-      reserveMax: 24,
-      reloadSeconds: 2.4,
+      fireInterval: 0.9,
+      magSize: 2,
+      reserveStart: 10,
+      reserveMax: 18,
+      reloadSeconds: 2.15,
       recoilKick: 1.15,
       muzzleColor: 0x66ff99,
+      viewModelPath: '/models/weapon/flare_gun.glb',
+      view: { ...sharedView },
       projectile: {
         kind: 'grenade',
-        speed: 20,
-        lifetime: 2.2,
-        damage: Math.max(2, baseDamage * 2),
-        explosionRadius: 3.2,
-        explosionDamage: 7,
-        color: 0x66ff99,
-        explosionColor: 0x66ff99,
-        stunSeconds: 0.25
+        speed: 18,
+        lifetime: 2.35,
+        damage: Math.max(2, Math.round(baseDamage * 2.0)),
+        explosionRadius: 2.9,
+        explosionDamage: 10,
+        color: 0xff6644,
+        explosionColor: 0xffaa55,
+        stunSeconds: 0.35
+      },
+      ai: {
+        minRangeTiles: 4,
+        maxRangeTiles: 14,
+        burstMinShots: 1,
+        burstMaxShots: 1,
+        burstRestMinSeconds: 0.35,
+        burstRestMaxSeconds: 0.7,
+        crowdBias: 1.0
       }
     }
   };
 }
-

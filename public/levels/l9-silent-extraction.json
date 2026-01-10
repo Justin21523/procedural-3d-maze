@@ -1,82 +1,89 @@
 {
   "id": 9,
-  "name": "L9 - Silent Extraction",
-  "maze": { "width": 33, "height": 33, "roomDensity": 2.8, "extraConnectionChance": 0.12 },
+  "name": "L9 - Shadow Hunt",
+  "maze": { "width": 33, "height": 33, "roomDensity": 3.2, "extraConnectionChance": 0.14 },
   "rooms": {
     "typeWeights": {
-      "CLASSROOM": 2.6,
-      "CLASSROOMS_BLOCK": 1.7,
-      "OFFICE": 1.6,
-      "LAB": 1.45,
-      "STORAGE": 1.2,
+      "CLASSROOM": 2.5,
+      "CLASSROOMS_BLOCK": 1.8,
+      "OFFICE": 1.7,
+      "LAB": 1.55,
+      "STORAGE": 1.25,
       "CAFETERIA": 0.75,
       "BATHROOM": 0.65,
-      "LIBRARY": 0.7,
-      "POOL": 0.2,
+      "LIBRARY": 0.75,
+      "POOL": 0.22,
       "GYM": 0.25,
       "BEDROOM": 0.35
     }
   },
   "monsters": {
-    "count": 3,
-    "maxCount": 5,
-    "speedMultiplier": 1.0,
-    "visionMultiplier": 1.0,
-    "memoryMultiplier": 1.0,
-    "typeWeights": { "WANDERER": 0.55, "HUNTER": 0.25, "SENTINEL": 0.15, "GREETER": 0.05 },
-    "allowSprintTypes": ["HUNTER"]
+    "count": 7,
+    "maxCount": 9,
+    "speedMultiplier": 1.13,
+    "visionMultiplier": 1.18,
+    "memoryMultiplier": 1.22,
+    "typeWeights": { "WANDERER": 0.14, "HUNTER": 0.34, "SENTINEL": 0.22, "STALKER": 0.18, "WEEPING_ANGEL": 0.12 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL", "WEEPING_ANGEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 75
   },
   "missions": {
-    "timeLimitSec": 0,
+    "timeLimitSec": 720,
     "list": [
       {
         "id": "power",
         "template": "restorePowerFuses",
         "required": true,
         "params": {
-          "fuses": 3,
+          "fuses": 4,
           "itemId": "fuse",
           "roomTypesFuses": ["STORAGE", "LAB", "OFFICE"],
           "roomTypesPanel": ["LAB", "OFFICE"],
           "minDistFromSpawn": 7,
           "hints": [
-            "Collect the fuses.",
-            "After collecting all fuses, find the power panel and press E to install them.",
-            "Press E again on the power panel to restore power."
+            "Collect the fuses and restore power at the panel.",
+            "Keep moving: late-game monsters punish hesitation."
           ]
         }
       },
       {
-        "id": "upload",
-        "template": "uploadEvidence",
+        "id": "doorCode",
+        "template": "codeLock",
         "required": true,
         "params": {
-          "count": 3,
-          "required": 3,
-          "itemId": "evidence",
-          "requiresPower": true,
-          "roomTypesEvidence": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
-          "roomTypesTerminal": ["OFFICE", "LAB"],
+          "clues": 4,
+          "roomTypesClues": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
+          "roomTypesKeypad": ["OFFICE", "LAB"],
           "minDistFromSpawn": 7,
           "hints": [
-            "Collect all evidence pickups.",
-            "Restore power before using the terminal.",
-            "After power is on, press E at the terminal to upload (it consumes your evidence)."
+            "Find the note clues (A/B/C/D).",
+            "Enter the code in order A→B→C→D."
           ]
         }
       },
       {
-        "id": "quiet",
-        "template": "stealthNoise",
+        "id": "kills",
+        "template": "killCount",
         "required": true,
         "params": {
-          "seconds": 18,
-          "resetOnGunshot": true,
-          "maxGunshotsTotal": 0,
+          "count": 9,
           "hints": [
-            "Stop moving and stay quiet.",
-            "Any movement resets the timer. Wait until it reaches 0.",
-            "Gunshots reset the countdown—stop and wait again."
+            "Defeat monsters to unlock the exit route.",
+            "Use weapon switching to match distance and crowd size."
+          ]
+        }
+      },
+      {
+        "id": "survive",
+        "template": "surviveTimer",
+        "required": true,
+        "params": {
+          "seconds": 40,
+          "hints": [
+            "Survive until the timer completes.",
+            "Break line of sight and keep moving between rooms."
           ]
         }
       },
@@ -87,13 +94,12 @@
         "params": {
           "hints": [
             "Go to the exit and press E to unlock it.",
-            "After unlocking, press E again to finish the level.",
-            "If it stays locked, you missed a required objective."
+            "After unlocking, press E again to finish the level."
           ]
         }
       }
     ],
-    "exit": { "requires": ["power", "upload", "quiet", "unlockExit"] }
+    "exit": { "requires": ["power", "doorCode", "kills", "survive", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,
@@ -101,9 +107,9 @@
     "upgradesPerLevel": 1
   },
   "autopilot": {
-    "avoidRadius": 5,
-    "replanInterval": 0.5,
-    "stuckSeconds": 1.0,
-    "noProgressSeconds": 0.7
+    "avoidRadius": 6,
+    "replanInterval": 0.4,
+    "stuckSeconds": 0.9,
+    "noProgressSeconds": 0.55
   }
 }

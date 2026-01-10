@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "weapons": {
+    "/models/weapon/assault_rifle_pbr.glb": {
+      "view": {
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "rotationDeg": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": 1
+      }
+    },
+    "/models/weapon/en_pistol.glb": {
+      "view": {
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "rotationDeg": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": 1
+      }
+    },
+    "/models/weapon/flare_gun.glb": {
+      "view": {
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "rotationDeg": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": 1
+      }
+    }
+  }
+}

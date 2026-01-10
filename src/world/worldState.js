@@ -20,6 +20,7 @@ export class WorldState {
     this.width = 0;
     this.height = 0;
     this.spawnPoint = null;
+    this.exitPoint = null;
     this.monsterSpawns = [];
     this.missionPoints = [];
     this.smokeClouds = [];
@@ -31,6 +32,7 @@ export class WorldState {
    */
   initialize(levelConfig = null) {
     this.smokeClouds = [];
+    this.exitPoint = null;
     // Generate maze using DFS algorithm
     const mazeCfg = levelConfig?.maze || {};
     const width = mazeCfg.width ?? CONFIG.MAZE_WIDTH;
@@ -402,8 +404,13 @@ export class WorldState {
    * @returns {Object} Grid coordinates {x, y}
    */
   getExitPoint() {
+    if (this.exitPoint && Number.isFinite(this.exitPoint.x) && Number.isFinite(this.exitPoint.y)) {
+      return { x: this.exitPoint.x, y: this.exitPoint.y };
+    }
     if (!this.spawnPoint) {
-      return this.findRandomWalkableTile();
+      const p = this.findRandomWalkableTile();
+      this.exitPoint = p ? { x: p.x, y: p.y } : null;
+      return p;
     }
 
     // Find all walkable tiles
@@ -424,7 +431,52 @@ export class WorldState {
     const topTen = Math.floor(walkableTiles.length * 0.1);
     const randomIndex = randomInt(0, Math.max(0, topTen - 1));
 
-    return { x: walkableTiles[randomIndex].x, y: walkableTiles[randomIndex].y };
+    const exit = { x: walkableTiles[randomIndex].x, y: walkableTiles[randomIndex].y };
+    this.exitPoint = exit;
+    return { x: exit.x, y: exit.y };
+  }
+
+  toSaveData() {
+    return {
+      width: Number(this.width) || 0,
+      height: Number(this.height) || 0,
+      grid: this.grid,
+      roomMap: this.roomMap,
+      rooms: this.rooms,
+      spawnPoint: this.spawnPoint,
+      exitPoint: this.exitPoint,
+      monsterSpawns: this.monsterSpawns,
+      missionPoints: this.missionPoints
+    };
+  }
+
+  applySaveData(data, levelConfig = null) {
+    const d = data && typeof data === 'object' ? data : null;
+    if (!d) return false;
+
+    const grid = Array.isArray(d.grid) ? d.grid : null;
+    const roomMap = Array.isArray(d.roomMap) ? d.roomMap : null;
+    if (!grid || !roomMap) return false;
+
+    this.grid = grid;
+    this.rooms = Array.isArray(d.rooms) ? d.rooms : [];
+    this.roomMap = roomMap;
+    this.height = grid.length;
+    this.width = grid[0]?.length || 0;
+
+    const sp = d.spawnPoint;
+    this.spawnPoint = sp && Number.isFinite(sp.x) && Number.isFinite(sp.y) ? { x: sp.x, y: sp.y } : this.findRandomWalkableTile();
+
+    const ep = d.exitPoint;
+    this.exitPoint = ep && Number.isFinite(ep.x) && Number.isFinite(ep.y) ? { x: ep.x, y: ep.y } : null;
+
+    this.monsterSpawns = Array.isArray(d.monsterSpawns) ? d.monsterSpawns : [];
+    this.missionPoints = Array.isArray(d.missionPoints) ? d.missionPoints : [];
+
+    this.initializeObstacleMap();
+    this.applyEnvironmentObstacles(levelConfig);
+    this.applyPropObstacles(levelConfig);
+    return true;
   }
 
   /**
