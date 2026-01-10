@@ -1,0 +1,103 @@
+name: Desktop Builds
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional: tag to build+publish (e.g. v0.1.0). Leave empty to just build artifacts for the current ref."
+        required: false
+        type: string
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && inputs.release_tag || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install NSIS (Windows only)
+        if: runner.os == 'Windows'
+        run: choco install nsis -y
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build desktop bundle (Windows .exe)
+        if: runner.os == 'Windows'
+        run: npm run desktop:build -- --bundles nsis
+
+      - name: Build desktop bundle (macOS .dmg)
+        if: runner.os == 'macOS'
+        run: npm run desktop:build -- --bundles dmg
+
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}-${{ github.sha }}
+          path: src-tauri/target/release/bundle/**
+
+  release:
+    name: Publish Release Assets
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Verify expected assets exist
+        run: |
+          set -euo pipefail
+          echo "Artifacts downloaded:"
+          find artifacts -maxdepth 4 -type f | sed -n '1,200p'
+          exe_count="$(find artifacts -type f -name '*.exe' | wc -l | tr -d ' ')"
+          dmg_count="$(find artifacts -type f -name '*.dmg' | wc -l | tr -d ' ')"
+          if [ "$exe_count" -eq 0 ] && [ "$dmg_count" -eq 0 ]; then
+            echo "No .exe or .dmg found in artifacts. Check build job logs."
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+          fail_on_unmatched_files: true
+
