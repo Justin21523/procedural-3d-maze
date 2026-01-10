@@ -64,6 +64,11 @@ git push origin v0.1.0
 2. GitHub Actions workflow `Desktop (Windows)` builds an NSIS `.exe` on `windows-latest`.
 3. The `.exe` is attached to the GitHub Release for that tag.
 
+### If a tag already exists (re-publish)
+
+If you already pushed the tag but the release has no `.exe`, go to:
+GitHub → Actions → `Desktop (Windows)` → Run workflow, and set `release_tag` to that tag (e.g. `v0.1.0`).
+
 ## Notes
 
 - This repo uses absolute asset paths like `/models/...` and `/textures/...`.
