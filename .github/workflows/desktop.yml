@@ -21,13 +21,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
-    permissions:
-      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          # For workflow_dispatch: if release_tag provided, checkout that tag.
+          # Otherwise (push/main/tag): default to the current ref.
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && inputs.release_tag || github.ref }}
 
       - name: Setup Node.js
@@ -52,7 +52,7 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
-      - name: Build desktop bundle (Windows .exe)
+      - name: Build desktop bundle (Windows .exe via NSIS)
         if: runner.os == 'Windows'
         run: npm run desktop:build -- --bundles nsis
 
@@ -60,11 +60,41 @@ jobs:
         if: runner.os == 'macOS'
         run: npm run desktop:build -- --bundles dmg
 
-      - name: Upload bundle artifacts
+      # ---- Verify outputs exist (fail fast if bundling produced nothing) ----
+      - name: Verify Windows .exe exists
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exes = Get-ChildItem -Recurse "src-tauri/target/release/bundle" -Filter *.exe -ErrorAction SilentlyContinue
+          if (-not $exes -or $exes.Count -eq 0) {
+            Write-Error "No .exe found under src-tauri/target/release/bundle. Check build logs for bundler errors."
+            exit 1
+          }
+          Write-Host "Found .exe files:"
+          $exes | ForEach-Object { Write-Host " - $($_.FullName)" }
+
+      - name: Verify macOS .dmg exists
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg_count="$(find src-tauri/target/release/bundle -type f -name '*.dmg' | wc -l | tr -d ' ')"
+          if [ "$dmg_count" -eq 0 ]; then
+            echo "No .dmg found under src-tauri/target/release/bundle. Check build logs for bundler errors."
+            exit 1
+          fi
+          echo "Found .dmg files:"
+          find src-tauri/target/release/bundle -type f -name '*.dmg' -maxdepth 6 -print | sed -n '1,50p'
+
+      # ---- Upload ONLY the distributable assets (keep artifacts clean) ----
+      - name: Upload bundle artifacts (.exe / .dmg only)
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ runner.os }}-${{ github.sha }}
-          path: src-tauri/target/release/bundle/**
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.dmg
+          if-no-files-found: error
 
   release:
     name: Publish Release Assets
@@ -80,15 +110,25 @@ jobs:
         with:
           path: artifacts
 
-      - name: Verify expected assets exist
+      - name: List downloaded artifacts
+        shell: bash
         run: |
           set -euo pipefail
-          echo "Artifacts downloaded:"
-          find artifacts -maxdepth 4 -type f | sed -n '1,200p'
+          echo "Artifacts downloaded (showing up to 200 files):"
+          find artifacts -type f | sed -n '1,200p'
+
+      - name: Verify expected assets exist (.exe or .dmg)
+        shell: bash
+        run: |
+          set -euo pipefail
           exe_count="$(find artifacts -type f -name '*.exe' | wc -l | tr -d ' ')"
           dmg_count="$(find artifacts -type f -name '*.dmg' | wc -l | tr -d ' ')"
+
+          echo "exe_count=$exe_count"
+          echo "dmg_count=$dmg_count"
+
           if [ "$exe_count" -eq 0 ] && [ "$dmg_count" -eq 0 ]; then
-            echo "No .exe or .dmg found in artifacts. Check build job logs."
+            echo "No .exe or .dmg found in artifacts. Check the build job logs."
             exit 1
           fi
 
@@ -100,4 +140,3 @@ jobs:
             artifacts/**/*.exe
             artifacts/**/*.dmg
           fail_on_unmatched_files: true
-

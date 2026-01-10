@@ -64,6 +64,18 @@ public/*.jpeg
 public/*.webp
 public/README.txt
 
+# enemy models
+public/models/enemy/BisonBurly/
+public/models/enemy/CityLicker/
+public/models/enemy/Clodzilla/
+public/models/enemy/Cocobanana/
+public/models/enemy/KomaStar/
+public/models/enemy/Lappinitup/
+public/models/enemy/Runsure/
+public/models/enemy/Shakey/
+public/models/enemy/Sighdurr/
+public/models/enemy/Unbearaboy/
+
 # Tauri / Rust build outputs
 src-tauri/target/
 src-tauri/gen/
