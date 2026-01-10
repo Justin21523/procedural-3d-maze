@@ -16,9 +16,6 @@ export class AudioManager {
     this.listener = new THREE.AudioListener();
     camera.add(this.listener);
 
-    // Audio loader
-    this.loader = new THREE.AudioLoader();
-
     // Audio sources
     this.ambientSound = null;
     this.playerFootsteps = null;
@@ -50,21 +47,46 @@ export class AudioManager {
 
     console.log(`🔊 Loading audio: ${name} from ${path}`);
 
-    return new Promise((resolve, reject) => {
-      this.loader.load(
-        path,
-        (buffer) => {
-          this.buffers.set(name, buffer);
-          console.log(`✅ Audio loaded: ${name}`);
-          resolve(buffer);
-        },
-        undefined,
-        (error) => {
-          console.error(`❌ Failed to load audio ${name}:`, error);
-          reject(error);
-        }
-      );
-    });
+    const url = String(path || '').trim();
+    if (!url) throw new Error('Audio path missing');
+
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} ${res.statusText}`.trim());
+    }
+
+    const ct = String(res.headers.get('content-type') || '').toLowerCase();
+    // WebKit/GStreamer will emit very noisy warnings if we try to decode an HTML 404 page as audio.
+    // Treat obvious non-audio responses as a missing asset.
+    if (ct.includes('text/html')) {
+      throw new Error(`Audio URL returned HTML (missing file?): ${url}`);
+    }
+
+    const bytes = await res.arrayBuffer();
+    if (!bytes || bytes.byteLength < 16) {
+      throw new Error(`Audio data empty: ${url}`);
+    }
+
+    const ctx = this.listener?.context;
+    if (!ctx) throw new Error('AudioContext missing');
+
+    const decode = (arrayBuffer) => {
+      const fn = ctx.decodeAudioData.bind(ctx);
+      try {
+        const maybe = fn(arrayBuffer);
+        if (maybe && typeof maybe.then === 'function') return maybe;
+      } catch {
+        // fall through to callback form
+      }
+      return new Promise((resolve, reject) => {
+        fn(arrayBuffer, resolve, reject);
+      });
+    };
+
+    const buffer = await decode(bytes.slice(0));
+    this.buffers.set(name, buffer);
+    console.log(`✅ Audio loaded: ${name}`);
+    return buffer;
   }
 
   /**
