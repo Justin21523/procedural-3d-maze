@@ -50,9 +50,9 @@ npm run desktop:build
 
 Outputs are placed under `src-tauri/target/release/bundle/`.
 
-## Windows .exe downloads (GitHub Releases)
+## Windows + macOS downloads (GitHub Releases)
 
-This repo ships Windows `.exe` builds via GitHub Actions:
+This repo ships desktop builds via GitHub Actions:
 
 1. Create and push a version tag (example):
 
@@ -61,13 +61,15 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-2. GitHub Actions workflow `Desktop (Windows)` builds an NSIS `.exe` on `windows-latest`.
-3. The `.exe` is attached to the GitHub Release for that tag.
+2. GitHub Actions workflow `Desktop Builds` builds:
+   - Windows: NSIS `.exe`
+   - macOS: `.dmg`
+3. These files are attached to the GitHub Release for that tag.
 
 ### If a tag already exists (re-publish)
 
 If you already pushed the tag but the release has no `.exe`, go to:
-GitHub → Actions → `Desktop (Windows)` → Run workflow, and set `release_tag` to that tag (e.g. `v0.1.0`).
+GitHub → Actions → `Desktop Builds` → Run workflow, and set `release_tag` to that tag (e.g. `v0.1.0`).
 
 ## Notes
 
