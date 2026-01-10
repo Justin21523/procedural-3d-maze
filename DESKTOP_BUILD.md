@@ -10,7 +10,7 @@ This project is a Vite + Three.js web game. For a single-file desktop app experi
 - Platform build tools:
   - Windows: MSVC build tools
   - macOS: Xcode command line tools
-  - Linux: WebKit2GTK + common build deps
+  - Linux: WebKit2GTK + common build deps (Tauri docs list the exact package names per distro)
 
 Players do **not** need Node or Rust.
 
@@ -30,6 +30,8 @@ Runs Vite on `http://localhost:3002` and opens the Tauri window:
 npm run desktop:dev
 ```
 
+If you see `failed to get cargo metadata`, install Rust (cargo/rustc) and restart the terminal.
+
 ## Build installers / executables
 
 Builds `dist/` then bundles an installer/executable:
@@ -44,4 +46,3 @@ Outputs are placed under `src-tauri/target/release/bundle/`.
 
 - This repo uses absolute asset paths like `/models/...` and `/textures/...`.
   - Tauri's `custom-protocol` serves the app under an internal origin so these paths work without changing the game code.
-
