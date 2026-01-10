@@ -20,10 +20,12 @@ jobs:
       contents: write
 
     steps:
+      # ✅ 一般 push/tag push：讓 Actions 自己 checkout 正確 ref
+      # ✅ workflow_dispatch：才指定 ref=release_tag（如果有填）
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && inputs.release_tag || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -44,7 +46,7 @@ jobs:
         run: choco install nsis -y
 
       - name: Install frontend deps
-        run: npm install
+        run: npm ci
 
       - name: Build desktop bundle (NSIS .exe)
         run: npm run desktop:build -- --bundles nsis
@@ -56,7 +58,7 @@ jobs:
           path: src-tauri/target/release/bundle/**
 
       - name: Verify .exe output exists
-        if: startsWith(github.ref, 'refs/tags/') || (inputs.release_tag != '')
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         shell: pwsh
         run: |
           $exes = Get-ChildItem -Recurse "src-tauri/target/release/bundle" -Filter *.exe -ErrorAction SilentlyContinue
@@ -67,11 +69,11 @@ jobs:
           Write-Host "Found .exe files:"
           $exes | ForEach-Object { Write-Host " - $($_.FullName)" }
 
-      - name: Publish GitHub Release (tag only)
-        if: startsWith(github.ref, 'refs/tags/') || (inputs.release_tag != '')
+      - name: Publish GitHub Release (tag or dispatch release_tag)
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
           files: |
             src-tauri/target/release/bundle/**/*.exe
           fail_on_unmatched_files: true
