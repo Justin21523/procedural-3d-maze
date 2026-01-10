@@ -50,6 +50,20 @@ npm run desktop:build
 
 Outputs are placed under `src-tauri/target/release/bundle/`.
 
+## Windows .exe downloads (GitHub Releases)
+
+This repo ships Windows `.exe` builds via GitHub Actions:
+
+1. Create and push a version tag (example):
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+2. GitHub Actions workflow `Desktop (Windows)` builds an NSIS `.exe` on `windows-latest`.
+3. The `.exe` is attached to the GitHub Release for that tag.
+
 ## Notes
 
 - This repo uses absolute asset paths like `/models/...` and `/textures/...`.
