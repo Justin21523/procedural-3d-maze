@@ -1,15 +1,15 @@
 {
   "id": 5,
-  "name": "L5 - Classrooms Run",
-  "maze": { "width": 31, "height": 31, "roomDensity": 2.9, "extraConnectionChance": 0.1 },
+  "name": "L5 - Code & Fuses",
+  "maze": { "width": 29, "height": 29, "roomDensity": 2.9, "extraConnectionChance": 0.1 },
   "rooms": {
     "typeWeights": {
-      "CLASSROOM": 3.1,
-      "CLASSROOMS_BLOCK": 1.9,
-      "OFFICE": 1.25,
-      "LAB": 1.15,
+      "CLASSROOM": 2.9,
+      "CLASSROOMS_BLOCK": 1.8,
+      "OFFICE": 1.4,
+      "LAB": 1.25,
+      "STORAGE": 1.1,
       "CAFETERIA": 0.8,
-      "STORAGE": 0.85,
       "LIBRARY": 0.75,
       "BATHROOM": 0.65,
       "POOL": 0.18,
@@ -19,69 +19,66 @@
   },
   "monsters": {
     "count": 5,
-    "maxCount": 6,
-    "speedMultiplier": 1.0,
-    "visionMultiplier": 1.0,
-    "memoryMultiplier": 1.0,
-    "typeWeights": { "WANDERER": 0.45, "HUNTER": 0.25, "SENTINEL": 0.2, "GREETER": 0.1 },
+    "maxCount": 7,
+    "speedMultiplier": 1.06,
+    "visionMultiplier": 1.06,
+    "memoryMultiplier": 1.05,
+    "typeWeights": { "WANDERER": 0.3, "HUNTER": 0.35, "SENTINEL": 0.2, "STALKER": 0.1, "GREETER": 0.05 },
     "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 55
   },
   "missions": {
     "timeLimitSec": 0,
     "list": [
       {
-        "id": "findLibrary",
-        "template": "enterRoomType",
-        "required": true,
-        "params": {
-          "count": 1,
-          "roomTypes": ["LIBRARY"],
-          "hints": [
-            "Find and enter the library.",
-            "Explore themed rooms (Classrooms Block / Lab / Cafeteria) to locate it.",
-            "Use the minimap: push into unexplored areas until you hit a library room."
-          ]
-        }
-      },
-      {
         "id": "power",
-        "template": "restorePower",
+        "template": "restorePowerFuses",
         "required": true,
         "params": {
-          "switches": 2,
-          "roomTypes": ["LAB", "STORAGE"],
+          "fuses": 3,
+          "itemId": "fuse",
+          "roomTypesFuses": ["STORAGE", "LAB", "OFFICE"],
+          "roomTypesPanel": ["LAB", "OFFICE"],
+          "minDistFromSpawn": 7,
           "hints": [
-            "Activate the power switches.",
-            "Switches spawn in labs/storage rooms—look for the interact prompt.",
-            "If you cannot find one, keep exploring new rooms; switches never spawn in corridors."
+            "Collect the fuses.",
+            "Install fuses at the power panel (E).",
+            "Press E again on the panel to restore power."
           ]
         }
       },
       {
-        "id": "keycard",
-        "template": "findKeycard",
+        "id": "doorCode",
+        "template": "codeLock",
         "required": true,
         "params": {
-          "roomTypes": ["OFFICE", "CLASSROOM", "CLASSROOMS_BLOCK"],
-          "label": "Pick up Keycard",
+          "clues": 3,
+          "requiresPower": true,
+          "powerItemId": "power_on",
+          "roomTypesClues": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
+          "roomTypesKeypad": ["OFFICE", "LAB"],
+          "minDistFromSpawn": 7,
           "hints": [
-            "Search offices and classrooms for the keycard pickup.",
-            "Clear rooms one by one; the keycard is a glowing interactable.",
-            "Keep moving: it spawns away from spawn/exit, so explore deeper."
+            "Find the note clues (A/B/C).",
+            "Power must be on before the keypad can be used.",
+            "After collecting all clues, use the keypad and enter the code (A→B→C)."
           ]
         }
       },
       {
-        "id": "stealth",
-        "template": "stealthNoise",
+        "id": "evidence",
+        "template": "collectEvidence",
         "required": true,
         "params": {
-          "seconds": 12,
-          "resetOnGunshot": true,
+          "count": 5,
+          "required": 3,
+          "roomTypes": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
+          "minDistFromSpawn": 6,
           "hints": [
-            "Stay quiet until the timer completes.",
-            "Do not shoot; footsteps also reset the timer.",
-            "Stop moving and wait—any noise restarts the countdown."
+            "Collect at least 3 evidence pickups.",
+            "Evidence tends to be in Classrooms/Offices."
           ]
         }
       },
@@ -92,13 +89,12 @@
         "params": {
           "hints": [
             "Go to the exit and press E to unlock it.",
-            "After unlocking, press E again to finish the level.",
-            "If it stays locked, you missed a required objective."
+            "After unlocking, press E again to finish the level."
           ]
         }
       }
     ],
-    "exit": { "requires": ["findLibrary", "power", "keycard", "stealth", "unlockExit"] }
+    "exit": { "requires": ["power", "doorCode", "evidence", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,
@@ -107,9 +103,8 @@
   },
   "autopilot": {
     "avoidRadius": 5,
-    "replanInterval": 0.5,
-    "stuckSeconds": 1.0,
-    "noProgressSeconds": 0.7
+    "replanInterval": 0.48,
+    "stuckSeconds": 0.95,
+    "noProgressSeconds": 0.65
   }
 }
-

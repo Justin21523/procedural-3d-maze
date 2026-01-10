@@ -1,13 +1,20 @@
 {
+  "schemaVersion": 1,
+  "id": "Unbearaboy",
+  "displayName": "Unbearaboy",
+  "modelFile": "Unbearaboy.dae",
+  "textureFiles": [
+    "y571000_01.png"
+  ],
   "scaleMultiplier": 1,
   "groundOffset": 0.02,
   "stats": {
     "hitRadius": 1
   },
   "correctionRotationDeg": {
-    "x": 87,
-    "y": 0,
-    "z": 90
+    "x": 90,
+    "y": 1,
+    "z": -180
   },
   "combat": {
     "ranged": {

@@ -1,0 +1,8 @@
+{
+  "generatedAt": "2026-01-10T11:35:45.143Z",
+  "models": [
+    "/models/weapon/assault_rifle_pbr.glb",
+    "/models/weapon/en_pistol.glb",
+    "/models/weapon/flare_gun.glb"
+  ]
+}

@@ -14,6 +14,7 @@ export class UIManager {
     this.toolSystem = options.toolSystem || null;
     this.pickupManager = options.pickupManager || null;
     this.missionDirector = options.missionDirector || null;
+    this.sceneManager = options.sceneManager || null;
 
     // Crosshair pulses
     this.crosshairEl = document.getElementById('crosshair');
@@ -547,6 +548,27 @@ export class UIManager {
       return String(c);
     };
 
+    const renderInfo = this.sceneManager?.renderer?.info || null;
+    const fs = this.sceneManager?.frameStats || null;
+    const calls = renderInfo?.render?.calls ?? null;
+    const tris = renderInfo?.render?.triangles ?? null;
+    const tex = renderInfo?.memory?.textures ?? null;
+    const geos = renderInfo?.memory?.geometries ?? null;
+    const pr = fs?.pixelRatio ?? this.sceneManager?.pixelRatio ?? null;
+    const uMs = fs?.updateMs;
+    const rMs = fs?.renderMs;
+    const fEma = fs?.fpsEma;
+
+    const perfText =
+      (Number.isFinite(fEma) ? ` FPS~${fEma.toFixed(0)}` : '') +
+      (Number.isFinite(uMs) ? ` U${uMs.toFixed(1)}ms` : '') +
+      (Number.isFinite(rMs) ? ` R${rMs.toFixed(1)}ms` : '') +
+      (Number.isFinite(pr) ? ` PR${Number(pr).toFixed(2)}` : '') +
+      (Number.isFinite(calls) ? ` DC${calls}` : '') +
+      (Number.isFinite(tris) ? ` T${Math.round(tris / 1000)}k` : '') +
+      (Number.isFinite(geos) ? ` G${geos}` : '') +
+      (Number.isFinite(tex) ? ` TX${tex}` : '');
+
     el.textContent =
       `M ${alive}/${monsters.length} ` +
       `P ${fmt(proj, CONFIG.MAX_ACTIVE_PROJECTILES)} ` +
@@ -556,7 +578,8 @@ export class UIManager {
       `MO ${missionObjects} ` +
       `OB ${blockedTiles} ` +
       `PU ${pickupTotal}/${toolPickupTotal} ` +
-      `FX Smk${smokeClouds} Dev${devices} Jam${jammed} Bld${blinded} Stn${stunned}`;
+      `FX Smk${smokeClouds} Dev${devices} Jam${jammed} Bld${blinded} Stn${stunned}` +
+      perfText;
   }
 
   updateCrosshairPulse(dt) {

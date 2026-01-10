@@ -74,10 +74,7 @@ export class PlayerController {
   update(deltaTime, autopilotActive = false, externalCommand = null) {
     this.updateCameraToolState(autopilotActive, externalCommand);
 
-    // Allow autopilot movement even without pointer lock
-    if (!this.input.isPointerLocked() && !autopilotActive) {
-      return;
-    }
+    const pointerLocked = this.input?.isPointerLocked?.() ?? false;
 
     this.updateBlockState(deltaTime, externalCommand);
 
@@ -88,8 +85,8 @@ export class PlayerController {
 
     this.lastPosition.copy(this.position);
 
-    // Player look always honored first
-    const mouseDelta = this.input.consumeMouseDelta();
+    // Player look only applies while pointer is locked.
+    const mouseDelta = pointerLocked ? this.input.consumeMouseDelta() : { x: 0, y: 0 };
     this.camera.updateRotation(mouseDelta.x, mouseDelta.y);
 
     // Autopilot absolute yaw (if any) comes after manual look, smoothed

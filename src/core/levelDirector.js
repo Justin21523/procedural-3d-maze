@@ -417,6 +417,10 @@ export class LevelDirector {
     this.lastDifficulty = 1;
   }
 
+  getLevelCount() {
+    return Array.isArray(this.baseLevels) ? this.baseLevels.length : 0;
+  }
+
   static async createFromPublic({
     manifestUrl = '/levels/manifest.json',
     fallbackLevels = [],
@@ -828,6 +832,7 @@ export class LevelDirector {
    * For UI: how many levels can we jump to (soft cap).
    */
   getMaxJump() {
-    return null;
+    const n = this.getLevelCount();
+    return n > 0 ? n : null;
   }
 }

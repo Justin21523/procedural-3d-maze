@@ -22,6 +22,15 @@ export class InputHandler {
     this.setupListeners();
   }
 
+  resetState() {
+    this.keys = {};
+    this.justPressed = new Set();
+    this.mouseDelta = { x: 0, y: 0 };
+    this.mouseButtons = { left: false, right: false };
+    this.mouseJustPressed = { left: false, right: false };
+    this.lastInputTime = performance.now();
+  }
+
   /**
    * Setup all input event listeners
    */
@@ -54,6 +63,11 @@ export class InputHandler {
     window.addEventListener('keyup', (e) => {
       this.keys[e.code] = false;
       this.lastInputTime = performance.now();
+    });
+
+    window.addEventListener('blur', () => {
+      // Avoid "stuck keys" when focus changes (e.g. opening overlays / switching tabs).
+      this.resetState();
     });
 
     // Mouse movement
@@ -107,6 +121,13 @@ export class InputHandler {
       if (this.pointerLocked) {
         console.log('✅ Pointer lock ACQUIRED - Mouse is now captured');
       } else {
+        // Ensure any held mouse buttons are released when pointer lock ends.
+        this.mouseButtons.left = false;
+        this.mouseButtons.right = false;
+        this.mouseJustPressed.left = false;
+        this.mouseJustPressed.right = false;
+        this.mouseDelta.x = 0;
+        this.mouseDelta.y = 0;
         console.log('❌ Pointer lock RELEASED - Press ESC to show menu');
       }
     });
@@ -120,9 +141,10 @@ export class InputHandler {
    * Request pointer lock (mouse capture)
    * Should be called on user interaction (e.g., button click)
    */
-  requestPointerLock() {
+  requestPointerLock(element = null) {
     try {
-      document.body.requestPointerLock();
+      const target = element || document.body;
+      target?.requestPointerLock?.();
     } catch (err) {
       console.error('❌ Pointer lock request failed:', err);
     }

@@ -60,6 +60,22 @@ export class GameLoop {
 
     this.running = false;
     this.lastTime = 0;
+    this.rafId = null;
+
+    // Dynamic resolution scaling (simple FPS governor)
+    this._perf = {
+      emaFrameMs: 16.67,
+      adjustCooldown: 0,
+      guardCooldown: 0,
+      lowFpsTimer: 0,
+      highFpsTimer: 0,
+      guardTier: 0,
+      defaults: {
+        monsterCullTiles: Number.isFinite(CONFIG.MONSTER_RENDER_CULL_DISTANCE_TILES) ? CONFIG.MONSTER_RENDER_CULL_DISTANCE_TILES : 22,
+        farTickSeconds: Number.isFinite(CONFIG.MONSTER_AI_FAR_TICK_SECONDS) ? CONFIG.MONSTER_AI_FAR_TICK_SECONDS : 0.35,
+        minimapInterval: this.minimapInterval
+      }
+    };
 
     this.lastProgressPos = null;
     this.noProgressTimer = 0;
@@ -103,6 +119,7 @@ export class GameLoop {
 
     this.running = true;
     this.lastTime = performance.now();
+    this.rafId = null;
 
     // Start game timer
     if (this.gameState && !this.gameState.isRunning) {
@@ -118,6 +135,10 @@ export class GameLoop {
    */
   stop() {
     this.running = false;
+    if (this.rafId !== null) {
+      try { cancelAnimationFrame(this.rafId); } catch { /* ignore */ }
+      this.rafId = null;
+    }
     console.log('Game loop stopped');
   }
 
@@ -430,17 +451,122 @@ export class GameLoop {
     if (!this.running) return;
 
     const now = performance.now();
-    const deltaTime = (now - this.lastTime) / 1000; // Convert to seconds
+    const frameMs = now - this.lastTime;
+    const deltaTime = frameMs / 1000; // Convert to seconds
     this.lastTime = now;
 
+    // Update perf EMA (used for dynamic resolution)
+    if (Number.isFinite(frameMs) && frameMs > 0) {
+      const a = 0.06;
+      this._perf.emaFrameMs = this._perf.emaFrameMs * (1 - a) + frameMs * a;
+    }
+
     // Update game state
+    const updateStart = performance.now();
     this.update(deltaTime, now);
+    const updateMs = performance.now() - updateStart;
+
+    // Dynamic resolution scaling to maintain target FPS
+    if (CONFIG.RENDER_DYNAMIC_RESOLUTION && this.sceneManager?.setPixelRatio) {
+      const dt = Math.max(0, Math.min(0.1, deltaTime));
+      this._perf.adjustCooldown = Math.max(0, (this._perf.adjustCooldown || 0) - dt);
+      if (this._perf.adjustCooldown <= 0) {
+        const targetFps = Number.isFinite(CONFIG.RENDER_TARGET_FPS) ? CONFIG.RENDER_TARGET_FPS : 60;
+        const ema = Math.max(1, Number(this._perf.emaFrameMs) || 16.67);
+        const fps = 1000 / ema;
+        const ratio = this.sceneManager.pixelRatio || 1.0;
+        const step = 0.05;
+        const downThreshold = targetFps - 5;
+        const upThreshold = targetFps + 10;
+
+        if (fps < downThreshold) {
+          this.sceneManager.setPixelRatio(ratio - step);
+          this._perf.adjustCooldown = 0.9;
+        } else if (fps > upThreshold) {
+          this.sceneManager.setPixelRatio(ratio + step);
+          this._perf.adjustCooldown = 1.6;
+        } else {
+          this._perf.adjustCooldown = 0.6;
+        }
+      }
+    }
 
     // Render scene
+    const renderStart = performance.now();
     this.render();
+    const renderMs = performance.now() - renderStart;
+
+    const ema = Math.max(1, Number(this._perf.emaFrameMs) || 16.67);
+    const fpsEma = 1000 / ema;
+
+    this.applyPerformanceGuard(deltaTime, fpsEma);
+
+    this.sceneManager?.setFrameStats?.({
+      frameMs: Number.isFinite(frameMs) ? frameMs : 0,
+      updateMs,
+      renderMs,
+      fpsEma
+    });
 
     // Request next frame
-    requestAnimationFrame(() => this.loop());
+    this.rafId = requestAnimationFrame(() => this.loop());
+  }
+
+  applyPerformanceGuard(deltaTime, fpsEma) {
+    const dt = Math.max(0, Math.min(0.25, Number(deltaTime) || 0));
+    const targetFps = Number.isFinite(CONFIG.RENDER_TARGET_FPS) ? CONFIG.RENDER_TARGET_FPS : 60;
+    const perf = this._perf || (this._perf = {});
+
+    perf.guardCooldown = Math.max(0, (perf.guardCooldown || 0) - dt);
+    if (perf.guardCooldown > 0) return;
+
+    const lowThreshold = targetFps - 6;
+    const highThreshold = targetFps + 8;
+
+    if (Number.isFinite(fpsEma) && fpsEma < lowThreshold) {
+      perf.lowFpsTimer = (perf.lowFpsTimer || 0) + dt;
+      perf.highFpsTimer = 0;
+    } else if (Number.isFinite(fpsEma) && fpsEma > highThreshold) {
+      perf.highFpsTimer = (perf.highFpsTimer || 0) + dt;
+      perf.lowFpsTimer = 0;
+    } else {
+      perf.lowFpsTimer = 0;
+      perf.highFpsTimer = 0;
+    }
+
+    let tier = Math.max(0, Math.min(2, perf.guardTier || 0));
+    if ((perf.lowFpsTimer || 0) >= 1.6 && tier < 2) {
+      tier += 1;
+      perf.guardCooldown = 1.25;
+      perf.lowFpsTimer = 0;
+    } else if ((perf.highFpsTimer || 0) >= 5.0 && tier > 0) {
+      tier -= 1;
+      perf.guardCooldown = 2.0;
+      perf.highFpsTimer = 0;
+    } else {
+      perf.guardCooldown = 0.5;
+    }
+
+    if (tier === (perf.guardTier || 0)) return;
+    perf.guardTier = tier;
+
+    const baseCull = Number(perf.defaults?.monsterCullTiles) || 22;
+    const baseFarTick = Number(perf.defaults?.farTickSeconds) || 0.35;
+    const baseMinimap = Number(perf.defaults?.minimapInterval) || 0.25;
+
+    if (tier === 0) {
+      CONFIG.MONSTER_RENDER_CULL_DISTANCE_TILES = baseCull;
+      CONFIG.MONSTER_AI_FAR_TICK_SECONDS = baseFarTick;
+      this.minimapInterval = baseMinimap;
+    } else if (tier === 1) {
+      CONFIG.MONSTER_RENDER_CULL_DISTANCE_TILES = Math.max(12, Math.round(baseCull - 6));
+      CONFIG.MONSTER_AI_FAR_TICK_SECONDS = Math.max(baseFarTick, 0.55);
+      this.minimapInterval = Math.max(baseMinimap, 0.35);
+    } else {
+      CONFIG.MONSTER_RENDER_CULL_DISTANCE_TILES = Math.max(10, Math.round(baseCull - 10));
+      CONFIG.MONSTER_AI_FAR_TICK_SECONDS = Math.max(baseFarTick, 0.8);
+      this.minimapInterval = Math.max(baseMinimap, 0.5);
+    }
   }
 
   /**

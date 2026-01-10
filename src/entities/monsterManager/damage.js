@@ -61,16 +61,42 @@ export class MonsterDamage {
     if (!monster || monster.isDead || monster.isDying) return;
     this.ensureMonsterHealth(monster);
 
+    // Monster guard (simple defense mechanic)
+    const guardEnabled = CONFIG.MONSTER_GUARD_ENABLED ?? true;
+    if (guardEnabled) {
+      const health = Math.max(0, Number(monster.health) || 0);
+      const max = Math.max(1, Number(monster.maxHealth) || 1);
+      const ratio = health / max;
+
+      const canStartGuard = (monster.guardTimer || 0) <= 0 && (monster.guardCooldown || 0) <= 0;
+      if (canStartGuard) {
+        const chance = Math.max(0, Math.min(1, Number(CONFIG.MONSTER_GUARD_CHANCE) || 0));
+        const threshold = Math.max(0, Math.min(1, Number(CONFIG.MONSTER_GUARD_MIN_HEALTH_RATIO) || 0.55));
+        const bias = ratio <= threshold ? 1.0 : 0.6;
+        if (Math.random() < chance * bias) {
+          monster.guardTimer = Math.max(0.05, Number(CONFIG.MONSTER_GUARD_DURATION_SECONDS) || 0.7);
+          monster.guardCooldown = Math.max(0.1, Number(CONFIG.MONSTER_GUARD_COOLDOWN_SECONDS) || 2.2);
+          this.manager?.audioManager?.playMonsterGuard?.();
+        }
+      }
+    }
+
     const now = performance.now() / 1000;
     monster.lastDamagedAt = now;
     monster.lastDamageCause = options.cause || monster.lastDamageCause || null;
 
     const stunSeconds = options.stunSeconds;
     if (Number.isFinite(stunSeconds) && stunSeconds > 0) {
-      monster.stunTimer = Math.max(monster.stunTimer || 0, stunSeconds);
+      const guardMult = (CONFIG.MONSTER_GUARD_ENABLED ?? true) && (monster.guardTimer || 0) > 0 ? 0.5 : 1.0;
+      monster.stunTimer = Math.max(monster.stunTimer || 0, stunSeconds * guardMult);
     }
 
-    const amount = Number.isFinite(damage) ? damage : 0;
+    const baseAmount = Number.isFinite(damage) ? damage : 0;
+    const guardDamageMult =
+      (CONFIG.MONSTER_GUARD_ENABLED ?? true) && (monster.guardTimer || 0) > 0
+        ? (Number(CONFIG.MONSTER_GUARD_DAMAGE_MULT) || 0.35)
+        : 1.0;
+    const amount = baseAmount * Math.max(0, guardDamageMult);
     if (amount > 0) {
       monster.health = Math.max(0, (monster.health || 0) - amount);
     }
@@ -352,7 +378,43 @@ export class MonsterDamage {
       modelMeta
     });
 
+    // Drops: health + "heart" that can increase max health.
+    try {
+      const eb = manager.eventBus;
+      if (eb?.emit && worldPosition) {
+        const hpChance = Math.max(0, Math.min(1, Number(CONFIG.MONSTER_DROP_HEALTH_CHANCE) || 0));
+        const bigChance = Math.max(0, Math.min(1, Number(CONFIG.MONSTER_DROP_HEALTH_BIG_CHANCE) || 0));
+        const heartChance = Math.max(0, Math.min(1, Number(CONFIG.MONSTER_DROP_HEART_CHANCE) || 0));
+
+        if (Math.random() < heartChance) {
+          eb.emit(EVENTS.PICKUP_SPAWN_REQUESTED, {
+            kind: 'monsterHeart',
+            amount: Math.max(1, Math.round(Number(CONFIG.MONSTER_DROP_HEART_MAX_HEALTH_BONUS) || 2)),
+            ttl: 25,
+            position: worldPosition.clone()
+          });
+        }
+
+        if (Math.random() < bigChance) {
+          eb.emit(EVENTS.PICKUP_SPAWN_REQUESTED, {
+            kind: 'healthBig',
+            amount: Math.max(1, Math.round(Number(CONFIG.MONSTER_DROP_HEALTH_BIG_AMOUNT) || 30)),
+            ttl: 18,
+            position: worldPosition.clone()
+          });
+        } else if (Math.random() < hpChance) {
+          eb.emit(EVENTS.PICKUP_SPAWN_REQUESTED, {
+            kind: 'healthSmall',
+            amount: Math.max(1, Math.round(Number(CONFIG.MONSTER_DROP_HEALTH_SMALL_AMOUNT) || 12)),
+            ttl: 16,
+            position: worldPosition.clone()
+          });
+        }
+      }
+    } catch (err) {
+      void err;
+    }
+
     manager.spawner?.queueRespawn?.(typeConfig);
   }
 }
-

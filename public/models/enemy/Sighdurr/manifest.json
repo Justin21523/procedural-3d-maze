@@ -1,13 +1,20 @@
 {
+  "schemaVersion": 1,
+  "id": "Sighdurr",
+  "displayName": "Sighdurr",
+  "modelFile": "Sighdurr.dae",
+  "textureFiles": [
+    "y502000_01.png"
+  ],
   "scaleMultiplier": 1,
   "groundOffset": 0.02,
   "stats": {
     "hitRadius": 1
   },
   "correctionRotationDeg": {
-    "x": 87,
+    "x": 88,
     "y": 0,
-    "z": 90
+    "z": -76
   },
   "combat": {
     "ranged": {

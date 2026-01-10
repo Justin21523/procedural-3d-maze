@@ -12,16 +12,16 @@ import * as THREE from 'three';
  */
 export function setupLighting(scene) {
   // 環境光：給整體一點黃白色 base light
-  const ambientLight = new THREE.AmbientLight(0xffffcc, 0.3);
+  const ambientLight = new THREE.AmbientLight(0xffffcc, 0.38);
   scene.add(ambientLight);
 
   // 半球光：模擬來自上方的冷色 + 下方反射的暗色
-  const hemiLight = new THREE.HemisphereLight(0xffffee, 0x202020, 0.25);
+  const hemiLight = new THREE.HemisphereLight(0xffffee, 0x202020, 0.32);
   hemiLight.position.set(0, 20, 0);
   scene.add(hemiLight);
 
   // 主要方向光，模擬頂上的一排日光燈
-  const directionalLight = new THREE.DirectionalLight(0xffffdd, 0.7);
+  const directionalLight = new THREE.DirectionalLight(0xffffdd, 0.78);
   directionalLight.position.set(5, 12, 2);
 
   // 陰影設定（不要太大，避免 FPS 掉太兇）

@@ -10,7 +10,6 @@
     "l7-maintenance.json",
     "l8-blackout-protocol.json",
     "l9-silent-extraction.json",
-    "l10-ritual-circuit.json",
-    "l11-powered-keypad.json"
+    "l10-ritual-circuit.json"
   ]
 }

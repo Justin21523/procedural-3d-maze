@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CONFIG } from '../core/config.js';
 import { EVENTS } from '../core/events.js';
 import { createWeaponCatalog, DEFAULT_WEAPON_ORDER } from './weaponCatalog.js';
+import { applyWeaponMetaToCatalog, loadWeaponMetaFile } from './weaponMeta.js';
 
 /**
  * Player weapon system:
@@ -30,6 +31,9 @@ export class Gun {
 
     this.activeWeaponId = this.weaponOrder[0] || 'rifle';
     this.weaponSwapCooldown = 0;
+    this.syncWeaponViewModel();
+
+    void this.loadWeaponMetaOverrides();
 
     this.skills = {
       grenade: { cooldown: 0, maxCooldown: 7.5 },
@@ -37,8 +41,24 @@ export class Gun {
     };
   }
 
+  async loadWeaponMetaOverrides() {
+    try {
+      const meta = await loadWeaponMetaFile();
+      if (!meta) return;
+      applyWeaponMetaToCatalog(this.weaponDefs, meta);
+      this.syncWeaponViewModel();
+    } catch (err) {
+      void err;
+    }
+  }
+
+  async reloadWeaponMetaOverrides() {
+    await this.loadWeaponMetaOverrides();
+  }
+
   setWeaponView(weaponView) {
     this.weaponView = weaponView;
+    this.syncWeaponViewModel();
   }
 
   setEventBus(eventBus) {
@@ -54,8 +74,8 @@ export class Gun {
     this.updateWeaponTimers(dt);
     this.updateSkillTimers(dt);
 
-    this.handleWeaponInput();
-    this.handleSkillInput();
+    this.handleWeaponInput(externalCommand, autopilotActive);
+    this.handleSkillInput(externalCommand, autopilotActive);
     this.handleFireInput(externalCommand, autopilotActive);
   }
 
@@ -179,6 +199,7 @@ export class Gun {
           this.finishReload(def, state);
           if (id === this.activeWeaponId) {
             this.weaponView?.onReloadFinish?.();
+            this.audioManager?.playReload?.('finish');
           }
           this.eventBus?.emit?.(EVENTS.WEAPON_RELOAD_FINISH, { weaponId: id });
         }
@@ -193,30 +214,55 @@ export class Gun {
     }
   }
 
-  handleWeaponInput() {
-    if (!this.input?.consumeKeyPress) return;
+  handleWeaponInput(externalCommand = null, autopilotActive = false) {
+    const canConsume = !!this.input?.consumeKeyPress;
 
-    if (this.input.consumeKeyPress('Digit1')) this.switchWeaponByIndex(0);
-    if (this.input.consumeKeyPress('Digit2')) this.switchWeaponByIndex(1);
-    if (this.input.consumeKeyPress('Digit3')) this.switchWeaponByIndex(2);
+    if (canConsume) {
+      if (this.input.consumeKeyPress('Digit1')) this.switchWeaponByIndex(0);
+      if (this.input.consumeKeyPress('Digit2')) this.switchWeaponByIndex(1);
+      if (this.input.consumeKeyPress('Digit3')) this.switchWeaponByIndex(2);
 
-    if (this.input.consumeKeyPress('KeyR')) {
-      this.tryStartReload();
+      if (this.input.consumeKeyPress('KeyR')) {
+        this.tryStartReload();
+      }
+
+      if (this.input.consumeKeyPress('KeyB')) {
+        this.cycleWeaponMode();
+      }
     }
 
-    if (this.input.consumeKeyPress('KeyB')) {
-      this.cycleWeaponMode();
+    if (autopilotActive && externalCommand) {
+      const idx = Number(externalCommand.weaponIndex);
+      if (idx === 1) this.switchWeaponByIndex(0);
+      if (idx === 2) this.switchWeaponByIndex(1);
+      if (idx === 3) this.switchWeaponByIndex(2);
+
+      const weaponId = typeof externalCommand.weaponId === 'string' ? externalCommand.weaponId : null;
+      if (weaponId) this.switchWeapon(weaponId);
+
+      if (externalCommand.reload) this.tryStartReload();
+      if (externalCommand.toggleMode) this.cycleWeaponMode();
+
+      const modeKey = typeof externalCommand.weaponMode === 'string' ? externalCommand.weaponMode : null;
+      if (modeKey) this.setWeaponMode(modeKey);
     }
   }
 
-  handleSkillInput() {
-    if (!this.input?.consumeKeyPress) return;
+  handleSkillInput(externalCommand = null, autopilotActive = false) {
+    const canConsume = !!this.input?.consumeKeyPress;
 
-    if (this.input.consumeKeyPress('KeyQ')) {
-      this.tryUseGrenadeSkill();
+    if (canConsume) {
+      if (this.input.consumeKeyPress('KeyQ')) {
+        this.tryUseGrenadeSkill();
+      }
+      if (this.input.consumeKeyPress('KeyX')) {
+        this.tryUseEmpSkill();
+      }
     }
-    if (this.input.consumeKeyPress('KeyX')) {
-      this.tryUseEmpSkill();
+
+    if (autopilotActive && externalCommand) {
+      if (externalCommand.skillGrenade) this.tryUseGrenadeSkill({ ignorePointerLock: true });
+      if (externalCommand.skillEmp) this.tryUseEmpSkill();
     }
   }
 
@@ -277,10 +323,33 @@ export class Gun {
     this.activeWeaponId = id;
     this.weaponSwapCooldown = 0.2;
     this.weaponView?.onWeaponSwitch?.();
+    this.audioManager?.playWeaponSwitch?.();
+    this.syncWeaponViewModel();
     this.eventBus?.emit?.(EVENTS.WEAPON_SWITCHED, {
       weaponId: id,
       weaponDef: this.weaponDefs[id] || null
     });
+  }
+
+  syncWeaponViewModel() {
+    const def = this.getActiveWeaponDef();
+    const path = def?.viewModelPath || null;
+    if (this.weaponView?.setViewTransform) {
+      this.weaponView.setViewTransform(def?.view || null);
+    }
+    if (path && this.weaponView?.setModelPath) {
+      void this.weaponView.setModelPath(path);
+    }
+  }
+
+  setWeaponMode(modeKey) {
+    const def = this.getActiveWeaponDef();
+    const state = this.getWeaponState();
+    if (!def || !state) return;
+    if (!def.modes || !def.modes[modeKey]) return;
+    if (state.mode === modeKey) return;
+    state.mode = modeKey;
+    this.audioManager?.playWeaponModeToggle?.();
   }
 
   tryStartReload() {
@@ -298,6 +367,7 @@ export class Gun {
     state.reloadTimer = state.reloadTotal;
     state.cooldown = Math.max(state.cooldown || 0, 0.15);
     this.weaponView?.onReloadStart?.(state.reloadTotal);
+    this.audioManager?.playReload?.('start');
     this.eventBus?.emit?.(EVENTS.WEAPON_RELOAD_START, {
       weaponId: def.id,
       duration: state.reloadTotal
@@ -324,14 +394,16 @@ export class Gun {
     const idx = modes.indexOf(current);
     const next = modes[(idx + 1) % modes.length];
     state.mode = next;
+    this.audioManager?.playWeaponModeToggle?.();
   }
 
-  tryUseGrenadeSkill() {
+  tryUseGrenadeSkill(options = {}) {
     const skill = this.skills.grenade;
     if (!skill || skill.cooldown > 0) return;
     const cam = this.getCameraObject();
     if (!cam || !this.projectileManager?.spawnPlayerProjectile) return;
-    if (!this.input?.isPointerLocked?.() && !(this.input?.pointerLocked)) return;
+    const ignorePointerLock = options?.ignorePointerLock === true;
+    if (!ignorePointerLock && !this.input?.isPointerLocked?.() && !(this.input?.pointerLocked)) return;
 
     const { origin, dir } = this.computeShotRay(cam);
     if (!origin || !dir) return;
@@ -359,7 +431,7 @@ export class Gun {
     });
 
     this.registerPlayerNoise(origin, 1.0);
-    this.audioManager?.playGunshot?.();
+    this.audioManager?.playGrenadeLaunch?.();
     skill.cooldown = skill.maxCooldown;
   }
 
@@ -384,6 +456,7 @@ export class Gun {
       color: 0x66aaff
     });
 
+    this.audioManager?.playEmpPulse?.();
     this.registerPlayerNoise(playerPos, 0.6);
     skill.cooldown = skill.maxCooldown;
   }
@@ -603,5 +676,68 @@ export class Gun {
         this.releaseMuzzleFlash(fx);
       }
     }
+  }
+
+  toSaveData() {
+    const weaponStates = {};
+    for (const id of this.weaponOrder) {
+      const state = this.weaponStates.get(id);
+      if (!state) continue;
+      weaponStates[id] = {
+        ammoInMag: Math.max(0, Math.round(Number(state.ammoInMag) || 0)),
+        ammoReserve: Math.max(0, Math.round(Number(state.ammoReserve) || 0)),
+        cooldown: Math.max(0, Number(state.cooldown) || 0),
+        reloadTimer: Math.max(0, Number(state.reloadTimer) || 0),
+        reloadTotal: Math.max(0, Number(state.reloadTotal) || 0),
+        mode: typeof state.mode === 'string' ? state.mode : null
+      };
+    }
+
+    return {
+      activeWeaponId: this.activeWeaponId,
+      weaponSwapCooldown: Math.max(0, Number(this.weaponSwapCooldown) || 0),
+      weaponStates,
+      skills: {
+        grenade: { cooldown: Math.max(0, Number(this.skills?.grenade?.cooldown) || 0) },
+        emp: { cooldown: Math.max(0, Number(this.skills?.emp?.cooldown) || 0) }
+      }
+    };
+  }
+
+  applySaveData(data) {
+    const d = data && typeof data === 'object' ? data : null;
+    if (!d) return false;
+
+    const nextActive = typeof d.activeWeaponId === 'string' ? d.activeWeaponId : null;
+    if (nextActive && this.weaponDefs[nextActive]) {
+      this.activeWeaponId = nextActive;
+    }
+
+    this.weaponSwapCooldown = Math.max(0, Number(d.weaponSwapCooldown) || 0);
+
+    const ws = d.weaponStates && typeof d.weaponStates === 'object' ? d.weaponStates : null;
+    if (ws) {
+      for (const id of this.weaponOrder) {
+        const entry = ws[id];
+        if (!entry || typeof entry !== 'object') continue;
+        const state = this.weaponStates.get(id);
+        if (!state) continue;
+        state.ammoInMag = Math.max(0, Math.round(Number(entry.ammoInMag) || 0));
+        state.ammoReserve = Math.max(0, Math.round(Number(entry.ammoReserve) || 0));
+        state.cooldown = Math.max(0, Number(entry.cooldown) || 0);
+        state.reloadTimer = Math.max(0, Number(entry.reloadTimer) || 0);
+        state.reloadTotal = Math.max(0, Number(entry.reloadTotal) || 0);
+        state.mode = typeof entry.mode === 'string' ? entry.mode : (this.weaponDefs[id]?.defaultMode || null);
+      }
+    }
+
+    const skills = d.skills && typeof d.skills === 'object' ? d.skills : null;
+    if (skills) {
+      if (this.skills?.grenade) this.skills.grenade.cooldown = Math.max(0, Number(skills?.grenade?.cooldown) || 0);
+      if (this.skills?.emp) this.skills.emp.cooldown = Math.max(0, Number(skills?.emp?.cooldown) || 0);
+    }
+
+    this.syncWeaponViewModel();
+    return true;
   }
 }

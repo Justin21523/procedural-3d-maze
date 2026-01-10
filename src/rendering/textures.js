@@ -248,6 +248,24 @@ export function createRoomWallTexture(roomType) {
 
       // Room-specific patterns with enhanced detail
       switch (roomType) {
+        case ROOM_TYPES.CLASSROOMS_BLOCK:
+          // School wing: cleaner walls with posters + vertical panel seams
+          if (x % 192 < 3) {
+            r -= 14; g -= 14; b -= 14;
+          }
+          // Bulletin board / poster patches
+          if ((x % 256) > 40 && (x % 256) < 120 && (y % 256) > 40 && (y % 256) < 140) {
+            r += 8; g += 6; b += 4;
+            if (((x + y) % 18) < 9) {
+              r -= 8; g -= 6; b -= 4;
+            }
+          }
+          {
+            const v = smoothNoise(Math.floor(x / 5), Math.floor(y / 5), 41) * 12 - 6;
+            r += v; g += v; b += v;
+          }
+          break;
+
         case ROOM_TYPES.CLASSROOM:
           // Clean painted wall with whiteboard grid
           const boardGrid = 256;
@@ -334,6 +352,91 @@ export function createRoomWallTexture(roomType) {
           }
           break;
 
+        case ROOM_TYPES.LAB: {
+          // Sterile lab: subtle tile grid + warning stripe band
+          const tile = 72;
+          const gx = x % tile;
+          const gy = y % tile;
+          if (gx < 2 || gy < 2) {
+            r -= 22; g -= 22; b -= 22;
+          } else {
+            const t = smoothNoise(Math.floor(x / 6), Math.floor(y / 6), 42) * 12 - 6;
+            r += t; g += t; b += t;
+          }
+          // Yellow hazard stripe band
+          if ((y % 256) > 210 && (y % 256) < 240) {
+            const stripe = (Math.floor(x / 18) % 2) === 0;
+            if (stripe) {
+              r += 22; g += 18; b -= 12;
+            } else {
+              r -= 28; g -= 28; b -= 28;
+            }
+          }
+          break;
+        }
+
+        case ROOM_TYPES.CAFETERIA: {
+          // Cafeteria: painted panels + gentle grime
+          if (y % 160 < 3) {
+            r -= 16; g -= 16; b -= 16;
+          }
+          const panel = smoothNoise(Math.floor(x / 28), Math.floor(y / 28), 43) * 18 - 9;
+          r += panel; g += panel * 0.95; b += panel * 0.9;
+          // Smudges near the "lower wall"
+          if (smoothNoise(Math.floor(x / 40), Math.floor(y / 22), 44) < 0.18) {
+            r -= 20; g -= 18; b -= 14;
+          }
+          break;
+        }
+
+        case ROOM_TYPES.POOL: {
+          // Pool: small mosaic tiles with waterline
+          const tsize = 48;
+          const px = x % tsize;
+          const py = y % tsize;
+          if (px < 2 || py < 2) {
+            r -= 35; g -= 35; b -= 35;
+          } else {
+            const shimmer = smoothNoise(Math.floor(x / 8), Math.floor(y / 8), 45) * 18 - 9;
+            r += shimmer; g += shimmer; b += shimmer;
+          }
+          // Waterline tint band
+          if ((y % 256) > 96 && (y % 256) < 112) {
+            r -= 8; g += 10; b += 18;
+          }
+          break;
+        }
+
+        case ROOM_TYPES.GYM: {
+          // Gym: dark padded wall panels (distinct blocks)
+          const pad = 128;
+          const gx = x % pad;
+          const gy = y % pad;
+          if (gx < 4 || gy < 4) {
+            r -= 30; g -= 30; b -= 30;
+          } else {
+            const texture = smoothNoise(Math.floor(x / 5), Math.floor(y / 5), 46) * 18 - 9;
+            r += texture; g += texture; b += texture;
+          }
+          // Occasional lighter stripe
+          if ((x % 256) > 8 && (x % 256) < 14) {
+            r += 18; g += 18; b += 18;
+          }
+          break;
+        }
+
+        case ROOM_TYPES.BEDROOM: {
+          // Dorm: wallpaper pattern + baseboard
+          const stripe = Math.sin(x / 32) * 10;
+          r += stripe; g += stripe * 0.95; b += stripe * 0.9;
+          if ((y % 256) > 220) {
+            r -= 22; g -= 18; b -= 14; // baseboard
+          }
+          const paper = smoothNoise(Math.floor(x / 4), Math.floor(y / 4), 47) * 10 - 5;
+          r += paper; g += paper; b += paper;
+          break;
+        }
+
         default: // CORRIDOR - Backrooms style
           // Yellowed, dirty walls
           const baseNoise = smoothNoise(Math.floor(x/10), Math.floor(y/10), 9) * 20 - 10;
@@ -390,6 +493,24 @@ export function createRoomFloorTexture(roomType) {
       let b = b_base;
 
       switch (roomType) {
+        case ROOM_TYPES.CLASSROOMS_BLOCK: {
+          // School wing: polished tiles
+          const s = 96;
+          const gx = x % s;
+          const gy = y % s;
+          if (gx < 3 || gy < 3) {
+            r -= 20; g -= 20; b -= 20;
+          } else {
+            const v = smoothNoise(Math.floor(x / 18), Math.floor(y / 18), 51) * 16 - 8;
+            r += v; g += v; b += v;
+          }
+          // occasional scuffs
+          if (smoothNoise(Math.floor(x / 40), Math.floor(y / 40), 52) < 0.1) {
+            r -= 18; g -= 18; b -= 18;
+          }
+          break;
+        }
+
         case ROOM_TYPES.CLASSROOM:
           // Large linoleum tiles with subtle shine
           const linoleumSize = 128;
@@ -487,6 +608,82 @@ export function createRoomFloorTexture(roomType) {
           }
           break;
 
+        case ROOM_TYPES.LAB: {
+          // Epoxy lab floor with speckles + lane markings
+          const speck = smoothNoise(x, y, 53) * 24 - 12;
+          r += speck; g += speck; b += speck;
+
+          // Light lane markings
+          if (x % 256 < 4 || y % 256 < 4) {
+            r += 18; g += 18; b += 18;
+          }
+          // occasional hazard line
+          if ((x % 256) > 120 && (x % 256) < 126) {
+            r += 24; g += 18; b -= 10;
+          }
+          break;
+        }
+
+        case ROOM_TYPES.CAFETERIA: {
+          // Checker tiles + stains
+          const s = 64;
+          const cx = Math.floor(x / s);
+          const cy = Math.floor(y / s);
+          const isLight = ((cx + cy) % 2) === 0;
+          if (!isLight) {
+            r -= 18; g -= 18; b -= 18;
+          } else {
+            r += 8; g += 8; b += 8;
+          }
+          if (smoothNoise(Math.floor(x / 35), Math.floor(y / 35), 54) < 0.14) {
+            r -= 22; g -= 18; b -= 14;
+          }
+          break;
+        }
+
+        case ROOM_TYPES.POOL: {
+          // Wet tiles + drains
+          const s = 48;
+          const tx = x % s;
+          const ty = y % s;
+          if (tx < 3 || ty < 3) {
+            r -= 30; g -= 30; b -= 30;
+          } else {
+            const sheen = smoothNoise(Math.floor(x / 7), Math.floor(y / 7), 55) * 16 - 8;
+            r += sheen; g += sheen; b += sheen;
+          }
+          // Drain lines
+          if (y % 256 < 6) {
+            r -= 18; g -= 18; b -= 18;
+          }
+          break;
+        }
+
+        case ROOM_TYPES.GYM: {
+          // Wood court with paint lines
+          const plank = Math.sin(x * 0.22) * 10;
+          r += plank; g += plank * 0.8; b += plank * 0.55;
+          const varr = smoothNoise(Math.floor(x / 24), Math.floor(y / 24), 56) * 18 - 9;
+          r += varr; g += varr * 0.85; b += varr * 0.7;
+          // Court lines
+          if (x % 384 < 4 || y % 384 < 4) {
+            r += 28; g += 26; b += 22;
+          }
+          break;
+        }
+
+        case ROOM_TYPES.BEDROOM: {
+          // Carpet fibers + stripe
+          const fiber = ((x + y) % 4) - 2;
+          r += fiber; g += fiber; b += fiber;
+          const v = smoothNoise(Math.floor(x / 16), Math.floor(y / 16), 57) * 16 - 8;
+          r += v; g += v; b += v;
+          if (x % 256 < 10) {
+            r -= 10; g -= 8; b -= 6;
+          }
+          break;
+        }
+
         default: // CORRIDOR - Backrooms carpet
           // Worn carpet with stains
           const carpetBase = smoothNoise(Math.floor(x/15), Math.floor(y/15), 21) * 30 - 15;
@@ -542,6 +739,23 @@ export function createRoomCeilingTexture(roomType) {
       let b = b_base;
 
       switch (roomType) {
+        case ROOM_TYPES.CLASSROOMS_BLOCK: {
+          // Similar to classroom, but with slightly stronger grid
+          const panelSizeX = 128;
+          const panelSizeY = 256;
+          const panelX = x % panelSizeX;
+          const panelY = y % panelSizeY;
+          if (panelX < 3 || panelY < 3) {
+            r -= 18; g -= 18; b -= 18;
+          } else if (panelX > 12 && panelX < panelSizeX - 12 && panelY > 12 && panelY < panelSizeY - 12) {
+            const brightness = smoothNoise(Math.floor(x / panelSizeX), Math.floor(y / panelSizeY), 61) * 18;
+            r += brightness; g += brightness; b += brightness;
+          }
+          const smoothVar = smoothNoise(x, y, 62) * 6 - 3;
+          r += smoothVar; g += smoothVar; b += smoothVar;
+          break;
+        }
+
         case ROOM_TYPES.CLASSROOM:
           // Clean smooth ceiling with fluorescent light panels
           const panelSizeX = 128;
@@ -623,6 +837,67 @@ export function createRoomCeilingTexture(roomType) {
             r += panelVar; g += panelVar * 0.9; b += panelVar * 0.75;
           }
           break;
+
+        case ROOM_TYPES.LAB: {
+          // Lab: clean panels + dense fluorescent fixtures
+          const grid = 128;
+          if (x % grid < 3 || y % grid < 3) {
+            r -= 22; g -= 22; b -= 22;
+          }
+          // Bright fixture rectangles
+          const fx = x % 256;
+          const fy = y % 256;
+          if (fx > 40 && fx < 216 && fy > 26 && fy < 86) {
+            r += 18; g += 18; b += 18;
+          }
+          const v = smoothNoise(x, y, 63) * 6 - 3;
+          r += v; g += v; b += v;
+          break;
+        }
+
+        case ROOM_TYPES.CAFETERIA: {
+          // Cafeteria: larger panels, softer grid
+          const grid = 160;
+          if (x % grid < 3 || y % grid < 3) {
+            r -= 18; g -= 18; b -= 18;
+          }
+          const v = smoothNoise(Math.floor(x / 6), Math.floor(y / 6), 64) * 10 - 5;
+          r += v; g += v; b += v;
+          break;
+        }
+
+        case ROOM_TYPES.POOL: {
+          // Pool: industrial beams + humid stains
+          if (y % 192 < 20) {
+            r -= 45; g -= 45; b -= 45;
+          }
+          if (smoothNoise(Math.floor(x / 60), Math.floor(y / 60), 65) < 0.2) {
+            r -= 18; g -= 22; b -= 26;
+          }
+          const v = smoothNoise(x, y, 66) * 10 - 5;
+          r += v; g += v; b += v;
+          break;
+        }
+
+        case ROOM_TYPES.GYM: {
+          // Gym: dark trusses
+          if (x % 256 < 12 || y % 256 < 12) {
+            r -= 40; g -= 40; b -= 40;
+          }
+          const v = smoothNoise(Math.floor(x / 10), Math.floor(y / 10), 67) * 16 - 8;
+          r += v; g += v; b += v;
+          break;
+        }
+
+        case ROOM_TYPES.BEDROOM: {
+          // Dorm: flat painted ceiling
+          const v = smoothNoise(Math.floor(x / 8), Math.floor(y / 8), 68) * 10 - 5;
+          r += v; g += v; b += v;
+          if (smoothNoise(Math.floor(x / 80), Math.floor(y / 80), 69) < 0.08) {
+            r -= 12; g -= 12; b -= 12;
+          }
+          break;
+        }
 
         default: // CORRIDOR - Backrooms acoustic tiles
           const tileSize = 128;

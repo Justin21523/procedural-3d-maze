@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "tails_sonic_the_hedgehog",
+  "displayName": "tails_sonic_the_hedgehog",
+  "modelFile": "tails_sonic_the_hedgehog.glb",
+  "textureFiles": [],
+  "scaleMultiplier": 1,
+  "groundOffset": 0.02,
+  "stats": {
+    "hitRadius": 1
+  }
+}

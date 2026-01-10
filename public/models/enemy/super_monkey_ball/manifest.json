@@ -1,18 +1,13 @@
 {
+  "schemaVersion": 1,
+  "id": "super_monkey_ball",
+  "displayName": "super_monkey_ball",
+  "modelFile": "super_monkey_ball_-_aiai.glb",
+  "textureFiles": [],
   "scaleMultiplier": 1,
   "groundOffset": 0.02,
   "stats": {
     "hitRadius": 1
-  },
-  "correctionRotationDeg": {
-    "x": -180,
-    "y": 5,
-    "z": -180
-  },
-  "correctionOffset": {
-    "x": 2.87,
-    "y": 0,
-    "z": -0.25
   },
   "combat": {
     "ranged": {

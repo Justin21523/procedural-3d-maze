@@ -1,16 +1,16 @@
 {
   "id": 1,
-  "name": "L1 - Tutorial",
-  "maze": { "width": 21, "height": 21, "roomDensity": 1.8, "extraConnectionChance": 0.04 },
+  "name": "L1 - Orientation",
+  "maze": { "width": 21, "height": 21, "roomDensity": 1.9, "extraConnectionChance": 0.05 },
   "rooms": {
     "typeWeights": {
-      "CLASSROOM": 3.0,
-      "CLASSROOMS_BLOCK": 1.2,
-      "OFFICE": 1.2,
-      "BATHROOM": 0.8,
+      "CLASSROOM": 3.2,
+      "CLASSROOMS_BLOCK": 1.3,
+      "OFFICE": 1.5,
+      "BATHROOM": 0.85,
       "STORAGE": 0.7,
       "LIBRARY": 0.6,
-      "LAB": 0.7,
+      "LAB": 0.8,
       "CAFETERIA": 0.6,
       "POOL": 0.25,
       "GYM": 0.4,
@@ -18,29 +18,73 @@
     }
   },
   "monsters": {
-    "count": 4,
-    "maxCount": 6,
-    "speedMultiplier": 1.0,
-    "visionMultiplier": 0.85,
+    "count": 2,
+    "maxCount": 3,
+    "speedMultiplier": 0.95,
+    "visionMultiplier": 0.75,
     "memoryMultiplier": 0.7,
-    "typeWeights": { "WANDERER": 0.7, "HUNTER": 0.3 },
+    "typeWeights": { "WANDERER": 0.8, "HUNTER": 0.2 },
     "allowSprintTypes": ["HUNTER"]
+  },
+  "budgets": {
+    "missionObjectsMax": 25
   },
   "missions": {
     "timeLimitSec": 0,
     "list": [
+      {
+        "id": "orientation",
+        "template": "enterRoomType",
+        "required": true,
+        "params": {
+          "count": 1,
+          "roomTypes": ["OFFICE", "LAB"],
+          "hints": [
+            "Enter an Office or Lab to get oriented.",
+            "Use the minimap to find room blocks quickly."
+          ]
+        }
+      },
       {
         "id": "evidence",
         "template": "collectEvidence",
         "required": true,
         "params": {
           "count": 3,
-          "required": 3,
-          "roomTypes": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"]
+          "required": 2,
+          "roomTypes": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
+          "minDistFromSpawn": 6,
+          "hints": [
+            "Collect the evidence pickups.",
+            "Stick to Classrooms/Offices for the fastest route."
+          ]
+        }
+      },
+      {
+        "id": "kills",
+        "template": "killCount",
+        "required": true,
+        "params": {
+          "count": 1,
+          "hints": [
+            "Defeat a monster to learn combat.",
+            "Try switching weapons with 1/2/3 and reloading with R."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
         }
       }
     ],
-    "exit": { "requires": ["evidence"] }
+    "exit": { "requires": ["orientation", "evidence", "kills", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,
@@ -54,4 +98,3 @@
     "noProgressSeconds": 0.8
   }
 }
-
