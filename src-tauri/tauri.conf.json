@@ -7,7 +7,7 @@
     "frontendDist": "../dist"
   },
   "productName": "Procedural3DMaze",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.procedural3dmaze.game",
   "app": {
     "windows": [
