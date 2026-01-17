@@ -1,0 +1,79 @@
+{
+  "id": 23,
+  "name": "L23 - Reclaim Stolen Cargo",
+  "maze": { "width": 29, "height": 29, "roomDensity": 2.95, "extraConnectionChance": 0.11 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 1.6,
+      "OFFICE": 1.4,
+      "LAB": 1.35,
+      "STORAGE": 1.25,
+      "CAFETERIA": 0.65,
+      "BATHROOM": 0.6,
+      "LIBRARY": 0.6,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 7,
+    "maxCount": 9,
+    "speedMultiplier": 1.03,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.02,
+    "typeWeights": { "WANDERER": 0.22, "HUNTER": 0.52, "SENTINEL": 0.16, "STALKER": 0.08, "GREETER": 0.02 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 45
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "reclaim",
+        "template": "reclaimStolenItem",
+        "required": true,
+        "params": {
+          "itemId": "data_core",
+          "itemCount": 1,
+          "itemLabel": "Data Core",
+          "objectKind": "package",
+          "dropOnHit": true,
+          "hitsToDrop": 4,
+          "dropAtHealthPct": 35,
+          "hints": [
+            "A monster is carrying the Data Core. Follow the objective marker.",
+            "Damaging the thief can make them drop it, or kill them to force the drop.",
+            "After it drops, recover it (E), then head to the exit."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["reclaim", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.46,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+

@@ -17,6 +17,35 @@
       "BEDROOM": 0.35
     }
   },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "medical": {
+        "enabled": true,
+        "count": 1,
+        "healAmount": 34,
+        "charges": 2,
+        "minDistFromSpawn": 11,
+        "makeNoise": true
+      },
+      "armory": {
+        "enabled": true,
+        "count": 1,
+        "ammoAmount": 65,
+        "toolCount": 2,
+        "charges": 1,
+        "minDistFromSpawn": 11
+      },
+      "control": {
+        "enabled": true,
+        "count": 1,
+        "revealSeconds": 12,
+        "charges": 1,
+        "minDistFromSpawn": 12,
+        "makeNoise": true
+      }
+    }
+  },
   "monsters": {
     "count": 8,
     "maxCount": 10,
@@ -43,14 +72,14 @@
     }
   },
   "missions": {
-    "timeLimitSec": 900,
+    "timeLimitSec": 0,
     "list": [
       {
         "id": "power",
         "template": "restorePowerFuses",
         "required": true,
         "params": {
-          "fuses": 5,
+          "fuses": 4,
           "itemId": "fuse",
           "roomTypesFuses": ["STORAGE", "LAB", "OFFICE"],
           "roomTypesPanel": ["LAB", "OFFICE"],
@@ -66,8 +95,8 @@
         "template": "uploadEvidence",
         "required": true,
         "params": {
-          "count": 7,
-          "required": 5,
+          "count": 6,
+          "required": 4,
           "itemId": "evidence",
           "requiresPower": true,
           "powerItemId": "power_on",
@@ -75,7 +104,7 @@
           "roomTypesTerminal": ["OFFICE", "LAB"],
           "minDistFromSpawn": 7,
           "hints": [
-            "Collect evidence pickups (you need 5).",
+            "Collect evidence pickups (you need 4).",
             "After power is on, upload at the terminal (E)."
           ]
         }
@@ -85,42 +114,42 @@
         "template": "codeLock",
         "required": true,
         "params": {
-          "clues": 5,
+          "clues": 4,
           "requiresPower": true,
           "powerItemId": "power_on",
           "roomTypesClues": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
           "roomTypesKeypad": ["OFFICE", "LAB"],
           "minDistFromSpawn": 7,
           "hints": [
-            "Find the note clues (A/B/C/D/E).",
+            "Find the note clues (A/B/C/D).",
             "Power must be on before the keypad works.",
-            "Enter the code in order A→B→C→D→E."
+            "Enter the code in order A→B→C→D."
           ]
         }
       },
       {
         "id": "shrines",
         "template": "activateShrines",
-        "required": true,
+        "required": false,
         "params": {
-          "shrines": 3,
+          "shrines": 2,
           "roomTypesShrines": ["LAB", "LIBRARY", "CLASSROOMS_BLOCK", "OFFICE"],
           "minDistFromSpawn": 7,
           "hints": [
-            "Find and activate the shrines (press E).",
-            "Shrines favor Labs/Library/Classrooms Block/Offices."
+            "Optional: find and activate the shrines (press E).",
+            "Use it as a route stabilizer if you're already exploring."
           ]
         }
       },
       {
         "id": "kills",
         "template": "killCount",
-        "required": true,
+        "required": false,
         "params": {
-          "count": 11,
+          "count": 8,
           "hints": [
-            "Defeat monsters to stabilize the final run.",
-            "Switch weapons often: pistol close, rifle mid, flare for clusters."
+            "Optional: defeat monsters to lower pressure.",
+            "Use smoke/flash to survive reload windows."
           ]
         }
       },
@@ -137,7 +166,7 @@
         }
       }
     ],
-    "exit": { "requires": ["power", "upload", "doorCode", "shrines", "kills", "unlockExit"] }
+    "exit": { "requires": ["power", "upload", "doorCode", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,

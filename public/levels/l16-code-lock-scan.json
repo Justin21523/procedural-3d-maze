@@ -1,0 +1,85 @@
+{
+  "id": 16,
+  "name": "L16 - Code Lock + Sampling (Alarm)",
+  "maze": { "width": 27, "height": 27, "roomDensity": 2.85, "extraConnectionChance": 0.11 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.5,
+      "CLASSROOMS_BLOCK": 1.6,
+      "OFFICE": 1.5,
+      "LAB": 1.3,
+      "STORAGE": 1.15,
+      "CAFETERIA": 0.7,
+      "BATHROOM": 0.65,
+      "LIBRARY": 0.6,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 5,
+    "maxCount": 7,
+    "speedMultiplier": 1.05,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.0,
+    "typeWeights": { "WANDERER": 0.28, "HUNTER": 0.42, "SENTINEL": 0.2, "STALKER": 0.08, "GREETER": 0.02 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 55
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "sequence",
+        "template": "codeLockScan",
+        "required": true,
+        "params": {
+          "clues": 4,
+          "roomTypesClues": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
+          "roomTypesKeypad": ["LAB", "OFFICE"],
+          "roomTypesSample": ["LAB", "STORAGE"],
+          "minDistFromSpawn": 7,
+          "sampleCount": 2,
+          "sampleSeconds": 5,
+          "sampleMaxDistance": 3.8,
+          "alarmOnWrong": true,
+          "alarmCooldownSec": 3,
+          "alarmRadius": 24,
+          "alarmStrength": 0.95,
+          "alarmTtl": 1.4,
+          "hints": [
+            "Find the code clues in classrooms/offices (press E).",
+            "Enter the code at the keypad (wrong codes trigger an alarm).",
+            "After unlocking, locate the sample targets and hold aim to collect them."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["sequence", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.48,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}

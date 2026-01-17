@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -464,8 +465,9 @@ function enemyModelImportPlugin() {
 }
 
 export default defineConfig({
-  plugins: [modelsManifestPlugin(), enemyMetaSavePlugin(), enemyModelImportPlugin()],
+  plugins: [react(), modelsManifestPlugin(), enemyMetaSavePlugin(), enemyModelImportPlugin()],
   server: {
+    // Default port for web dev; `npm run dev -- --port 3002` (Tauri) can override this.
     port: 3000,
     watch: {
       // Avoid hitting file descriptor limits on systems with low defaults
@@ -478,6 +480,16 @@ export default defineConfig({
     outDir: 'dist',
     chunkSizeWarningLimit: 1100,
     rollupOptions: {
+      // Multi-page build: package all diagnostic/test pages into `dist/` for Tauri.
+      input: {
+        index: path.resolve(rootDir, 'index.html'),
+        diagnostic: path.resolve(rootDir, 'diagnostic.html'),
+        debugHub: path.resolve(rootDir, 'debug-hub.html'),
+        enemyLab: path.resolve(rootDir, 'enemy-lab.html'),
+        levelLab: path.resolve(rootDir, 'level-lab.html'),
+        testAi: path.resolve(rootDir, 'test-ai.html'),
+        testEnemyMeta: path.resolve(rootDir, 'test-enemy-meta.html')
+      },
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return;

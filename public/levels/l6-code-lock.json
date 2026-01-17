@@ -17,6 +17,27 @@
       "BEDROOM": 0.35
     }
   },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "control": {
+        "enabled": true,
+        "count": 1,
+        "revealSeconds": 10,
+        "charges": 1,
+        "minDistFromSpawn": 10,
+        "makeNoise": true
+      },
+      "medical": {
+        "enabled": true,
+        "count": 1,
+        "healAmount": 26,
+        "charges": 1,
+        "minDistFromSpawn": 10,
+        "makeNoise": true
+      }
+    }
+  },
   "monsters": {
     "count": 6,
     "maxCount": 7,
@@ -37,7 +58,7 @@
         "template": "restorePowerFuses",
         "required": true,
         "params": {
-          "fuses": 4,
+          "fuses": 3,
           "itemId": "fuse",
           "roomTypesFuses": ["STORAGE", "LAB", "OFFICE"],
           "roomTypesPanel": ["LAB", "OFFICE"],
@@ -56,14 +77,14 @@
         "params": {
           "requiresPower": true,
           "powerItemId": "power_on",
-          "count": 5,
-          "required": 4,
+          "count": 4,
+          "required": 3,
           "itemId": "evidence",
           "roomTypesEvidence": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
           "roomTypesTerminal": ["OFFICE", "LAB"],
           "minDistFromSpawn": 7,
           "hints": [
-            "Collect evidence pickups (you need 4).",
+            "Collect evidence pickups (you need 3).",
             "After power is on, find the upload terminal and press E."
           ]
         }
@@ -71,9 +92,9 @@
       {
         "id": "calm",
         "template": "surviveNoDamage",
-        "required": true,
+        "required": false,
         "params": {
-          "seconds": 15,
+          "seconds": 12,
           "hints": [
             "Avoid taking damage until the timer completes.",
             "Break line of sight, then wait it out."
@@ -93,7 +114,7 @@
         }
       }
     ],
-    "exit": { "requires": ["power", "upload", "calm", "unlockExit"] }
+    "exit": { "requires": ["power", "upload", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,

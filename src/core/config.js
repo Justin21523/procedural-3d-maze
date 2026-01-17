@@ -5,9 +5,9 @@
 
 export const CONFIG = {
   // Maze settings (adjustable via settings panel)
-  MAZE_WIDTH: 31,        // 迷宮大小（建議用奇數）
-  MAZE_HEIGHT: 31,       // 迷宮大小（建議用奇數）
-  ROOM_DENSITY: 3.0,     // 預設更高密度，房間更多（可在 UI 微調）
+  MAZE_WIDTH: 31,        // Maze size (odd numbers recommended)
+  MAZE_HEIGHT: 31,       // Maze size (odd numbers recommended)
+  ROOM_DENSITY: 3.0,     // Higher density = more rooms (adjustable in UI)
   TILE_SIZE: 2.0,          // 一格地板寬度 / 長度 ≈ 2m
   WALL_HEIGHT: 3.0,        // 層高 ≈ 3m
 
@@ -25,6 +25,8 @@ export const CONFIG = {
   // Player defense (block / guard)
   PLAYER_BLOCK_ENABLED: true,
   PLAYER_BLOCK_DAMAGE_MULT: 0.35,     // 0.35 => blocks 65% damage
+  // Global difficulty scaler for damage taken (stacks with roguelite mutators).
+  PLAYER_DAMAGE_TAKEN_MULT: 0.9,
   PLAYER_BLOCK_MOVE_MULT: 0.85,       // movement speed multiplier while blocking
   PLAYER_BLOCK_KNOCKBACK_MULT: 0.5,   // reduce melee knockback while blocking
   PLAYER_BLOCK_STAMINA_MAX: 100,
@@ -34,6 +36,7 @@ export const CONFIG = {
   PLAYER_BLOCK_MIN_STAMINA_START: 10, // prevent flicker when almost empty
 
   // Player weapon view (first-person)
+  PLAYER_GUN_ENABLED: true,
   PLAYER_WEAPON_VIEW_ENABLED: true,
   PLAYER_WEAPON_MODEL_PATH: '/models/weapon/assault_rifle_pbr.glb',
   PLAYER_WEAPON_SCALE: 1.0,
@@ -67,11 +70,11 @@ export const CONFIG = {
   MONSTER_BASE_HEALTH: 10,        // 怪物基礎血量（可由 typeConfig.stats.health 覆寫）
   MONSTER_HIT_STUN_SECONDS: 0.22, // 受擊硬直（秒）
   MONSTER_DEATH_EXPLOSION_RADIUS: 2.6,
-  MONSTER_DEATH_EXPLOSION_DAMAGE: 6,
-  MONSTER_COUNT: 4,               // 預設怪物數量（可被關卡覆寫）
-  MONSTER_COUNT_MULTIPLIER: 1.0,  // 以關卡/預設 count 為基礎再放大（建議維持 1.0，避免倍增爆量）
-  MONSTER_MAX_COUNT: 6,           // 怪物上限（避免模型太多爆量 / FPS 崩）
-  MONSTER_BASE_SPEED_FACTOR: 0.8, // 怪物基準速度 = 玩家速度 * 此係數
+  MONSTER_DEATH_EXPLOSION_DAMAGE: 3,
+  MONSTER_COUNT: 3,               // 預設怪物數量（可被關卡覆寫）
+  MONSTER_COUNT_MULTIPLIER: 0.7, // global difficulty scaler
+  MONSTER_MAX_COUNT: 5,           // 怪物上限（避免模型太多爆量 / FPS 崩）
+  MONSTER_BASE_SPEED_FACTOR: 0.66, // monster base speed = player speed * factor
   MONSTER_SPRINT_MULTIPLIER: 1.6, // 怪物短衝刺倍率
   MONSTER_LEVEL_SPEED_MULT: 1.0,  // 依關卡縮放的倍率預設值
   MONSTER_SPEED: 9,              // 舊參數（保留向後相容）
@@ -80,9 +83,9 @@ export const CONFIG = {
   MONSTER_HIT_RADIUS: 1.1,       // Bullet collision radius around monsters
   MONSTER_DEATH_DELAY: 0.35,     // Seconds from hit -> explode -> remove
   MONSTER_PROJECTILE_SPEED: 22,
-  MONSTER_PROJECTILE_DAMAGE: 8,
+  MONSTER_PROJECTILE_DAMAGE: 4,
   MONSTER_PROJECTILE_LIFETIME: 3.0,
-  MONSTER_RESPAWN_DELAY: 0.6,    // Seconds before a replacement monster spawns
+  MONSTER_RESPAWN_DELAY: 1.25,   // Seconds before a replacement monster spawns
   MONSTER_MODEL: '/models/enemy/CityLicker/CityLicker.dae', // Default monster model (can be changed in UI)
   MONSTER_USE_ASSET_MODELS: true, // true=use public/models manifest; false=spawn simple placeholder cubes
 
@@ -97,34 +100,66 @@ export const CONFIG = {
   MONSTER_RANGED_MIN_SHOT_INTERVAL: 0.18,   // clamp lower bound to prevent runaway fire
 
   // AI advanced perception / difficulty
-  AI_DIFFICULTY: 1.0,              // 0.5 (easy) ~ 2.0 (hard)
+  AI_DIFFICULTY: 0.75,             // 0.5 (easy) ~ 2.0 (hard)
+  AI_VISION_GLOBAL_MULT: 1.0,
+  AI_HEARING_GLOBAL_MULT: 1.0,
+  AI_SMELL_GLOBAL_MULT: 1.0,
   AI_NOISE_ENABLED: true,
   AI_BASE_HEARING: 10,             // hearingRange=10 => baseline
+  // Hearing occlusion: use shortest-path distance (walls attenuate hearing more realistically).
+  AI_HEARING_USE_PATH_DISTANCE: true,
+  AI_HEARING_PATH_DISTANCE_CANDIDATES: 4,
+  AI_HEARING_CORRIDOR_COST_MULT: 0.9,
+  AI_HEARING_ROOM_COST_MULT: 1.15,
+  AI_HEARING_DOOR_COST_MULT: 0.95,
+  AI_HEARING_THROUGH_WALL_ENABLED: true,
+  AI_HEARING_MAX_WALL_TILES: 2,
+  AI_HEARING_WALL_PENALTY: 6,
+  AI_HEARING_BLOCKED_DOOR_PENALTY: 3,
   AI_NOISE_MAX_EVENTS: 32,
-  AI_NOISE_GUNSHOT_RADIUS: 18,     // grid tiles
-  AI_NOISE_FOOTSTEP_WALK_RADIUS: 5,
-  AI_NOISE_FOOTSTEP_SPRINT_RADIUS: 9,
+  AI_NOISE_GUNSHOT_RADIUS: 16,     // grid tiles
+  AI_NOISE_FOOTSTEP_WALK_RADIUS: 4,
+  AI_NOISE_FOOTSTEP_SPRINT_RADIUS: 7,
+  AI_NOISE_BUMP_RADIUS: 7,
+  AI_NOISE_BUMP_TTL: 0.35,
+  AI_NOISE_BUMP_STRENGTH: 0.55,
+  AI_NOISE_BUMP_COOLDOWN: 0.65,
+  AI_NOISE_BUMP_MIN_MOVE_RATIO: 0.18,
+  AI_NOISE_DOOR_RADIUS: 12,
+  AI_NOISE_DOOR_TTL: 0.9,
+  AI_NOISE_DOOR_STRENGTH: 0.85,
+  AI_NOISE_IMPACT_RADIUS: 10,
+  AI_NOISE_IMPACT_TTL: 0.6,
+  AI_NOISE_IMPACT_STRENGTH: 0.7,
+  AI_NOISE_IMPACT_PLAYER_ENABLED: true,
+  AI_NOISE_IMPACT_PLAYER_RATE_LIMIT_SECONDS: 0.22,
   AI_NOISE_TTL_GUNSHOT: 1.2,
-  AI_NOISE_TTL_FOOTSTEP: 0.55,
+  AI_NOISE_TTL_FOOTSTEP: 0.45,
   AI_NOISE_MEMORY: 2.0,           // seconds a heard noise stays actionable
   // AI scent / smell tracking (breadcrumb trail)
   AI_SCENT_ENABLED: true,
   AI_BASE_SMELL: 10,               // smellRange=10 => baseline
   AI_SCENT_MAX_EVENTS: 64,
   AI_SCENT_DROP_DISTANCE_WORLD: 1.6, // world units between scent nodes (≈ meters)
-  AI_SCENT_RADIUS: 10,             // grid tiles (scaled by monster smellRange)
-  AI_SCENT_TTL: 18.0,              // seconds a scent node lasts
-  AI_SCENT_MEMORY: 8.0,            // seconds a smelled scent stays actionable
+  AI_SCENT_RADIUS: 8,              // grid tiles (scaled by monster smellRange)
+  AI_SCENT_TTL: 12.0,              // seconds a scent node lasts
+  AI_SCENT_MEMORY: 6.0,            // seconds a smelled scent stays actionable
   AI_SCENT_SPRINT_STRENGTH: 1.0,
   AI_SCENT_WALK_STRENGTH: 0.7,
-  AI_ALERT_BROADCAST_RADIUS: 14,
+  AI_ALERT_BROADCAST_RADIUS: 12,
   AI_ALERT_TTL: 1.0,
-  AI_ALERT_COOLDOWN: 0.9,
-  AI_INVESTIGATE_TIME: 6.0,
-  AI_SEARCH_RADIUS: 4,
+  AI_ALERT_COOLDOWN: 1.1,
+  AI_INVESTIGATE_TIME: 4.8,
+  AI_INVESTIGATE_PAUSE_SECONDS: 0.45,
+  AI_SEARCH_RADIUS: 3,
+  AI_SEARCH_SECONDS: 7.0,
+  AI_CHASE_COOLDOWN_SECONDS: 6.0,
+  AI_INTERCEPT_LOOKAHEAD_TILES: 6,
+  AI_CHASE_REPLAN_INTERVAL: 0.35,
+  AI_MAX_CHASERS: 2,
   AI_RANGED_GLOBAL_ENABLED: true,
   AI_TACTICS_ENABLED: true,
-  AI_TACTICS_FLANK_SLOTS: 6,
+  AI_TACTICS_FLANK_SLOTS: 4,
   AI_TACTICS_FLANK_MIN_DIST: 1,
   AI_TACTICS_FLANK_MAX_DIST: 3,
   AI_TACTICS_COVER_ENABLED: true,
@@ -136,14 +171,45 @@ export const CONFIG = {
   AI_SQUAD_STALE_SECONDS: 30,
   AI_SQUAD_COVER_RADIUS: 9,
   AI_SQUAD_FLANK_SLOT_KEEP_SECONDS: 8.0,
-  AI_SQUAD_MAX_RANGED_SHOOTERS: 2,
+  AI_SQUAD_MAX_RANGED_SHOOTERS: 1,
   AI_SQUAD_FIRE_GRANT_SECONDS: 0.9,
+  AI_SQUAD_FLANK_JUNCTION_RADIUS: 7,
+  AI_SQUAD_FLANK_JUNCTION_MIN_DIST: 2,
+
+  // Debug overlays (intended for dev/testing; keep off by default for normal play).
+  DEBUG_AI_OVERLAY_ENABLED: false,
+  DEBUG_AI_MARKERS_ENABLED: false,
+  DEBUG_AI_3D_LINES_ENABLED: false,
+  DEBUG_AI_FILTER_CHASE_ONLY: false,
+  DEBUG_AI_FILTER_LEADER_ONLY: false,
+  DEBUG_AI_FILTER_NEAREST_N: 0,
+  DEBUG_AI_3D_LINES_UPDATE_MS: 250,
+  DEBUG_AI_3D_MAX_PATH_POINTS: 64,
+  DEBUG_CRASH_OVERLAY_ENABLED: true,
+
+  // Safe mode (force conservative graphics + lower load)
+  SAFE_MODE_ENABLED: false,
+  SAFE_MODE_MONSTER_MAX_COUNT: 3,
+
+  // Watchdog (auto downgrade on persistent perf issues)
+  WATCHDOG_ENABLED: true,
+  WATCHDOG_LOW_FPS_THRESHOLD: 18,
+  WATCHDOG_LOW_FPS_SECONDS: 3.0,
+  WATCHDOG_DT_SPIKE_THRESHOLD: 0.22,
+  WATCHDOG_DT_SPIKE_SECONDS: 1.2,
+
+  // Debug visualization
+  DEBUG_NAV_HEATMAP_ENABLED: false,
+  DEBUG_NAV_HEATMAP_ALPHA: 0.55,
+
+  // Global noise tuning (applies to NOISE_REQUESTED)
+  GLOBAL_NOISE_RADIUS_MULT: 1.0,
 
   // Spawn Director (waves / squads / drops)
   SPAWN_DIRECTOR_ENABLED: true,
-  SPAWN_DIRECTOR_INITIAL_RATIO: 0.5,   // initial alive = count * ratio
-	  SPAWN_DIRECTOR_WAVE_INTERVAL: 4.0,   // seconds between spawn waves
-	  SPAWN_DIRECTOR_BUDGET_RATE: 2.0,     // budget points per second
+  SPAWN_DIRECTOR_INITIAL_RATIO: 0.4,   // initial alive = count * ratio
+	  SPAWN_DIRECTOR_WAVE_INTERVAL: 5.0,   // seconds between spawn waves
+	  SPAWN_DIRECTOR_BUDGET_RATE: 1.5,     // budget points per second
 	  SPAWN_DIRECTOR_MAX_PICKUPS: 18,
 	  SPAWN_DIRECTOR_PRESSURE_START: 0.65, // begin slowing spawns when projectile/FX load rises
 	  SPAWN_DIRECTOR_PRESSURE_STOP: 0.85,  // pause spawns when projectile/FX load is high
@@ -157,6 +223,60 @@ export const CONFIG = {
   SPAWN_DIRECTOR_START_TOOL_MINE: 1,
   SPAWN_DIRECTOR_TOOL_PICKUP_TTL: 45,
   SPAWN_DIRECTOR_TOOL_DROP_CHANCE: 0.06,
+  SPAWN_DIRECTOR_ATTACHMENT_PICKUP_TTL: 38,
+  SPAWN_DIRECTOR_ATTACHMENT_DROP_CHANCE: 0.05,
+
+  // World devices (destructible props)
+  WORLD_DEVICE_ALARM_BOX_MIN: 1,
+  WORLD_DEVICE_ALARM_BOX_MAX: 3,
+  WORLD_DEVICE_ALARM_BOX_HP: 12,
+  WORLD_DEVICE_ALARM_BOX_HIT_RADIUS: 0.55,
+  WORLD_DEVICE_ALARM_BOX_LISTEN_RADIUS: 14,
+  WORLD_DEVICE_ALARM_BOX_NOISE_RADIUS: 26,
+  WORLD_DEVICE_ALARM_BOX_NOISE_COOLDOWN: 2.2,
+
+  WORLD_DEVICE_POWER_BOX_MIN: 0,
+  WORLD_DEVICE_POWER_BOX_MAX: 2,
+  WORLD_DEVICE_POWER_BOX_HP: 10,
+  WORLD_DEVICE_POWER_BOX_HIT_RADIUS: 0.55,
+  WORLD_DEVICE_POWER_BOX_EMP_RADIUS: 5.2,
+  WORLD_DEVICE_POWER_BOX_EMP_STUN_SECONDS: 0.9,
+  WORLD_DEVICE_POWER_BOX_EMP_JAM_SECONDS: 4.5,
+  WORLD_DEVICE_POWER_BOX_NOISE_RADIUS: 18,
+
+  WORLD_DEVICE_DOOR_LOCK_MIN: 1,
+  WORLD_DEVICE_DOOR_LOCK_MAX: 4,
+  WORLD_DEVICE_DOOR_LOCK_HP: 10,
+  WORLD_DEVICE_DOOR_LOCK_HIT_RADIUS: 0.55,
+  WORLD_DEVICE_DOOR_LOCK_MIN_DIST_FROM_SPAWN: 8,
+
+  WORLD_DEVICE_LIGHT_MIN: 2,
+  WORLD_DEVICE_LIGHT_MAX: 6,
+  WORLD_DEVICE_LIGHT_HP: 8,
+  WORLD_DEVICE_LIGHT_HIT_RADIUS: 0.6,
+  WORLD_DEVICE_LIGHT_RADIUS: 9,
+  WORLD_DEVICE_LIGHT_INTENSITY: 0.55,
+  AI_DARK_VISION_MULT: 0.55,
+  AI_DARK_HEARING_MULT: 1.35,
+  AI_DARK_SMELL_MULT: 1.25,
+
+  // Player-side darkness presentation when inside dark zones
+  DARK_OVERLAY_MAX: 0.75,
+  DARK_FOG_MULT: 2.2,
+
+  // Carry / escort movement modifiers (missions can override via params)
+  PLAYER_CARRY_HEAVY_SPEED_MULT: 0.72,
+  PLAYER_CARRY_HEAVY_DISABLE_SPRINT: true,
+
+  WORLD_DEVICE_SIREN_MIN: 0,
+  WORLD_DEVICE_SIREN_MAX: 2,
+  WORLD_DEVICE_SIREN_HP: 12,
+  WORLD_DEVICE_SIREN_HIT_RADIUS: 0.65,
+  WORLD_DEVICE_SIREN_NOISE_RADIUS: 28,
+  WORLD_DEVICE_SIREN_NOISE_INTERVAL: 1.25,
+
+  WORLD_DEVICE_BOSS_SHIELD_NODE_HP: 22,
+  WORLD_DEVICE_BOSS_SHIELD_NODE_HIT_RADIUS: 0.7,
 
   // Tools (inventory deployables)
   TOOL_MAX_ACTIVE_DEVICES: 6,
@@ -184,11 +304,32 @@ export const CONFIG = {
   TOOL_SMOKE_LIFETIME: 2.8,
   TOOL_SMOKE_RADIUS: 3.8, // world units (vision blocker)
   TOOL_SMOKE_DURATION: 12.0,
+  TOOL_SMOKE_WEAK_RADIUS_MULT: 0.75,
+  TOOL_SMOKE_WEAK_DURATION_MULT: 0.65,
+  TOOL_SMOKE_STRONG_RADIUS_MULT: 1.35,
+  TOOL_SMOKE_STRONG_DURATION_MULT: 1.35,
   TOOL_FLASH_SPEED: 18.5,
   TOOL_FLASH_LIFETIME: 2.6,
   TOOL_FLASH_RADIUS: 4.8, // world units
   TOOL_FLASH_STUN_SECONDS: 0.65,
   TOOL_FLASH_BLIND_SECONDS: 3.8,
+  TOOL_SCENT_SPRAY_SECONDS: 14.0,
+  TOOL_SCENT_SPRAY_SCENT_RADIUS_MULT: 0.65,
+  TOOL_SCENT_SPRAY_SCENT_STRENGTH_MULT: 0.45,
+  TOOL_GLOWSTICK_DURATION: 150.0,
+  TOOL_SONAR_RADIUS: 10, // tiles
+  TOOL_SONAR_NOISE_RADIUS: 14,
+  TOOL_DOOR_WEDGE_DURATION: 12.0,
+  TOOL_DECOY_DELAY_SECONDS: 2.75,
+  TOOL_DECOY_DELAY_BOOM_RADIUS: 28,
+  TOOL_FAKE_TERMINAL_DURATION: 16.0,
+  TOOL_FAKE_TERMINAL_PULSE_INTERVAL: 0.9,
+
+  // Autopilot: interaction safety (avoid getting stuck spamming a target).
+  AUTOPILOT_INTERACT_STALL_MAX_TRIES: 5,
+  AUTOPILOT_INTERACT_STALL_WINDOW_SECONDS: 10,
+  AUTOPILOT_INTERACT_STALL_UNREACHABLE_TTL_MS: 25_000,
+  TOOL_FAKE_TERMINAL_NOISE_RADIUS: 24,
   TOOL_SENSOR_DURATION: 75.0,
   TOOL_SENSOR_RADIUS: 7.5, // world units
   TOOL_SENSOR_PING_COOLDOWN: 1.75,
@@ -198,6 +339,33 @@ export const CONFIG = {
   TOOL_MINE_STUN_SECONDS: 1.4,
   AI_JAMMED_HEARING_MULT: 0.2,
   AI_JAMMED_SMELL_MULT: 0.15,
+  AI_JAMMED_VISION_MULT: 0.65,
+  AI_BLIND_FIRE_CHANCE: 0.35,
+  AI_BLIND_FIRE_MEMORY_SECONDS: 2.5,
+  AI_BLIND_FIRE_SPREAD_MULT: 4.0,
+  AI_BLIND_FIRE_DAMAGE_MULT: 0.55,
+  AI_BLIND_FIRE_NOISE_RADIUS: 14,
+  AI_BLIND_RETREAT_DISTANCE_TILES: 2,
+  AI_BLIND_RETREAT_MOVE_MULT: 0.9,
+  AI_SMOKE_FOOTSTEP_NOISE_MULT: 0.55,  // while player is inside smoke cloud
+  AI_SMOKE_GUNSHOT_NOISE_MULT: 0.75,   // while firing inside smoke cloud
+  AI_SMOKE_SCENT_STRENGTH_MULT: 0.55,  // while player is inside smoke cloud
+  AI_SMOKE_SCENT_RADIUS_MULT: 0.85,    // while player is inside smoke cloud
+
+  // Boss (L10)
+  BOSS_SHIELD_NODES: 3,
+  BOSS_CORE_HEALTH: 120,
+  BOSS_ESCAPE_SECONDS: 35,
+  BOSS_NODE_MIN_DIST_FROM_SPAWN: 10,
+  BOSS_NODE_MIN_DIST_FROM_EXIT: 6,
+
+  // Skills
+  SKILL_EMP_JAM_SECONDS: 4.5,
+  SKILL_EMP_CHARGE_RADIUS_BONUS: 1.4,
+  SKILL_EMP_CHARGE_JAM_SECONDS_BONUS: 2.0,
+
+  // Weapon attachments
+  WEAPON_MOD_SLOTS_DEFAULT: 2,
 
 	  // Rendering settings
 	  FOV: 75,               // Field of view in degrees
@@ -214,11 +382,15 @@ export const CONFIG = {
 
   // Mission settings
   MISSION_POINT_COUNT: 5, // 每局任務點數量
+  MAZE_SEED: null,        // optional: deterministic generation seed (number|string)
+  MAZE_GENERATION_MAX_ATTEMPTS: 6,
+  MAZE_VALIDATION_MIN_EXIT_DISTANCE: 10,
 
   // Performance
   LOW_PERF_MODE: false,  // 勾選後關閉大部分裝飾/降低像素比提升 FPS
   MINIMAP_SHOW_OBSTACLES: false,         // debug overlay: show obstacleMap tiles on the minimap
   WORLD_SHOW_OBSTACLE_OVERLAY: false,    // debug overlay: show obstacleMap tiles in 3D
+  MINIMAP_FORCE_HIDDEN: false,           // roguelite/modes: hide minimap regardless of UI toggle
   PROP_OBSTACLES_ENABLED: true,            // planned room props become collision obstacles
   PROP_OBSTACLE_ROOM_CHANCE: 0.12,        // per-floor-tile chance inside rooms
   PROP_OBSTACLE_MARGIN: 1,                // keep 1-tile margin around obstacles
@@ -243,10 +415,10 @@ export const CONFIG = {
   MONSTER_GUARD_COOLDOWN_SECONDS: 2.2,
   MONSTER_GUARD_DAMAGE_MULT: 0.35,     // guard reduces incoming damage
 
-  MONSTER_DROP_HEALTH_CHANCE: 0.22,
-  MONSTER_DROP_HEALTH_SMALL_AMOUNT: 12,
+  MONSTER_DROP_HEALTH_CHANCE: 0.28,
+  MONSTER_DROP_HEALTH_SMALL_AMOUNT: 14,
   MONSTER_DROP_HEALTH_BIG_CHANCE: 0.06,
-  MONSTER_DROP_HEALTH_BIG_AMOUNT: 30,
+  MONSTER_DROP_HEALTH_BIG_AMOUNT: 34,
   MONSTER_DROP_HEART_CHANCE: 0.12,
   MONSTER_DROP_HEART_MAX_HEALTH_BONUS: 2, // permanent max health increase
 
@@ -306,6 +478,16 @@ export const CONFIG = {
   AUTOPILOT_ENABLED: true,  // 預設啟用
   AUTOPILOT_DELAY: 0,       // 不等待，除非玩家有輸入才暫停
   AUTOPILOT_TOOL_AI_ENABLED: true,
+
+  // AutoPilot: combat QoL
+  AUTOPILOT_SAFE_RELOAD_MIN_DIST_TILES: 6,
+  AUTOPILOT_RELOAD_WHEN_MAG_BELOW: 3,
+
+  // AutoPilot: boss node shooting (L10)
+  AUTOPILOT_BOSS_NODE_REQUIRE_LOS: true,
+  AUTOPILOT_BOSS_NODE_MAX_RANGE_TILES: 12,
+  AUTOPILOT_BOSS_NODE_FIRE_RANGE_TILES: 10,
+  AUTOPILOT_BOSS_NODE_AIM_Y: 0.55,
   AUTOPILOT_REPLAN_INTERVAL: 0.5,
   AUTOPILOT_AVOID_RADIUS: 0,
   AUTOPILOT_TURN_SPEED: 3.0, // 每秒最大轉向（rad），避免抖頭
@@ -318,6 +500,10 @@ export const CONFIG = {
   AUTOPILOT_COMBAT_REQUIRE_LOS: true,     // 必須有直線視野才射擊
   AUTOPILOT_COMBAT_RETARGET_SECONDS: 0.35,// 重新選目標的最小間隔
   AUTOPILOT_COMBAT_DAMAGE_MULT: 2.0,      // 自動駕駛射擊傷害倍率（不影響玩家手動）
+  AUTOPILOT_BURST_SPRINT_ENABLED: true,
+  AUTOPILOT_BURST_SPRINT_ON_SECONDS: 0.65,
+  AUTOPILOT_BURST_SPRINT_OFF_SECONDS: 0.9,
+  AUTOPILOT_DIVERSION_DEFAULT_SECONDS: 5.0,
   AUTOPILOT_COMBAT_BURST_ENABLED: true,
   AUTOPILOT_COMBAT_BURST_MIN_SHOTS: 3,
   AUTOPILOT_COMBAT_BURST_MAX_SHOTS: 6,
@@ -336,5 +522,9 @@ export function resolveMonsterCount(levelConfig = null) {
   const max = levelConfig?.monsters?.maxCount ?? CONFIG.MONSTER_MAX_COUNT ?? 9999;
 
   const computed = Math.round(base * mult + bonus);
-  return Math.max(0, Math.min(max, computed));
+  const safeCap = (CONFIG.SAFE_MODE_ENABLED === true)
+    ? Math.max(0, Math.round(Number(CONFIG.SAFE_MODE_MONSTER_MAX_COUNT) || 0))
+    : null;
+  const cappedMax = safeCap !== null ? Math.min(max, safeCap) : max;
+  return Math.max(0, Math.min(cappedMax, computed));
 }

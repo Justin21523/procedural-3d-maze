@@ -1,0 +1,79 @@
+{
+  "id": 13,
+  "name": "L13 - Noise Discipline",
+  "maze": { "width": 29, "height": 29, "roomDensity": 2.7, "extraConnectionChance": 0.09 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.7,
+      "CLASSROOMS_BLOCK": 1.6,
+      "OFFICE": 1.7,
+      "LAB": 1.25,
+      "STORAGE": 0.95,
+      "BATHROOM": 0.75,
+      "CAFETERIA": 0.65,
+      "LIBRARY": 0.65,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 5,
+    "maxCount": 7,
+    "speedMultiplier": 1.04,
+    "visionMultiplier": 0.95,
+    "memoryMultiplier": 0.92,
+    "typeWeights": { "WANDERER": 0.35, "HUNTER": 0.4, "SENTINEL": 0.15, "STALKER": 0.1 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 65
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "quiet",
+        "template": "stealthNoise",
+        "required": true,
+        "params": {
+          "seconds": 22,
+          "maxNoiseStrength": 0.55,
+          "maxStrikes": 6,
+          "penaltySecondsPerStrike": 3,
+          "maxPenaltySeconds": 30,
+          "resetOnGunshot": true,
+          "maxGunshotsTotal": 2,
+          "hints": [
+            "Stay under the noise limit until the timer completes.",
+            "Sprinting and gunshots will exceed the limit and add penalties.",
+            "Use smoke/jammer to break contact, then stop moving and wait."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["quiet", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SHORT_STEALTH", "MISSION_HINT", "EXTRA_HEART"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.5,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.65
+  }
+}

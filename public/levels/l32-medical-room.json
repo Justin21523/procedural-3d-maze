@@ -1,0 +1,43 @@
+{
+  "id": 32,
+  "name": "L32 - Medical Room",
+  "maze": { "width": 33, "height": 33, "roomDensity": 3.0, "extraConnectionChance": 0.12 },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "medical": {
+        "enabled": true,
+        "count": 1,
+        "healAmount": 30,
+        "charges": 2,
+        "minDistFromSpawn": 9,
+        "makeNoise": true
+      }
+    }
+  },
+  "monsters": {
+    "count": 7,
+    "maxCount": 9,
+    "speedMultiplier": 1.03,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.0
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Medical rooms are recolored and contain a healing station.",
+            "Using the station makes a short noise burst."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["unlockExit"] }
+  }
+}
+

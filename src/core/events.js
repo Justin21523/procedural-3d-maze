@@ -14,6 +14,7 @@ export const EVENTS = Object.freeze({
   PLAYER_HIT_MONSTER: 'combat:playerHitMonster',
   MONSTER_HIT_PLAYER: 'combat:monsterHitPlayer',
   PROJECTILE_HIT_WALL: 'combat:projectileHitWall',
+  PROJECTILE_HIT_DEVICE: 'combat:projectileHitDevice',
   PLAYER_USED_SKILL: 'combat:playerUsedSkill',
 
   // Monsters
@@ -23,6 +24,11 @@ export const EVENTS = Object.freeze({
   PICKUP_SPAWN_REQUESTED: 'pickup:spawnRequested',
   PICKUP_SPAWNED: 'pickup:spawned',
   PICKUP_COLLECTED: 'pickup:collected',
+
+  // World devices (destructible props)
+  DEVICE_SPAWNED: 'device:spawned',
+  DEVICE_DAMAGED: 'device:damaged',
+  DEVICE_DESTROYED: 'device:destroyed',
 
   // Spawning
   WAVE_PLANNED: 'spawn:wavePlanned',
@@ -40,10 +46,14 @@ export const EVENTS = Object.freeze({
   TIMER_TICK: 'timer:tick',
   NOISE_REQUESTED: 'noise:requested',
   NOISE_EMITTED: 'noise:emitted',
+  WORLD_REVEAL_MONSTERS: 'world:revealMonsters',
 
   // Hints / UI
   MISSION_HINT_REQUESTED: 'mission:hintRequested',
   UI_TOAST: 'ui:toast',
+  UI_PROMPT: 'ui:prompt',
+  UI_PROMPT_RESULT: 'ui:promptResult',
+  UI_SNAPSHOT: 'ui:snapshot',
 
   // Puzzle interactions
   KEYPAD_CODE_SUBMITTED: 'puzzle:keypadCodeSubmitted',
@@ -69,4 +79,7 @@ export const EVENTS = Object.freeze({
   // Exit gating
   EXIT_UNLOCKED: 'exit:unlocked',
   EXIT_LOCKED: 'exit:locked',
+
+  // Boss
+  BOSS_UPDATED: 'boss:updated',
 });

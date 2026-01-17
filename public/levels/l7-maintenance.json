@@ -17,6 +17,27 @@
       "BEDROOM": 0.35
     }
   },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "control": {
+        "enabled": true,
+        "count": 1,
+        "revealSeconds": 10,
+        "charges": 1,
+        "minDistFromSpawn": 10,
+        "makeNoise": true
+      },
+      "medical": {
+        "enabled": true,
+        "count": 1,
+        "healAmount": 28,
+        "charges": 1,
+        "minDistFromSpawn": 9,
+        "makeNoise": true
+      }
+    }
+  },
   "monsters": {
     "count": 6,
     "maxCount": 7,
@@ -50,7 +71,7 @@
       {
         "id": "sequence",
         "template": "enterRoomSequence",
-        "required": true,
+        "required": false,
         "params": {
           "sequence": ["LAB", "POOL", "OFFICE"],
           "resetOnWrong": false,
@@ -65,12 +86,12 @@
       {
         "id": "kills",
         "template": "killCount",
-        "required": true,
+        "required": false,
         "params": {
-          "count": 6,
+          "count": 4,
           "hints": [
-            "Defeat monsters to stabilize the route.",
-            "Watch for guarding monsters: keep pressure with sustained fire."
+            "Optional: defeat monsters to stabilize the route.",
+            "If you're pressured, use tools to create space before reloading."
           ]
         }
       },
@@ -87,7 +108,7 @@
         }
       }
     ],
-    "exit": { "requires": ["shrines", "sequence", "kills", "unlockExit"] }
+    "exit": { "requires": ["shrines", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,

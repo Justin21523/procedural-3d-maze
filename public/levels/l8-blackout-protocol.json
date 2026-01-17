@@ -17,6 +17,27 @@
       "BEDROOM": 0.35
     }
   },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "control": {
+        "enabled": true,
+        "count": 1,
+        "revealSeconds": 12,
+        "charges": 1,
+        "minDistFromSpawn": 10,
+        "makeNoise": true
+      },
+      "armory": {
+        "enabled": true,
+        "count": 1,
+        "ammoAmount": 55,
+        "toolCount": 2,
+        "charges": 1,
+        "minDistFromSpawn": 10
+      }
+    }
+  },
   "monsters": {
     "count": 6,
     "maxCount": 7,
@@ -53,26 +74,26 @@
         "template": "codeLock",
         "required": true,
         "params": {
-          "clues": 4,
+          "clues": 3,
           "requiresPower": true,
           "powerItemId": "power_on",
           "roomTypesClues": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
           "roomTypesKeypad": ["OFFICE", "LAB"],
           "minDistFromSpawn": 7,
           "hints": [
-            "Find the note clues (A/B/C/D).",
+            "Find the note clues (A/B/C).",
             "Power must be on before the keypad works.",
-            "Enter the code in order A→B→C→D."
+            "Enter the code in order A→B→C."
           ]
         }
       },
       {
         "id": "upload",
         "template": "uploadEvidence",
-        "required": true,
+        "required": false,
         "params": {
-          "count": 6,
-          "required": 4,
+          "count": 4,
+          "required": 3,
           "itemId": "evidence",
           "requiresPower": true,
           "powerItemId": "power_on",
@@ -80,7 +101,7 @@
           "roomTypesTerminal": ["OFFICE", "LAB"],
           "minDistFromSpawn": 7,
           "hints": [
-            "Collect evidence pickups (you need 4).",
+            "Optional: collect evidence pickups (you need 3).",
             "After power is on, upload at the terminal (E)."
           ]
         }
@@ -88,14 +109,14 @@
       {
         "id": "quiet",
         "template": "stealthNoise",
-        "required": true,
+        "required": false,
         "params": {
-          "seconds": 28,
+          "seconds": 18,
           "resetOnGunshot": true,
           "maxGunshotsTotal": 5,
           "hints": [
-            "Stay quiet until the timer completes.",
-            "Keep gunshots to a minimum."
+            "Optional: stay quiet until the timer completes.",
+            "Avoid sprinting and gunshots."
           ]
         }
       },
@@ -111,7 +132,7 @@
         }
       }
     ],
-    "exit": { "requires": ["power", "doorCode", "upload", "quiet", "unlockExit"] }
+    "exit": { "requires": ["power", "doorCode", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,

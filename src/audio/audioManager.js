@@ -240,6 +240,22 @@ export class AudioManager {
   }
 
   /**
+   * Procedural pickup "attachment" chime.
+   */
+  playPickupAttachment() {
+    if (!this.enabled) return;
+    const buffer = this.getPickupAttachmentBuffer?.();
+    if (!buffer) return;
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.42 * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => {
+      sound.disconnect();
+    };
+  }
+
+  /**
    * Procedural monster guard clang.
    */
   playMonsterGuard() {
@@ -383,6 +399,34 @@ export class AudioManager {
     const sound = new THREE.Audio(this.listener);
     sound.setBuffer(buffer);
     sound.setVolume(0.55 * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => sound.disconnect();
+  }
+
+  /**
+   * Procedural alarm beep (used by alarm box devices).
+   */
+  playAlarmBeep() {
+    if (!this.enabled) return;
+    const buffer = this.getAlarmBeepBuffer?.();
+    if (!buffer) return;
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.35 * this.effectsVolume * this.masterVolume);
+    sound.play();
+    sound.onEnded = () => sound.disconnect();
+  }
+
+  /**
+   * Procedural device destroyed crack.
+   */
+  playDeviceDestroyed() {
+    if (!this.enabled) return;
+    const buffer = this.getDeviceDestroyedBuffer?.();
+    if (!buffer) return;
+    const sound = new THREE.Audio(this.listener);
+    sound.setBuffer(buffer);
+    sound.setVolume(0.5 * this.effectsVolume * this.masterVolume);
     sound.play();
     sound.onEnded = () => sound.disconnect();
   }
@@ -899,6 +943,34 @@ export class AudioManager {
     return buffer;
   }
 
+  getPickupAttachmentBuffer() {
+    if (this.buffers.has('pickup_attach_proc')) {
+      return this.buffers.get('pickup_attach_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.18;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const f0 = 520;
+    const f1 = 1040;
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const k = t / duration;
+      const freq = f0 + (f1 - f0) * Math.pow(k, 0.7);
+      const env = Math.sin(Math.min(1, t / 0.015) * (Math.PI / 2)) * Math.exp(-t * 14);
+      const tone = Math.sin(2 * Math.PI * freq * t) * 0.65 + Math.sin(2 * Math.PI * (freq * 1.5) * t) * 0.18;
+      const click = (Math.random() * 2 - 1) * 0.08 * Math.exp(-t * 28);
+      data[i] = (tone + click) * env * 0.85;
+    }
+
+    this.buffers.set('pickup_attach_proc', buffer);
+    return buffer;
+  }
+
   getMonsterGuardBuffer() {
     if (this.buffers.has('monster_guard_proc')) {
       return this.buffers.get('monster_guard_proc');
@@ -923,6 +995,58 @@ export class AudioManager {
     }
 
     this.buffers.set('monster_guard_proc', buffer);
+    return buffer;
+  }
+
+  getAlarmBeepBuffer() {
+    if (this.buffers.has('alarm_beep_proc')) {
+      return this.buffers.get('alarm_beep_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.14;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const f = 880;
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const env = Math.sin(Math.min(1, t / 0.01) * (Math.PI / 2)) * Math.exp(-t * 10);
+      const tone = Math.sin(2 * Math.PI * f * t) * 0.8 + Math.sin(2 * Math.PI * (f * 2) * t) * 0.12;
+      data[i] = tone * env * 0.9;
+    }
+
+    this.buffers.set('alarm_beep_proc', buffer);
+    return buffer;
+  }
+
+  getDeviceDestroyedBuffer() {
+    if (this.buffers.has('device_destroyed_proc')) {
+      return this.buffers.get('device_destroyed_proc');
+    }
+
+    const ctx = this.listener.context;
+    const duration = 0.2;
+    const sampleRate = ctx.sampleRate;
+    const frameCount = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    const f0 = 260;
+    const f1 = 90;
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const p = t / duration;
+      const env = Math.exp(-t * 14);
+      const freq = f0 + (f1 - f0) * p;
+      const tone = Math.sin(2 * Math.PI * freq * t) * 0.5;
+      const noise = (Math.random() * 2 - 1) * 0.35;
+      data[i] = (tone + noise) * env * 0.95;
+    }
+
+    this.buffers.set('device_destroyed_proc', buffer);
     return buffer;
   }
 

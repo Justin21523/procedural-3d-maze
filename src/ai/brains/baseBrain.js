@@ -43,6 +43,10 @@ export class BaseMonsterBrain {
 
     // Combat module (optional; checks typeConfig.combat.ranged at runtime)
     this.combat = new RangedCombatModule(worldState, monster, playerRef, config.combat || {});
+
+    // Optional patrol route (provided by MonsterManager via monster.patrolRoute)
+    this.patrolRoute = Array.isArray(monster?.patrolRoute) ? monster.patrolRoute : [];
+    this.patrolIndex = Number.isFinite(monster?.patrolIndex) ? Math.max(0, Math.round(monster.patrolIndex)) : 0;
   }
 
   setEnabled(enabled) {
@@ -63,11 +67,14 @@ export class BaseMonsterBrain {
   hearNoise(noise) {
     if (!noise || !noise.grid) return;
     const now = this.now();
+    const jammed = (this.monster?.perceptionJammedTimer || 0) > 0;
+    const blinded = (this.monster?.perceptionBlindedTimer || 0) > 0;
+    const bonus = jammed ? 1 : (blinded ? 0.5 : 0);
     const next = {
       kind: noise.kind || 'noise',
       grid: noise.grid,
       world: noise.world || null,
-      priority: Number.isFinite(noise.priority) ? noise.priority : 0,
+      priority: (Number.isFinite(noise.priority) ? noise.priority : 0) + bonus,
       strength: Number.isFinite(noise.strength) ? noise.strength : 1.0,
       heardAt: now
     };
@@ -125,6 +132,70 @@ export class BaseMonsterBrain {
    */
   now() {
     return performance.now() / 1000;
+  }
+
+  syncPatrolRouteFromMonster() {
+    const route = this.monster?.patrolRoute;
+    if (Array.isArray(route)) {
+      this.patrolRoute = route;
+      const idx = this.monster?.patrolIndex;
+      if (Number.isFinite(idx)) this.patrolIndex = Math.max(0, Math.round(idx));
+    }
+  }
+
+  setPatrolRoute(route = []) {
+    const next = Array.isArray(route) ? route.filter((t) => t && Number.isFinite(t.x) && Number.isFinite(t.y)) : [];
+    this.patrolRoute = next;
+    this.patrolIndex = 0;
+    if (this.monster) {
+      this.monster.patrolRoute = next;
+      this.monster.patrolIndex = 0;
+    }
+  }
+
+  hasPatrolRoute() {
+    return Array.isArray(this.patrolRoute) && this.patrolRoute.length >= 2;
+  }
+
+  nearestPatrolIndex(monsterGrid) {
+    if (!this.hasPatrolRoute()) return 0;
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < this.patrolRoute.length; i++) {
+      const t = this.patrolRoute[i];
+      const d = this.manhattan(monsterGrid, t);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  pickPatrolWaypoint(monsterGrid, { advanceOnDist = 0 } = {}) {
+    this.syncPatrolRouteFromMonster();
+    if (!this.hasPatrolRoute()) return null;
+    const route = this.patrolRoute;
+
+    let idx = Number.isFinite(this.patrolIndex) ? this.patrolIndex : 0;
+    idx = Math.max(0, Math.min(route.length - 1, Math.round(idx)));
+
+    const target = route[idx];
+    const dist = target ? this.manhattan(monsterGrid, target) : Infinity;
+
+    const threshold = Number.isFinite(advanceOnDist) ? Math.max(0, Math.round(advanceOnDist)) : 0;
+    if (dist <= threshold) {
+      idx = (idx + 1) % route.length;
+    } else if (!Number.isFinite(dist) || dist === Infinity) {
+      idx = this.nearestPatrolIndex(monsterGrid);
+    }
+
+    this.patrolIndex = idx;
+    if (this.monster) {
+      this.monster.patrolIndex = idx;
+    }
+    const next = route[idx];
+    return next ? { x: next.x, y: next.y } : null;
   }
 
   /**

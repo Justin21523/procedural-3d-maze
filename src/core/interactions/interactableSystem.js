@@ -177,6 +177,11 @@ export class InteractableSystem {
     object3d.userData = object3d.userData || {};
     object3d.userData.interactableId = id;
 
+    // Back-compat: older call sites used `text`/`onInteract`/`interactRange`.
+    const promptCompat = interactable.prompt ?? interactable.text ?? null;
+    const interactCompat = interactable.interact ?? interactable.onInteract ?? null;
+    const maxDistanceCompat = interactable.maxDistance ?? interactable.interactRange ?? null;
+
     const requiresItem = normalizeItemSpec(interactable.requiresItem);
     const consumeItemRaw = interactable.consumeItem === true ? interactable.requiresItem : interactable.consumeItem;
     const consumeItem = normalizeItemSpec(consumeItemRaw);
@@ -189,12 +194,12 @@ export class InteractableSystem {
       object3d,
       collected: !!interactable.collected,
       enabled: interactable.enabled !== false,
-      maxDistance: Number.isFinite(interactable.maxDistance) ? interactable.maxDistance : null,
-      prompt: interactable.prompt || null, // string or ({actorKind}) => string
+      maxDistance: Number.isFinite(maxDistanceCompat) ? maxDistanceCompat : null,
+      prompt: promptCompat || null, // string or ({actorKind}) => string
       requiresItem,
       consumeItem,
       canInteract: typeof interactable.canInteract === 'function' ? interactable.canInteract : null,
-      interact: typeof interactable.interact === 'function' ? interactable.interact : null,
+      interact: typeof interactCompat === 'function' ? interactCompat : null,
       meta: interactable.meta || null
     };
 

@@ -392,6 +392,503 @@ export const MonsterTypes = {
     combat: {
       contactDamage: 0
     },
+  },
+
+  /**
+   * BOSS_CORE - L10 boss (shielded until nodes are destroyed).
+   * NOTE: boss phases are orchestrated by BossSystem; this config sets baseline combat/presence.
+   */
+  BOSS_CORE: {
+    id: 'BOSS_CORE',
+    name: 'The Core',
+    aiType: 'roomHunter',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 8,
+
+    stats: {
+      speedFactor: 0.95,
+      visionRange: 24,
+      visionFOV: Math.PI * 150 / 180,
+      hearingRange: 18,
+      smellRange: 18,
+      scale: 1.7,
+    },
+
+    behavior: {
+      aggressiveness: 'high',
+      chaseMemory: 18000,
+      chaseCooldown: 4000,
+      searchRadius: 7,
+      searchDuration: 14000,
+      patrolStyle: 'zone',
+      patrolSpeed: 0.9,
+      pauseChance: 0.02,
+      preferredMode: 'chase'
+    },
+
+    combat: {
+      contactDamage: 14,
+      contactCooldown: 1.35,
+      contactChance: 0.7,
+      hitStunSeconds: 0.18,
+      ranged: {
+        enabled: true,
+        kind: 'bolt',
+        damage: 10,
+        cooldown: 0.7,
+        fireChance: 0.85,
+        range: 20,
+        minRange: 4,
+        spread: 0.02,
+        color: 0x40c4ff
+      }
+    },
+
+    appearance: {
+      emissiveColor: 0x40c4ff,
+      emissiveIntensity: 0.55
+    }
+  },
+
+  /**
+   * SCENT_HOUND - Weak vision, strong scent tracking
+   */
+  SCENT_HOUND: {
+    id: 'SCENT_HOUND',
+    name: 'Scent Hound',
+    aiType: 'hunter',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 11,
+
+    stats: {
+      speedFactor: 1.05,
+      visionRange: 9,
+      visionFOV: Math.PI * 105 / 180,
+      hearingRange: 10,
+      smellRange: 22,
+      scale: 1
+    },
+
+    behavior: {
+      aggressiveness: 'high',
+      chaseMemory: 12000,
+      chaseCooldown: 6500,
+      searchRadius: 6,
+      searchDuration: 9000,
+      patrolStyle: 'active',
+      patrolSpeed: 0.85,
+      pauseChance: 0.03,
+      preferredMode: 'chase'
+    },
+
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 1.9,
+      contactChance: 0.6
+    },
+
+    appearance: {
+      emissiveColor: 0x8bc34a,
+      emissiveIntensity: 0.25
+    }
+  },
+
+  /**
+   * HEARING_HUNTER - Very sensitive to noise
+   */
+  HEARING_HUNTER: {
+    id: 'HEARING_HUNTER',
+    name: 'Hearing Hunter',
+    aiType: 'hunter',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 10,
+
+    stats: {
+      speedFactor: 1.0,
+      visionRange: 14,
+      visionFOV: Math.PI * 130 / 180,
+      hearingRange: 22,
+      smellRange: 8,
+      scale: 1
+    },
+
+    behavior: {
+      aggressiveness: 'high',
+      chaseMemory: 9000,
+      chaseCooldown: 6000,
+      searchRadius: 5,
+      searchDuration: 7000,
+      patrolStyle: 'active',
+      patrolSpeed: 0.85,
+      pauseChance: 0.02,
+      preferredMode: 'chase'
+    },
+
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 1.8,
+      contactChance: 0.6
+    },
+
+    appearance: {
+      emissiveColor: 0xffc107,
+      emissiveIntensity: 0.28
+    }
+  },
+
+  /**
+   * SECURITY_GUARD - Zone guardian that tends to hold its ground
+   */
+  SECURITY_GUARD: {
+    id: 'SECURITY_GUARD',
+    name: 'Security Guard',
+    aiType: 'roomHunter',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 7,
+
+    stats: {
+      speedFactor: 0.9,
+      visionRange: 18,
+      visionFOV: Math.PI * 150 / 180,
+      hearingRange: 14,
+      smellRange: 10,
+      scale: 1
+    },
+
+    behavior: {
+      aggressiveness: 'medium',
+      chaseMemory: 4500,
+      chaseCooldown: 7000,
+      searchRadius: 3,
+      searchDuration: 4500,
+      patrolStyle: 'zone',
+      patrolSpeed: 0.8,
+      pauseChance: 0.05,
+      returnToZone: true,
+      preferredMode: 'patrol'
+    },
+
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 2.2,
+      contactChance: 0.5
+    },
+
+    appearance: {
+      emissiveColor: 0x00e676,
+      emissiveIntensity: 0.22
+    }
+  },
+
+  /**
+   * SPLITTER - Splits into smaller monsters when killed
+   */
+  SPLITTER: {
+    id: 'SPLITTER',
+    name: 'Splitter',
+    aiType: 'hunter',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 10,
+
+    stats: {
+      speedFactor: 0.95,
+      visionRange: 14,
+      visionFOV: Math.PI * 120 / 180,
+      hearingRange: 12,
+      smellRange: 12,
+      health: 9,
+      scale: 1
+    },
+
+    behavior: {
+      aggressiveness: 'medium',
+      chaseMemory: 8000,
+      chaseCooldown: 7000,
+      searchRadius: 5,
+      searchDuration: 7000,
+      patrolStyle: 'active',
+      patrolSpeed: 0.82,
+      pauseChance: 0.03,
+      preferredMode: 'chase'
+    },
+
+    special: {
+      splitOnDeath: {
+        count: 2,
+        childType: 'RUSHER',
+        childScaleMult: 0.75,
+        childHealthMult: 0.6
+      }
+    },
+
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 1.9,
+      contactChance: 0.55
+    },
+
+    appearance: {
+      emissiveColor: 0xff1744,
+      emissiveIntensity: 0.25
+    }
+  },
+
+  /**
+   * SHADOW - Weeping-angel style stalker (fast when unseen)
+   */
+  SHADOW: {
+    id: 'SHADOW',
+    name: 'Shadow',
+    aiType: 'weepingAngel',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 10,
+
+    stats: {
+      speedFactor: 0.9,
+      visionRange: 12,
+      visionFOV: Math.PI * 120 / 180,
+      hearingRange: 12,
+      smellRange: 12,
+      scale: 1
+    },
+
+    behavior: {
+      aggressiveness: 'high',
+      patrolStyle: 'stalk',
+      preferredMode: 'hunt'
+    },
+
+    brain: {
+      memorySeconds: 10.0,
+      unseenSpeedMultiplier: 2.5,
+      wanderSpeedMultiplier: 0.95,
+      freezeFovMarginDeg: 6,
+      freezeRequiresLineOfSight: true,
+      noiseMemorySeconds: 2.2
+    },
+
+    combat: {
+      contactDamage: 12,
+      contactCooldown: 1.7,
+      contactChance: 0.65
+    },
+
+    appearance: {
+      emissiveColor: 0xb388ff,
+      emissiveIntensity: 0.18
+    }
+  },
+
+  /**
+   * AMBUSHER - Reacts aggressively to player movement/noise
+   */
+  AMBUSHER: {
+    id: 'AMBUSHER',
+    name: 'Ambusher',
+    aiType: 'speedJitter',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 12,
+
+    stats: {
+      speedFactor: 1.0,
+      visionRange: 10,
+      visionFOV: Math.PI * 110 / 180,
+      hearingRange: 18,
+      smellRange: 10,
+      scale: 1
+    },
+
+    behavior: {
+      aggressiveness: 'very_high',
+      chaseMemory: 3500,
+      chaseCooldown: 4500,
+      searchRadius: 2,
+      searchDuration: 2500,
+      patrolStyle: 'active',
+      patrolSpeed: 0.95,
+      pauseChance: 0.01,
+      preferredMode: 'chase'
+    },
+
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 1.35,
+      contactChance: 0.8
+    },
+
+    appearance: {
+      emissiveColor: 0xff6f00,
+      emissiveIntensity: 0.3
+    }
+  },
+
+  /**
+   * COMMANDER - Buffs nearby monsters (speed aura)
+   */
+  COMMANDER: {
+    id: 'COMMANDER',
+    name: 'Commander',
+    aiType: 'roomHunter',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 8,
+
+    stats: {
+      speedFactor: 0.9,
+      visionRange: 16,
+      visionFOV: Math.PI * 140 / 180,
+      hearingRange: 14,
+      smellRange: 12,
+      health: 14,
+      scale: 1.05
+    },
+
+    behavior: {
+      aggressiveness: 'medium',
+      chaseMemory: 7500,
+      chaseCooldown: 7000,
+      searchRadius: 4,
+      searchDuration: 6500,
+      patrolStyle: 'zone',
+      patrolSpeed: 0.85,
+      pauseChance: 0.03,
+      returnToZone: true,
+      preferredMode: 'patrol'
+    },
+
+    special: {
+      commanderAura: {
+        radiusTiles: 8,
+        speedMult: 1.25
+      }
+    },
+
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 2.0,
+      contactChance: 0.5
+    },
+
+    appearance: {
+      emissiveColor: 0x40c4ff,
+      emissiveIntensity: 0.24
+    }
+  },
+
+  /**
+   * DREAD - Emits a fear aura (camera jitter/pressure)
+   */
+  DREAD: {
+    id: 'DREAD',
+    name: 'Dread',
+    aiType: 'distanceStalker',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 9,
+
+    stats: {
+      speedFactor: 0.95,
+      visionRange: 18,
+      visionFOV: Math.PI * 110 / 180,
+      hearingRange: 14,
+      smellRange: 14,
+      scale: 1
+    },
+
+    behavior: {
+      aggressiveness: 'medium',
+      chaseMemory: 12000,
+      chaseCooldown: 8000,
+      searchRadius: 6,
+      searchDuration: 9000,
+      patrolStyle: 'stealth',
+      patrolSpeed: 0.85,
+      pauseChance: 0.06,
+      preferredMode: 'stalk',
+      followDistance: 7
+    },
+
+    special: {
+      fearAura: {
+        radiusTiles: 8,
+        maxIntensity: 0.9
+      }
+    },
+
+    combat: {
+      contactDamage: 10,
+      contactCooldown: 2.1,
+      contactChance: 0.5
+    },
+
+    appearance: {
+      emissiveColor: 0x7c4dff,
+      emissiveIntensity: 0.2
+    }
+  },
+
+  /**
+   * NEST_GUARDIAN - Tough guardian archetype
+   */
+  NEST_GUARDIAN: {
+    id: 'NEST_GUARDIAN',
+    name: 'Nest Guardian',
+    aiType: 'roomHunter',
+    model: '/models/monster.png',
+    sprite: '/models/monster.png',
+    spriteFramesPath: '../assets/moonman-sequence',
+    spriteFrameRate: 7,
+
+    stats: {
+      speedFactor: 0.85,
+      visionRange: 16,
+      visionFOV: Math.PI * 150 / 180,
+      hearingRange: 12,
+      smellRange: 12,
+      health: 18,
+      scale: 1.1
+    },
+
+    behavior: {
+      aggressiveness: 'medium',
+      chaseMemory: 8000,
+      chaseCooldown: 8000,
+      searchRadius: 4,
+      searchDuration: 7000,
+      patrolStyle: 'zone',
+      patrolSpeed: 0.78,
+      pauseChance: 0.05,
+      returnToZone: true,
+      preferredMode: 'patrol'
+    },
+
+    combat: {
+      contactDamage: 12,
+      contactCooldown: 2.2,
+      contactChance: 0.55,
+      hitStunSeconds: 0.2
+    },
+
+    appearance: {
+      emissiveColor: 0xa1887f,
+      emissiveIntensity: 0.2
+    }
   }
 };
 

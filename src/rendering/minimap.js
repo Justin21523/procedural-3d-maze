@@ -4,6 +4,7 @@
  */
 
 import { TILE_TYPES, ROOM_TYPES, ROOM_CONFIGS } from '../world/tileTypes.js';
+import { CONFIG } from '../core/config.js';
 
 export class Minimap {
   /**
@@ -60,6 +61,9 @@ export class Minimap {
       [ROOM_TYPES.CLASSROOMS_BLOCK]: '#64b5f6', // Light blue
       [ROOM_TYPES.LAB]: '#80deea',              // Light cyan
       [ROOM_TYPES.CAFETERIA]: '#ffcc80',        // Light orange
+      [ROOM_TYPES.MEDICAL]: '#90caf9',          // Medical blue
+      [ROOM_TYPES.ARMORY]: '#ffb300',           // Armory amber
+      [ROOM_TYPES.CONTROL]: '#4dd0e1',          // Control cyan
     };
 
     // Calculate scale to fit maze in canvas
@@ -267,6 +271,36 @@ export class Minimap {
       ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
 
+    // Debug: navigation/path heatmap (monster/player tile visits).
+    const navHeat = Array.isArray(options?.navHeat) ? options.navHeat : null;
+    if ((CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) && navHeat && navHeat.length === height) {
+      let max = 0;
+      for (let y = 0; y < height; y++) {
+        const row = navHeat[y];
+        if (!row) continue;
+        for (let x = 0; x < width; x++) {
+          const v = Number(row[x]) || 0;
+          if (v > max) max = v;
+        }
+      }
+      if (max > 0) {
+        const baseAlpha = Math.max(0.05, Math.min(0.95, Number(CONFIG.DEBUG_NAV_HEATMAP_ALPHA) || 0.55));
+        for (let y = 0; y < height; y++) {
+          const row = navHeat[y];
+          if (!row) continue;
+          for (let x = 0; x < width; x++) {
+            const v = Number(row[x]) || 0;
+            if (v <= 0) continue;
+            // Non-linear scale keeps hotspots readable.
+            const t = Math.sqrt(v / max);
+            const a = baseAlpha * Math.max(0.1, Math.min(1.0, t));
+            ctx.fillStyle = `rgba(255, 0, 0, ${a.toFixed(3)})`;
+            ctx.fillRect(this.offsetX + x * this.tileSize, this.offsetY + y * this.tileSize, this.tileSize, this.tileSize);
+          }
+        }
+      }
+    }
+
     const clampPx = (v, minPx, maxPx) => Math.max(minPx, Math.min(maxPx, v));
     const unit = Number(this.tileSize) || 1;
     const markerScale = clampPx(Number(this.zoom) || 1, 0.75, 3.0);
@@ -309,6 +343,46 @@ export class Minimap {
         ctx.stroke();
       }
     });
+
+    // AI debug markers (targets / last-known / noises)
+    const aiMarkers = Array.isArray(options?.aiMarkers) ? options.aiMarkers : null;
+    if (aiMarkers && aiMarkers.length > 0) {
+      const baseR = clampPx(unit * 0.22 * markerScale, 0.9, 4.5);
+      const ringR = clampPx(baseR * 1.35, 1.2, 6);
+      for (const m of aiMarkers) {
+        if (!m || !Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
+        const px = this.offsetX + m.x * this.tileSize + this.tileSize / 2;
+        const py = this.offsetY + m.y * this.tileSize + this.tileSize / 2;
+
+        const kind = String(m.kind || '');
+        const color = typeof m.color === 'string' ? m.color : 'rgba(0,220,255,0.9)';
+
+        if (kind === 'ai_noise' || kind === 'ai_scent') {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = clampPx(baseR * 0.35, 0.75, 2);
+          ctx.beginPath();
+          ctx.arc(px, py, ringR, 0, Math.PI * 2);
+          ctx.stroke();
+          continue;
+        }
+
+        if (kind === 'ai_lastKnown') {
+          ctx.fillStyle = color;
+          const s = clampPx(baseR * 1.5, 1.5, 7);
+          ctx.fillRect(px - s / 2, py - s / 2, s, s);
+          ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(px - s / 2, py - s / 2, s, s);
+          continue;
+        }
+
+        // default: target dot
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(px, py, baseR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
 
     // Draw exit point (glowing green star)
     if (exitPosition && exitPosition.x !== undefined && exitPosition.y !== undefined) {
@@ -402,13 +476,23 @@ export class Minimap {
         if (k === 'health') return this.colors.pickupHealth;
         if (k === 'ammo') return this.colors.pickupAmmo;
         if (k === 'lure') return this.colors.pickupLure;
+        if (k === 'lure_sticky') return this.colors.pickupLure;
         if (k === 'trap') return this.colors.pickupTrap;
         if (k === 'jammer') return this.colors.pickupJammer;
         if (k === 'decoy') return this.colors.pickupDecoy;
+        if (k === 'decoy_delay') return this.colors.pickupDecoy;
         if (k === 'smoke') return this.colors.pickupSmoke;
+        if (k === 'smoke_weak') return this.colors.pickupSmoke;
+        if (k === 'smoke_strong') return this.colors.pickupSmoke;
         if (k === 'flash') return this.colors.pickupFlash;
         if (k === 'sensor') return this.colors.pickupSensor;
         if (k === 'mine') return this.colors.pickupMine;
+        if (k === 'scent_spray') return this.colors.pickupJammer;
+        if (k === 'door_wedge') return this.colors.pickupTrap;
+        if (k === 'glowstick') return this.colors.pickupHealth;
+        if (k === 'sonar_pulse') return this.colors.pickupSensor;
+        if (k === 'emp_charge') return this.colors.pickupAmmo;
+        if (k === 'fake_hack') return this.colors.pickupSensor;
         return '#ffffff';
       };
 
@@ -433,10 +517,14 @@ export class Minimap {
       const colorForDevice = (kind) => {
         const k = String(kind || '').toLowerCase();
         if (k === 'lure') return this.colors.pickupLure;
+        if (k === 'lure_sticky') return this.colors.pickupLure;
         if (k === 'trap') return this.colors.pickupTrap;
         if (k === 'jammer') return this.colors.pickupJammer;
         if (k === 'sensor') return this.colors.pickupSensor;
         if (k === 'mine') return this.colors.pickupMine;
+        if (k === 'glowstick') return this.colors.pickupHealth;
+        if (k === 'faketerminal') return this.colors.pickupSensor;
+        if (k === 'doorwedge') return this.colors.pickupTrap;
         return this.colors.device;
       };
 

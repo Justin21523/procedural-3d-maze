@@ -17,6 +17,27 @@
       "BEDROOM": 0.3
     }
   },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "armory": {
+        "enabled": true,
+        "count": 1,
+        "ammoAmount": 45,
+        "toolCount": 2,
+        "charges": 1,
+        "minDistFromSpawn": 9
+      },
+      "medical": {
+        "enabled": true,
+        "count": 1,
+        "healAmount": 26,
+        "charges": 1,
+        "minDistFromSpawn": 9,
+        "makeNoise": true
+      }
+    }
+  },
   "monsters": {
     "count": 5,
     "maxCount": 7,
@@ -68,21 +89,6 @@
         }
       },
       {
-        "id": "evidence",
-        "template": "collectEvidence",
-        "required": true,
-        "params": {
-          "count": 5,
-          "required": 3,
-          "roomTypes": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
-          "minDistFromSpawn": 6,
-          "hints": [
-            "Collect at least 3 evidence pickups.",
-            "Evidence tends to be in Classrooms/Offices."
-          ]
-        }
-      },
-      {
         "id": "unlockExit",
         "template": "unlockExit",
         "required": true,
@@ -94,7 +100,7 @@
         }
       }
     ],
-    "exit": { "requires": ["power", "doorCode", "evidence", "unlockExit"] }
+    "exit": { "requires": ["power", "doorCode", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,

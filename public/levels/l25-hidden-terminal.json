@@ -1,0 +1,80 @@
+{
+  "id": 25,
+  "name": "L25 - Hidden Objective",
+  "maze": { "width": 29, "height": 29, "roomDensity": 2.95, "extraConnectionChance": 0.11 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 1.5,
+      "OFFICE": 1.5,
+      "LAB": 1.3,
+      "STORAGE": 1.2,
+      "CAFETERIA": 0.7,
+      "BATHROOM": 0.65,
+      "LIBRARY": 0.6,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 6,
+    "maxCount": 8,
+    "speedMultiplier": 1.03,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.02,
+    "typeWeights": { "WANDERER": 0.22, "HUNTER": 0.5, "SENTINEL": 0.18, "STALKER": 0.08, "GREETER": 0.02 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 45
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "hidden",
+        "template": "hiddenTerminal",
+        "required": true,
+        "params": {
+          "label": "Maintenance Terminal",
+          "roomTypesTarget": ["LAB", "OFFICE", "STORAGE"],
+          "minDistFromSpawn": 9,
+          "pingIntervalSec": 7,
+          "pingRadius": 7,
+          "pingStrength": 0.18,
+          "pingTtl": 0.35,
+          "revealMarkerAtHintTier": 3,
+          "hints": [
+            "Listen for the periodic beep and sweep new rooms.",
+            "The terminal is in a LAB/OFFICE/STORAGE room. Check corners and walls.",
+            "Final hint: the marker should now appear (press hint again if needed)."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["hidden", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.46,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+

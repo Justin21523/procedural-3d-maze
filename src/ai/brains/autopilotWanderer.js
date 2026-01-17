@@ -2,6 +2,7 @@ import { CONFIG } from '../../core/config.js';
 import { ROOM_TYPES } from '../../world/tileTypes.js';
 import { BaseMonsterBrain } from './baseBrain.js';
 import { canSeePlayer } from '../components/perception/vision.js';
+import { SearchModule } from '../components/perception/search.js';
 
 /**
  * AutopilotWandererBrain
@@ -53,8 +54,26 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
     this.state = 'wander'; // 'wander' | 'chase'
     this.chaseStartTime = null;
     this.lastSeenPlayerGrid = null;
+    this.lastSeenDir = null;
     this.chaseLockout = false;
     this.visitedRooms = new Map();
+
+    // Search after losing the trail
+    this.searchUntil = 0;
+    this.searchStartedAt = 0;
+    this.searchSweepBaseDir = null;
+    this.searchRadius =
+      config.searchRadius ??
+      (CONFIG.AI_SEARCH_RADIUS ?? 3);
+    this.searchDurationSeconds =
+      config.searchDurationSeconds ??
+      (CONFIG.AI_SEARCH_SECONDS ?? 7.0);
+    this.searchModule = new SearchModule({
+      enabled: true,
+      radius: this.searchRadius,
+      repickSeconds: 1.05,
+      visitTTL: this.visitTTL
+    });
 
     // Keep monsters mellow by default
     this.allowSprint = config.allowSprint ?? false;
@@ -104,6 +123,11 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
 
   pickStimulusGrid(now, monsterGrid, playerGrid) {
     if (playerGrid && this.monsterCanSeePlayer(monsterGrid, playerGrid)) {
+      if (this.lastSeenPlayerGrid && (playerGrid.x !== this.lastSeenPlayerGrid.x || playerGrid.y !== this.lastSeenPlayerGrid.y)) {
+        const dx = Math.sign(playerGrid.x - this.lastSeenPlayerGrid.x);
+        const dy = Math.sign(playerGrid.y - this.lastSeenPlayerGrid.y);
+        if (dx !== 0 || dy !== 0) this.lastSeenDir = { x: dx, y: dy };
+      }
       return { x: playerGrid.x, y: playerGrid.y };
     }
     if (this.hasRecentNoise(now) && this.lastHeardNoise?.grid) {
@@ -144,6 +168,11 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
   pickExplorationTarget(monsterGrid) {
     if (!this.worldState || typeof this.worldState.findRandomWalkableTile !== 'function') {
       return { x: monsterGrid.x, y: monsterGrid.y };
+    }
+
+    const patrol = this.pickPatrolWaypoint(monsterGrid, { advanceOnDist: 1 });
+    if (patrol) {
+      return patrol;
     }
 
     const now = Date.now();
@@ -244,12 +273,17 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
       ? this.manhattan(monsterGrid, rangeTarget) <= this.chaseRange
       : false;
 
+    const suppressed = this.monster?.aiChaseSuppressed === true;
+
     if (this.chaseLockout && !inRange) {
       this.chaseLockout = false;
     }
 
     if (!this.chaseLockout && stimulusGrid && inRange) {
-      if (!wasChasing) {
+      if (suppressed) {
+        // Fairness: if chase is suppressed, do a short local search around the stimulus instead.
+        this.beginSearch(stimulusGrid, now, { durationSeconds: Math.min(3.5, this.searchDurationSeconds) });
+      } else if (!wasChasing) {
         this.chaseStartTime = now;
         this.currentPath = [];
         this.currentTarget = null;
@@ -261,8 +295,13 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
       // Keep chasing last known tile until timeout; do not instantly snap to the real player position.
       this.state = 'chase';
     } else if (!stimulusGrid && !wasChasing) {
-      this.state = 'wander';
-      this.chaseStartTime = null;
+      if (this.state === 'search' && now < (this.searchUntil || 0)) {
+        // stay searching
+      } else {
+        this.state = 'wander';
+        this.chaseStartTime = null;
+        this.searchModule?.reset?.();
+      }
     } else if (stimulusGrid && !inRange) {
       this.state = 'wander';
       this.chaseStartTime = null;
@@ -271,7 +310,7 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
     if (this.state === 'chase' && this.chaseStartTime !== null) {
       if (now - this.chaseStartTime > this.maxChaseDuration) {
         this.chaseLockout = true;
-        this.state = 'wander';
+        this.beginSearch(this.lastSeenPlayerGrid || monsterGrid, now, { durationSeconds: Math.min(4.5, this.searchDurationSeconds) });
         this.chaseStartTime = null;
         this.currentPath = [];
         this.currentTarget = null;
@@ -286,10 +325,60 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
     }
   }
 
+  beginSearch(originGrid, now, options = {}) {
+    if (!originGrid) return;
+    const t = Number.isFinite(now) ? now : this.now();
+    const radius = Math.max(1, Math.min(8, Math.round(Number(options.radius ?? this.searchRadius) || 3)));
+    const preferredDir = options.preferredDir ?? this.lastSeenDir ?? null;
+    this.searchModule?.begin?.(originGrid, { radius, preferredDir });
+    this.searchStartedAt = t;
+    this.searchSweepBaseDir = preferredDir ? { x: Number(preferredDir.x) || 0, y: Number(preferredDir.y) || 0 } : null;
+    const dur = Math.max(0.5, Number(options.durationSeconds ?? this.searchDurationSeconds) || 7.0);
+    this.searchUntil = Math.max(this.searchUntil || 0, t + dur);
+    this.state = 'search';
+  }
+
+  getSearchSweepDir(now) {
+    const base = this.searchSweepBaseDir || this.lastSeenDir || null;
+    if (!base) return null;
+    const dx = Math.sign(Number(base.x) || 0);
+    const dy = Math.sign(Number(base.y) || 0);
+    if (dx === 0 && dy === 0) return null;
+    const elapsed = Math.max(0, now - (this.searchStartedAt || now));
+    if (elapsed < 1.2) return { x: dx, y: dy };
+    if (elapsed < 2.4) return { x: -dy, y: dx };
+    if (elapsed < 3.6) return { x: dy, y: -dx };
+    return { x: -dx, y: -dy };
+  }
+
+  tickSearch(monsterGrid, now) {
+    return this.searchModule?.tick?.({
+      now,
+      monsterGrid,
+      originGrid: this.searchModule?.plan?.originGrid || null,
+      preferredDir: this.getSearchSweepDir(now) || null,
+      radius: this.searchRadius,
+      isWalkableTile: (x, y) => this.isWalkableTile(x, y),
+      visitedTiles: this.visitedTiles,
+      posKey: (pos) => this.posKey(pos)
+    }) ?? null;
+  }
+
   pickTarget(monsterGrid) {
     if (this.state === 'chase') {
       if (this.lastSeenPlayerGrid) {
         return this.lastSeenPlayerGrid;
+      }
+    }
+
+    if (this.state === 'search') {
+      const now = this.now();
+      if (now > (this.searchUntil || 0)) {
+        this.state = 'wander';
+        this.searchModule?.reset?.();
+      } else {
+        const t = this.tickSearch(monsterGrid, now);
+        if (t) return t;
       }
     }
 
@@ -371,6 +460,10 @@ export class AutopilotWandererBrain extends BaseMonsterBrain {
     const { move, lookYaw } = this.followPathLikeAutopilot(monsterGrid);
     if (this.state === 'chase' && stimulusGrid && playerGrid && stimulusGrid.x === playerGrid.x && stimulusGrid.y === playerGrid.y) {
       return { move, lookYaw: this.computeLookYawToPlayer(), sprint: false };
+    }
+    if (this.state === 'search') {
+      const lookJitter = Math.sin((now || 0) * 2.2) * 0.04;
+      return { move, lookYaw: (Number(lookYaw) || 0) + lookJitter, sprint: false };
     }
     return { move, lookYaw, sprint: false };
   }

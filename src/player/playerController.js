@@ -30,6 +30,10 @@ export class PlayerController {
     this.blockStamina = this.blockStaminaMax;
     this.blockCooldown = 0;
 
+    this.runModifiers = {
+      playerDamageTakenMult: 1.0
+    };
+
     // Position & movement state
     this.position = new THREE.Vector3(0, CONFIG.PLAYER_HEIGHT, 0);
     this.velocity = new THREE.Vector3(0, 0, 0);
@@ -37,6 +41,8 @@ export class PlayerController {
     this.externalLookYaw = null;
     this.externalLookPitch = null;
     this.externalSprinting = false;
+    this.moveSpeedMult = 1.0;
+    this.sprintDisabled = false;
 
     // Tracking
     this.lastPosition = new THREE.Vector3();
@@ -46,6 +52,7 @@ export class PlayerController {
     this.lastGridY = -1;
     this.footstepTimer = 0;
     this.stuckTimer = 0;
+    this.bumpNoiseCooldown = 0;
 
     // Hiding (locker/under-desk style): AI should not see the player while hidden.
     this.hidden = false;
@@ -53,6 +60,25 @@ export class PlayerController {
 
     // Camera tool (used by photo missions)
     this.cameraToolActive = false;
+
+    // Temporary stealth/perception modifiers (used by encounters/curses/tools).
+    this.perceptionModifiers = {
+      noiseRadiusMult: 1.0,
+      noiseStrengthMult: 1.0,
+      scentRadiusMult: 1.0,
+      scentStrengthMult: 1.0,
+      untilSec: 0
+    };
+
+    // Fear/pressure overlay (driven by nearby monsters like DREAD).
+    this.fear = {
+      intensity: 0,
+      untilSec: 0,
+      phase: Math.random() * Math.PI * 2
+    };
+
+    // Temporary movement disable (vents/cutscenes).
+    this.movementDisabledUntilSec = 0;
 
     // Spawn at a safe tile center
     const spawnPoint = worldState.getSpawnPoint();
@@ -63,6 +89,13 @@ export class PlayerController {
       worldSpawn.z + CONFIG.TILE_SIZE / 2
     );
     this.camera.updatePosition(this.position.x, this.position.y, this.position.z);
+  }
+
+  setMoveModifiers({ speedMult = 1.0, sprintDisabled = false } = {}) {
+    const m = Number(speedMult);
+    this.moveSpeedMult = Number.isFinite(m) ? Math.max(0.2, Math.min(1.25, m)) : 1.0;
+    this.sprintDisabled = sprintDisabled === true;
+    if (this.sprintDisabled) this.externalSprinting = false;
   }
 
   /**
@@ -77,6 +110,7 @@ export class PlayerController {
     const pointerLocked = this.input?.isPointerLocked?.() ?? false;
 
     this.updateBlockState(deltaTime, externalCommand);
+    this.bumpNoiseCooldown = Math.max(0, (this.bumpNoiseCooldown || 0) - (Number.isFinite(deltaTime) ? deltaTime : 0));
 
     this.externalSprinting = false;
     if (externalCommand) {
@@ -113,7 +147,17 @@ export class PlayerController {
       this.externalLookPitch = null;
     }
 
+    this.applyFearJitter(deltaTime);
+
     if (this.hidden) {
+      this.externalMove = null;
+      this.velocity.set(0, 0, 0);
+      this.camera.updatePosition(this.position.x, this.position.y, this.position.z);
+      return;
+    }
+
+    const nowSec = this.gameState?.getElapsedTime?.() ?? 0;
+    if ((this.movementDisabledUntilSec || 0) > 0 && nowSec <= (this.movementDisabledUntilSec || 0)) {
       this.externalMove = null;
       this.velocity.set(0, 0, 0);
       this.camera.updatePosition(this.position.x, this.position.y, this.position.z);
@@ -202,8 +246,9 @@ export class PlayerController {
     moveDirection.addScaledVector(right, moveInput.x);
     moveDirection.normalize();
 
-    let speed = CONFIG.PLAYER_SPEED;
-    if (this.input.isSprinting()) {
+    let speed = CONFIG.PLAYER_SPEED * (Number(this.moveSpeedMult) || 1.0);
+    const sprinting = !this.sprintDisabled && this.input.isSprinting();
+    if (sprinting) {
       speed *= 1.5;
     }
 
@@ -217,9 +262,9 @@ export class PlayerController {
    * @param {number} deltaTime
    */
   applyExternalControl(cmd, deltaTime = 1 / CONFIG.TARGET_FPS) {
-    this.externalSprinting = !!cmd?.sprint;
-    const baseSpeed = CONFIG.PLAYER_SPEED;
-    const speed = cmd?.sprint ? baseSpeed * 1.2 : baseSpeed;
+    this.externalSprinting = !!cmd?.sprint && !this.sprintDisabled;
+    const baseSpeed = CONFIG.PLAYER_SPEED * (Number(this.moveSpeedMult) || 1.0);
+    const speed = this.externalSprinting ? baseSpeed * 1.2 : baseSpeed;
 
     if (cmd?.moveWorld) {
       const mv = new THREE.Vector3(cmd.moveWorld.x, 0, cmd.moveWorld.z);
@@ -258,13 +303,13 @@ export class PlayerController {
 
     const beforeX = this.position.x;
     const beforeZ = this.position.z;
+    const desiredDistance = Math.hypot(moveVector.x, moveVector.z);
 
     // Sweep via step subdivision to avoid tunneling through walls/obstacles when dt spikes.
     const tileSize = CONFIG.TILE_SIZE || 1;
     const radius = CONFIG.PLAYER_RADIUS || 0.35;
     const maxStep = Math.max(0.05, Math.min(tileSize * 0.25, radius * 0.5));
-    const dist = Math.hypot(moveVector.x, moveVector.z);
-    const steps = Math.max(1, Math.ceil(dist / maxStep));
+    const steps = Math.max(1, Math.ceil(desiredDistance / maxStep));
 
     const stepX = moveVector.x / steps;
     const stepZ = moveVector.z / steps;
@@ -277,6 +322,31 @@ export class PlayerController {
     const dx = this.position.x - beforeX;
     const dz = this.position.z - beforeZ;
     const movedDistance = Math.hypot(dx, dz);
+
+    // Emit a small noise when the player meaningfully "bumps" into a wall/obstacle.
+    const minRatio = Number(CONFIG.AI_NOISE_BUMP_MIN_MOVE_RATIO) || 0.18;
+    const canEmitBump = (this.bumpNoiseCooldown || 0) <= 0;
+    if (canEmitBump && desiredDistance > 0.2 && movedDistance < desiredDistance * Math.max(0.05, Math.min(0.95, minRatio))) {
+      const eventBus = this.gameState?.eventBus || null;
+      if (eventBus?.emit) {
+        const sprinting = this.isSprinting();
+        const baseRadius = Math.max(1, Number(CONFIG.AI_NOISE_BUMP_RADIUS) || 7);
+        const ttl = Math.max(0.05, Number(CONFIG.AI_NOISE_BUMP_TTL) || 0.35);
+        const strength = Math.max(0.05, Number(CONFIG.AI_NOISE_BUMP_STRENGTH) || 0.55);
+        const radius = sprinting ? baseRadius * 1.15 : baseRadius;
+        const pos = { x: this.position.x, y: 0, z: this.position.z };
+        eventBus.emit(EVENTS.NOISE_REQUESTED, {
+          kind: sprinting ? 'wall_bump_sprint' : 'wall_bump',
+          position: pos,
+          radius,
+          ttl,
+          strength: sprinting ? strength * 1.05 : strength,
+          source: 'player'
+        });
+      }
+      this.bumpNoiseCooldown = Math.max(0.1, Number(CONFIG.AI_NOISE_BUMP_COOLDOWN) || 0.65);
+    }
+
     if (movedDistance < 0.0001) {
       this.tryUnstuck(moveVector);
     } else {
@@ -618,10 +688,79 @@ export class PlayerController {
     return this.getPosition();
   }
 
+  setPerceptionModifiers(modifiers = null) {
+    const m = modifiers && typeof modifiers === 'object' ? modifiers : {};
+    const untilSec = Math.max(0, Math.round(Number(m.untilSec) || 0));
+    this.perceptionModifiers = {
+      noiseRadiusMult: Number.isFinite(m.noiseRadiusMult) ? Math.max(0.1, Math.min(5, m.noiseRadiusMult)) : (this.perceptionModifiers?.noiseRadiusMult ?? 1.0),
+      noiseStrengthMult: Number.isFinite(m.noiseStrengthMult) ? Math.max(0.1, Math.min(5, m.noiseStrengthMult)) : (this.perceptionModifiers?.noiseStrengthMult ?? 1.0),
+      scentRadiusMult: Number.isFinite(m.scentRadiusMult) ? Math.max(0.1, Math.min(5, m.scentRadiusMult)) : (this.perceptionModifiers?.scentRadiusMult ?? 1.0),
+      scentStrengthMult: Number.isFinite(m.scentStrengthMult) ? Math.max(0.1, Math.min(5, m.scentStrengthMult)) : (this.perceptionModifiers?.scentStrengthMult ?? 1.0),
+      untilSec: untilSec > 0 ? untilSec : (this.perceptionModifiers?.untilSec ?? 0)
+    };
+  }
+
+  getPerceptionModifiers(nowSec = null) {
+    const t = Number.isFinite(nowSec) ? Math.round(nowSec) : (this.gameState?.getElapsedTime?.() ?? 0);
+    const pm = this.perceptionModifiers || {};
+    const until = Math.max(0, Math.round(Number(pm.untilSec) || 0));
+    if (until > 0 && t <= until) {
+      return {
+        noiseRadiusMult: Number(pm.noiseRadiusMult) || 1.0,
+        noiseStrengthMult: Number(pm.noiseStrengthMult) || 1.0,
+        scentRadiusMult: Number(pm.scentRadiusMult) || 1.0,
+        scentStrengthMult: Number(pm.scentStrengthMult) || 1.0,
+        untilSec: until
+      };
+    }
+    return {
+      noiseRadiusMult: 1.0,
+      noiseStrengthMult: 1.0,
+      scentRadiusMult: 1.0,
+      scentStrengthMult: 1.0,
+      untilSec: 0
+    };
+  }
+
+  setFearState({ intensity = 0, untilSec = 0 } = {}) {
+    const i = Number.isFinite(intensity) ? Math.max(0, Math.min(1, intensity)) : 0;
+    const t = Number.isFinite(untilSec) ? Math.max(0, Math.round(untilSec)) : 0;
+    this.fear.intensity = Math.max(this.fear.intensity || 0, i);
+    this.fear.untilSec = Math.max(this.fear.untilSec || 0, t);
+  }
+
+  applyFearJitter(dt) {
+    const nowSec = this.gameState?.getElapsedTime?.() ?? 0;
+    const until = Math.max(0, Math.round(Number(this.fear?.untilSec) || 0));
+    const intensity = until > 0 && nowSec <= until ? Math.max(0, Math.min(1, Number(this.fear?.intensity) || 0)) : 0;
+    if (!(intensity > 0)) {
+      this.fear.intensity = 0;
+      this.fear.untilSec = 0;
+      return;
+    }
+
+    const d = Number.isFinite(dt) ? Math.max(0, dt) : 0;
+    this.fear.phase = (this.fear.phase || 0) + d * (1.5 + intensity * 2.5);
+
+    const yaw = this.camera.getYaw();
+    const pitch = this.camera.getPitch ? this.camera.getPitch() : 0;
+
+    const jitterYaw = Math.sin(this.fear.phase * 1.7) * (0.0025 + intensity * 0.012);
+    const jitterPitch = Math.cos(this.fear.phase * 2.1) * (0.0018 + intensity * 0.01);
+
+    this.camera.setYawPitch(yaw + jitterYaw, pitch + jitterPitch);
+  }
+
+  setMovementDisabledUntil(untilSec = 0) {
+    const t = Math.max(0, Math.round(Number(untilSec) || 0));
+    this.movementDisabledUntilSec = Math.max(this.movementDisabledUntilSec || 0, t);
+  }
+
   /**
    * @returns {boolean} True if sprinting
    */
   isSprinting() {
+    if (this.sprintDisabled) return false;
     return !!this.input?.isSprinting?.() || !!this.externalSprinting;
   }
 
@@ -644,12 +783,23 @@ export class PlayerController {
    */
   getDamageTakenMultiplier() {
     if (!(CONFIG.PLAYER_BLOCK_ENABLED ?? true)) return 1.0;
-    if (!this.blocking) return 1.0;
+    const runMult = Number.isFinite(this.runModifiers?.playerDamageTakenMult) ? this.runModifiers.playerDamageTakenMult : 1.0;
+    const globalMult = Number.isFinite(CONFIG.PLAYER_DAMAGE_TAKEN_MULT) ? CONFIG.PLAYER_DAMAGE_TAKEN_MULT : 1.0;
+    const baseMult = runMult * globalMult;
+    if (!this.blocking) return baseMult;
     if ((this.blockCooldown || 0) > 0) return 1.0;
     if ((this.blockStamina || 0) <= 0) return 1.0;
     const mult = CONFIG.PLAYER_BLOCK_DAMAGE_MULT ?? 0.35;
     if (!Number.isFinite(mult)) return 1.0;
-    return Math.max(0, Math.min(1, mult));
+    const combined = mult * baseMult;
+    return Math.max(0, Math.min(3, combined));
+  }
+
+  setRunModifiers(modifiers = null) {
+    const m = modifiers && typeof modifiers === 'object' ? modifiers : {};
+    this.runModifiers = {
+      playerDamageTakenMult: Number.isFinite(m.playerDamageTakenMult) ? m.playerDamageTakenMult : 1.0
+    };
   }
 
   updateBlockState(deltaTime, externalCommand = null) {

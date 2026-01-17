@@ -9,6 +9,29 @@ import { randomInt } from '../utils/math.js';
 import { generateMazeDFS, analyzeMaze, createRoomMapFromRooms } from './mapGenerator.js';
 import { planPropObstacles } from './propPlanner.js';
 
+function seedToUint32(seed) {
+  if (seed === null || seed === undefined) return 0;
+  if (typeof seed === 'number' && Number.isFinite(seed)) return (Math.floor(seed) >>> 0);
+  const s = String(seed);
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed) {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6D2B79F5;
+    let x = t;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export class WorldState {
   constructor() {
     this.grid = null;
@@ -24,6 +47,10 @@ export class WorldState {
     this.monsterSpawns = [];
     this.missionPoints = [];
     this.smokeClouds = [];
+    this.darkZones = [];
+    this.navHeat = null; // per-tile visit counts for debug visualization
+    this.seed = null;
+    this.generationReport = null;
   }
 
   /**
@@ -32,58 +59,237 @@ export class WorldState {
    */
   initialize(levelConfig = null) {
     this.smokeClouds = [];
+    this.darkZones = [];
     this.exitPoint = null;
-    // Generate maze using DFS algorithm
+    this.navHeat = null;
+    this.seed = null;
+    this.generationReport = null;
+
     const mazeCfg = levelConfig?.maze || {};
     const width = mazeCfg.width ?? CONFIG.MAZE_WIDTH;
     const height = mazeCfg.height ?? CONFIG.MAZE_HEIGHT;
 
-    console.log(`Generating maze: ${width}×${height}...`);
-    const result = generateMazeDFS(width, height, {
-      roomDensity: mazeCfg.roomDensity,
-      extraConnectionChance: mazeCfg.extraConnectionChance,
-      noDeadEnds: mazeCfg.noDeadEnds ?? true,
-      minRoomSize: mazeCfg.minRoomSize,
-      maxRoomSize: mazeCfg.maxRoomSize,
-      minRoomDoors: mazeCfg.minRoomDoors ?? 2,
-      deadEndPasses: mazeCfg.deadEndPasses ?? 3,
-      // Optional per-level room type weights to steer the theme (Classrooms-like maps).
-      roomTypeWeights: levelConfig?.rooms?.typeWeights ?? mazeCfg.roomTypeWeights ?? null
-    });
-    this.grid = result.grid;
-    this.rooms = result.rooms;
+    const baseSeedRaw = mazeCfg.seed ?? CONFIG.MAZE_SEED ?? Date.now();
+    const baseSeedUint = seedToUint32(baseSeedRaw);
+    const maxAttemptsRaw = mazeCfg.maxAttempts ?? CONFIG.MAZE_GENERATION_MAX_ATTEMPTS ?? 6;
+    const maxAttempts = Math.max(1, Math.round(Number(maxAttemptsRaw) || 1));
 
-    this.height = this.grid.length;
-    this.width = this.grid[0].length;
+    const prevRand = CONFIG.RAND;
+    let lastReport = null;
 
-    // Generate room type map from actual room data
-    console.log('Generating room types...');
-    this.roomMap = createRoomMapFromRooms(this.grid, this.rooms);
+    try {
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const attemptSeed = (baseSeedUint + Math.imul(attempt, 0x9E3779B1)) >>> 0;
+        CONFIG.RAND = mulberry32(attemptSeed);
 
-    // Apply environment obstacles (e.g., large room props like the pool model)
-    this.initializeObstacleMap();
-    this.applyEnvironmentObstacles(levelConfig);
-    this.applyPropObstacles(levelConfig);
+        this.exitPoint = null;
+        this.grid = null;
+        this.rooms = null;
+        this.roomMap = null;
+        this.obstacleMap = null;
+        this.propPlan = null;
+        this.width = 0;
+        this.height = 0;
+        this.spawnPoint = null;
+        this.monsterSpawns = [];
+        this.missionPoints = [];
+        this.propSeed = (attemptSeed ^ 0xA5A5A5A5) >>> 0;
+        this.seed = attemptSeed;
 
-    // Debug: Verify roomMap was created
-    console.log('✅ WorldState roomMap created:', this.roomMap ? 'YES' : 'NO');
-    if (this.roomMap) {
-      console.log('RoomMap dimensions:', this.roomMap.length, 'x', this.roomMap[0].length);
+        console.log(`Generating maze: ${width}×${height} (seed=${attemptSeed}, attempt=${attempt + 1}/${maxAttempts})...`);
+        const result = generateMazeDFS(width, height, {
+          roomDensity: mazeCfg.roomDensity,
+          extraConnectionChance: mazeCfg.extraConnectionChance,
+          noDeadEnds: mazeCfg.noDeadEnds ?? true,
+          minRoomSize: mazeCfg.minRoomSize,
+          maxRoomSize: mazeCfg.maxRoomSize,
+          minRoomDoors: mazeCfg.minRoomDoors ?? 2,
+          deadEndPasses: mazeCfg.deadEndPasses ?? 3,
+          roomTypeWeights: levelConfig?.rooms?.typeWeights ?? mazeCfg.roomTypeWeights ?? null
+        });
+
+        this.grid = result.grid;
+        this.rooms = result.rooms;
+        this.height = this.grid.length;
+        this.width = this.grid[0].length;
+
+        console.log('Generating room types...');
+        this.roomMap = createRoomMapFromRooms(this.grid, this.rooms);
+
+        this.initializeObstacleMap();
+        this.applyEnvironmentObstacles(levelConfig);
+        this.applyPropObstacles(levelConfig);
+        this.initializeNavHeat();
+
+        const stats = analyzeMaze(this.grid);
+        console.log('Maze statistics:', stats);
+
+        this.spawnPoint = this.findRandomWalkableTile();
+        const monsterCount = resolveMonsterCount(levelConfig);
+        this.monsterSpawns = this.findMonsterSpawns(monsterCount);
+        const missionCount = levelConfig?.missions?.missionPointCount ?? CONFIG.MISSION_POINT_COUNT;
+        this.missionPoints = this.findMissionPoints(missionCount);
+        this.getExitPoint();
+
+        const report = this.validateGeneratedWorld({
+          monsterCountExpected: monsterCount,
+          missionCountExpected: missionCount
+        });
+
+        lastReport = {
+          ok: report.ok,
+          reasons: report.reasons,
+          exitDistance: report.exitDistance,
+          baseSeed: baseSeedRaw,
+          baseSeedUint,
+          seed: attemptSeed,
+          attempt,
+          attemptCount: maxAttempts,
+          width: this.width,
+          height: this.height
+        };
+
+        if (report.ok) {
+          this.generationReport = lastReport;
+          break;
+        }
+
+        console.warn('⚠️ World generation validation failed; retrying:', lastReport);
+        this.generationReport = lastReport;
+      }
+    } finally {
+      CONFIG.RAND = prevRand;
     }
 
-    // Log maze statistics
-    const stats = analyzeMaze(this.grid);
-    console.log('Maze statistics:', stats);
+    if (!this.generationReport?.ok) {
+      console.warn('⚠️ World generation proceeded with last-attempt result:', this.generationReport || lastReport);
+    }
+  }
 
-    // Find a random walkable spawn point for player
-    this.spawnPoint = this.findRandomWalkableTile();
-    // Find spawn points for monsters (future use)
-    const monsterCount = resolveMonsterCount(levelConfig);
-    this.monsterSpawns = this.findMonsterSpawns(monsterCount);
-    // Mission points
-    const missionCount = levelConfig?.missions?.missionPointCount ?? CONFIG.MISSION_POINT_COUNT;
-    this.missionPoints = this.findMissionPoints(missionCount);
-  
+  validateGeneratedWorld({ monsterCountExpected = null, missionCountExpected = null } = {}) {
+    const reasons = [];
+    const spawn = this.spawnPoint || null;
+    const exit = this.exitPoint || (this.getExitPoint?.() || null);
+
+    if (!spawn || !Number.isFinite(spawn.x) || !Number.isFinite(spawn.y)) {
+      reasons.push('missingSpawn');
+    }
+    if (!exit || !Number.isFinite(exit.x) || !Number.isFinite(exit.y)) {
+      reasons.push('missingExit');
+    }
+    if (spawn && exit && spawn.x === exit.x && spawn.y === exit.y) {
+      reasons.push('spawnEqualsExit');
+    }
+
+    const dist = (spawn && reasons.length === 0) ? this.computeDistanceField(spawn) : null;
+    let exitDistance = null;
+    if (dist && exit) {
+      exitDistance = dist[exit.y]?.[exit.x] ?? Infinity;
+      if (!Number.isFinite(exitDistance) || exitDistance === Infinity) {
+        reasons.push('exitUnreachable');
+      }
+    }
+
+    const minExit = Math.max(0, Math.round(Number(CONFIG.MAZE_VALIDATION_MIN_EXIT_DISTANCE) || 10));
+    if (exitDistance !== null && Number.isFinite(exitDistance) && exitDistance < minExit) {
+      reasons.push(`exitTooClose(min=${minExit},got=${Math.round(exitDistance)})`);
+    }
+
+    if (Number.isFinite(monsterCountExpected)) {
+      const want = Math.max(0, Math.round(Number(monsterCountExpected) || 0));
+      const got = Array.isArray(this.monsterSpawns) ? this.monsterSpawns.length : 0;
+      if (got < want) reasons.push(`monsterSpawnsShort(want=${want},got=${got})`);
+    }
+
+    if (Number.isFinite(missionCountExpected)) {
+      const want = Math.max(0, Math.round(Number(missionCountExpected) || 0));
+      const got = Array.isArray(this.missionPoints) ? this.missionPoints.length : 0;
+      if (got < want) reasons.push(`missionsShort(want=${want},got=${got})`);
+    }
+
+    if (dist && Array.isArray(this.missionPoints)) {
+      for (const p of this.missionPoints) {
+        const d = dist[p.y]?.[p.x] ?? Infinity;
+        if (!Number.isFinite(d) || d === Infinity) {
+          reasons.push(`missionUnreachable(${p.x},${p.y})`);
+          break;
+        }
+      }
+    }
+
+    return {
+      ok: reasons.length === 0,
+      reasons,
+      exitDistance
+    };
+  }
+
+  computeDistanceField(start) {
+    const dist = new Array(this.height);
+    for (let y = 0; y < this.height; y++) {
+      const row = new Array(this.width);
+      row.fill(Infinity);
+      dist[y] = row;
+    }
+    if (!start) return dist;
+    const sx = Math.round(start.x);
+    const sy = Math.round(start.y);
+    if (!this.isWalkable(sx, sy)) return dist;
+
+    const qx = [];
+    const qy = [];
+    let qi = 0;
+    qx.push(sx);
+    qy.push(sy);
+    dist[sy][sx] = 0;
+
+    const dirs = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ];
+
+    while (qi < qx.length) {
+      const x = qx[qi];
+      const y = qy[qi];
+      qi++;
+      const base = dist[y][x];
+      for (const [dx, dy] of dirs) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= this.width || ny >= this.height) continue;
+        if (dist[ny][nx] !== Infinity) continue;
+        if (!this.isWalkable(nx, ny)) continue;
+        dist[ny][nx] = base + 1;
+        qx.push(nx);
+        qy.push(ny);
+      }
+    }
+    return dist;
+  }
+
+  initializeNavHeat() {
+    this.navHeat = new Array(this.height);
+    for (let y = 0; y < this.height; y++) {
+      const row = new Array(this.width);
+      row.fill(0);
+      this.navHeat[y] = row;
+    }
+  }
+
+  recordNavHeat(grid, weight = 1) {
+    if (!this.navHeat) return;
+    if (!grid || !Number.isFinite(grid.x) || !Number.isFinite(grid.y)) return;
+    const x = grid.x;
+    const y = grid.y;
+    if (x < 0 || y < 0 || y >= this.height || x >= this.width) return;
+    const w = Number(weight);
+    this.navHeat[y][x] = (this.navHeat[y][x] || 0) + (Number.isFinite(w) ? w : 1);
+  }
+
+  getNavHeat() {
+    return this.navHeat;
   }
 
   initializeObstacleMap() {
@@ -210,6 +416,68 @@ export class WorldState {
   }
 
   /**
+   * Estimate sound occlusion along a straight line between 2 grid tiles.
+   * Useful as a fallback when no walkable path exists (muffled "through wall" hearing),
+   * and to count door/corridor/room tiles.
+   * @param {{x:number,y:number}} a
+   * @param {{x:number,y:number}} b
+   * @returns {{steps:number,blocked:number,blockedDoors:number,doors:number,corridor:number,rooms:number}}
+   */
+  getSoundOcclusionStats(a, b) {
+    if (!a || !b || !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(b.x) || !Number.isFinite(b.y)) {
+      return { steps: 0, blocked: 0, blockedDoors: 0, doors: 0, corridor: 0, rooms: 0 };
+    }
+
+    let x0 = Math.round(a.x);
+    let y0 = Math.round(a.y);
+    const x1 = Math.round(b.x);
+    const y1 = Math.round(b.y);
+
+    let dx = Math.abs(x1 - x0);
+    let sx = x0 < x1 ? 1 : -1;
+    let dy = -Math.abs(y1 - y0);
+    let sy = y0 < y1 ? 1 : -1;
+    let err = dx + dy;
+
+    let steps = 0;
+    let blocked = 0;
+    let blockedDoors = 0;
+    let doors = 0;
+    let corridor = 0;
+    let rooms = 0;
+
+    while (true) {
+      steps++;
+
+      const tile = this.getTile(x0, y0);
+      if (tile === TILE_TYPES.DOOR) doors++;
+
+      const rt = this.getRoomType(x0, y0);
+      if (rt === ROOM_TYPES.CORRIDOR) corridor++;
+      else rooms++;
+
+      const walkable = this.isWalkable(x0, y0);
+      if (!walkable) {
+        blocked++;
+        if (tile === TILE_TYPES.DOOR) blockedDoors++;
+      }
+
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 >= dy) {
+        err += dy;
+        x0 += sx;
+      }
+      if (e2 <= dx) {
+        err += dx;
+        y0 += sy;
+      }
+    }
+
+    return { steps, blocked, blockedDoors, doors, corridor, rooms };
+  }
+
+  /**
    * Get the list of generated rooms (with type + bounds).
    * @returns {Array<Object>}
    */
@@ -219,6 +487,10 @@ export class WorldState {
 
   getSmokeClouds() {
     return Array.isArray(this.smokeClouds) ? this.smokeClouds : [];
+  }
+
+  getDarkZones() {
+    return Array.isArray(this.darkZones) ? this.darkZones : [];
   }
 
   /**

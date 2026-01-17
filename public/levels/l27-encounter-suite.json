@@ -1,0 +1,90 @@
+{
+  "id": 27,
+  "name": "L27 - Encounter Suite",
+  "maze": { "width": 31, "height": 31, "roomDensity": 3.0, "extraConnectionChance": 0.12 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.4,
+      "CLASSROOMS_BLOCK": 1.4,
+      "OFFICE": 1.4,
+      "LAB": 1.2,
+      "CAFETERIA": 0.8,
+      "BATHROOM": 0.7,
+      "STORAGE": 0.9,
+      "LIBRARY": 0.65,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 5,
+    "maxCount": 7,
+    "speedMultiplier": 1.05,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 0.95,
+    "typeWeights": { "WANDERER": 0.3, "HUNTER": 0.35, "SENTINEL": 0.2, "STALKER": 0.1, "WEEPING_ANGEL": 0.05 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL", "WEEPING_ANGEL"]
+  },
+  "pickups": {
+    "tools": {
+      "start": {
+        "lure": 1,
+        "lure_sticky": 1,
+        "trap": 1,
+        "jammer": 1,
+        "decoy": 1,
+        "decoy_delay": 1,
+        "smoke": 1,
+        "smoke_weak": 1,
+        "smoke_strong": 1,
+        "flash": 1,
+        "sensor": 1,
+        "mine": 1,
+        "scent_spray": 1,
+        "door_wedge": 1,
+        "glowstick": 1,
+        "sonar_pulse": 1,
+        "emp_charge": 1,
+        "fake_hack": 1
+      },
+      "drop": { "enabled": true, "chance": 0.12, "ttl": 55 }
+    }
+  },
+  "encounters": {
+    "treasureChest": { "enabled": true, "count": 1, "minDistFromSpawn": 10, "lootScale": 1.0 },
+    "patrolSquad": { "enabled": true, "count": 3, "minDistFromSpawn": 9, "routeWaypoints": 5 },
+    "cursedRoom": { "enabled": true, "minDistFromSpawn": 8, "seconds": 20, "noiseRadiusMult": 1.25, "scentStrengthMult": 1.35 },
+    "alarmTraps": { "enabled": true, "count": 4, "minDistFromSpawn": 7, "damage": 6, "noiseRadius": 20 },
+    "tradePoint": { "enabled": true, "minDistFromSpawn": 9, "ammoCost": 30, "toolRewardCount": 2, "healthReward": 12 },
+    "shortBlackout": { "enabled": true, "minDistFromSpawn": 6, "seconds": 10, "lightMultiplier": 0.22 }
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Explore: encounters are optional and not marked.",
+            "Go to the exit and press E to unlock it, then press E again to finish."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.5,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}

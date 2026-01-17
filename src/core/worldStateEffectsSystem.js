@@ -2,7 +2,7 @@ import { EVENTS } from './events.js';
 
 function isPowerMissionTemplate(template) {
   const t = String(template || '').trim();
-  return t === 'restorePower' || t === 'restorePowerFuses' || t === 'reroutePower';
+  return t === 'restorePower' || t === 'restorePowerFuses' || t === 'reroutePower' || t === 'powerGrid';
 }
 
 function isPlainObject(v) {

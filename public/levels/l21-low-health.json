@@ -1,0 +1,74 @@
+{
+  "id": 21,
+  "name": "L21 - Low Health Drill",
+  "maze": { "width": 27, "height": 27, "roomDensity": 2.8, "extraConnectionChance": 0.11 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.0,
+      "CLASSROOMS_BLOCK": 1.2,
+      "OFFICE": 1.4,
+      "LAB": 1.2,
+      "STORAGE": 1.1,
+      "CAFETERIA": 0.7,
+      "BATHROOM": 0.65,
+      "LIBRARY": 0.6,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 5,
+    "maxCount": 7,
+    "speedMultiplier": 1.02,
+    "visionMultiplier": 0.98,
+    "memoryMultiplier": 1.02,
+    "typeWeights": { "WANDERER": 0.22, "HUNTER": 0.5, "SENTINEL": 0.18, "STALKER": 0.08, "GREETER": 0.02 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 45
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "blood",
+        "template": "lowHealthForSeconds",
+        "required": true,
+        "params": {
+          "healthPct": 40,
+          "seconds": 12,
+          "hints": [
+            "Drop below 40% HP, then stay there for 12 seconds.",
+            "Avoid healing until the objective completes."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["blood", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.46,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+

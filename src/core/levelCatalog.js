@@ -980,37 +980,37 @@ export const LEVEL_CATALOG = [
   },
   {
     id: 10,
-    name: 'L10 - Termination',
-    maze: { width: 33, height: 33, roomDensity: 3.25, extraConnectionChance: 0.14 },
+    name: 'L10 - The Core',
+    maze: { width: 27, height: 27, roomDensity: 2.9, extraConnectionChance: 0.16 },
     rooms: {
       typeWeights: {
-        [ROOM_TYPES.CLASSROOM]: 2.45,
-        [ROOM_TYPES.CLASSROOMS_BLOCK]: 1.85,
-        [ROOM_TYPES.OFFICE]: 1.75,
-        [ROOM_TYPES.LAB]: 1.6,
-        [ROOM_TYPES.STORAGE]: 1.3,
-        [ROOM_TYPES.CAFETERIA]: 0.75,
-        [ROOM_TYPES.BATHROOM]: 0.65,
-        [ROOM_TYPES.LIBRARY]: 0.8,
-        [ROOM_TYPES.POOL]: 0.22,
-        [ROOM_TYPES.GYM]: 0.25,
-        [ROOM_TYPES.BEDROOM]: 0.35,
+        [ROOM_TYPES.LAB]: 2.4,
+        [ROOM_TYPES.LIBRARY]: 1.2,
+        [ROOM_TYPES.CLASSROOMS_BLOCK]: 1.4,
+        [ROOM_TYPES.OFFICE]: 1.0,
+        [ROOM_TYPES.STORAGE]: 0.9,
+        [ROOM_TYPES.CLASSROOM]: 1.0,
+        [ROOM_TYPES.CAFETERIA]: 0.55,
+        [ROOM_TYPES.BATHROOM]: 0.5,
+        [ROOM_TYPES.POOL]: 0.35,
+        [ROOM_TYPES.GYM]: 0.3,
+        [ROOM_TYPES.BEDROOM]: 0.3,
       }
     },
     monsters: {
-      count: 8,
-      maxCount: 10,
-      speedMultiplier: 1.16,
-      visionMultiplier: 1.25,
-      memoryMultiplier: 1.3,
-      typeWeights: { WANDERER: 0.1, HUNTER: 0.34, SENTINEL: 0.24, STALKER: 0.18, WEEPING_ANGEL: 0.14 },
+      count: 5,
+      maxCount: 6,
+      speedMultiplier: 1.1,
+      visionMultiplier: 1.15,
+      memoryMultiplier: 1.2,
+      typeWeights: { HUNTER: 0.42, SENTINEL: 0.28, STALKER: 0.18, WEEPING_ANGEL: 0.12 },
       allowSprintTypes: ['HUNTER', 'SENTINEL', 'WEEPING_ANGEL'],
     },
     budgets: {
-      missionObjectsMax: 120,
+      missionObjectsMax: 55,
     },
     pickups: {
-      maxActive: 18,
+      maxActive: 16,
       tools: {
         maxDevices: 6,
         start: { lure: 1, trap: 1, jammer: 1, decoy: 1, smoke: 1, flash: 1, sensor: 1, mine: 1 },
@@ -1022,101 +1022,30 @@ export const LEVEL_CATALOG = [
         }
       }
     },
+    boss: {
+      enabled: true,
+      shieldNodes: 3,
+      escapeSeconds: 35,
+      // Boss spawn uses its own monster type and is excluded from SpawnDirector counts.
+      typeId: 'BOSS_CORE'
+    },
     missions: {
-      timeLimitSec: 900,
+      timeLimitSec: 0,
       list: [
         {
-          id: 'power',
-          template: 'restorePowerFuses',
-          required: true,
-          params: {
-            fuses: 5,
-            itemId: 'fuse',
-            roomTypesFuses: [ROOM_TYPES.STORAGE, ROOM_TYPES.LAB, ROOM_TYPES.OFFICE],
-            roomTypesPanel: [ROOM_TYPES.LAB, ROOM_TYPES.OFFICE],
-            minDistFromSpawn: 7,
-            hints: [
-              'Collect the fuses and restore power at the panel.',
-              'Power is required for terminals and some locks.'
-            ]
-          }
-        },
-        {
-          id: 'upload',
-          template: 'uploadEvidence',
-          required: true,
-          params: {
-            count: 7,
-            required: 5,
-            itemId: 'evidence',
-            requiresPower: true,
-            powerItemId: 'power_on',
-            roomTypesEvidence: [ROOM_TYPES.CLASSROOM, ROOM_TYPES.OFFICE, ROOM_TYPES.CLASSROOMS_BLOCK],
-            roomTypesTerminal: [ROOM_TYPES.OFFICE, ROOM_TYPES.LAB],
-            minDistFromSpawn: 7,
-            hints: [
-              'Collect evidence pickups (you need 5).',
-              'After power is on, upload at the terminal (E).'
-            ]
-          }
-        },
-        {
-          id: 'doorCode',
-          template: 'codeLock',
-          required: true,
-          params: {
-            clues: 5,
-            requiresPower: true,
-            powerItemId: 'power_on',
-            roomTypesClues: [ROOM_TYPES.CLASSROOM, ROOM_TYPES.OFFICE, ROOM_TYPES.CLASSROOMS_BLOCK],
-            roomTypesKeypad: [ROOM_TYPES.OFFICE, ROOM_TYPES.LAB],
-            minDistFromSpawn: 7,
-            hints: [
-              'Find the note clues (A/B/C/D/E).',
-              'Power must be on before the keypad works.',
-              'Enter the code in order A→B→C→D→E.'
-            ]
-          }
-        },
-        {
-          id: 'shrines',
-          template: 'activateShrines',
-          required: true,
-          params: {
-            shrines: 3,
-            roomTypesShrines: [ROOM_TYPES.LAB, ROOM_TYPES.LIBRARY, ROOM_TYPES.CLASSROOMS_BLOCK, ROOM_TYPES.OFFICE],
-            minDistFromSpawn: 7,
-            hints: [
-              'Find and activate the shrines (press E).',
-              'Shrines favor Labs/Library/Classrooms Block/Offices.'
-            ]
-          }
-        },
-        {
-          id: 'kills',
-          template: 'killCount',
-          required: true,
-          params: {
-            count: 11,
-            hints: [
-              'Defeat monsters to stabilize the final run.',
-              'Switch weapons often: pistol close, rifle mid, flare for clusters.'
-            ]
-          }
-        },
-        {
-          id: 'unlockExit',
-          template: 'unlockExit',
+          id: 'bossFinale',
+          template: 'bossFinale',
           required: true,
           params: {
             hints: [
-              'Go to the exit and press E to unlock it.',
-              'After unlocking, press E again to finish the level.'
+              'Phase 1: Destroy the Shield Nodes (follow the markers).',
+              'Phase 2: With the shield down, defeat the Core.',
+              'Phase 3: Escape before the lockdown timer expires.'
             ]
           }
         }
       ],
-      exit: { requires: ['power', 'upload', 'doorCode', 'shrines', 'kills', 'unlockExit'] }
+      exit: { requires: ['bossFinale'] }
     },
     player: {
       maxHealthMultiplier: 1.0,

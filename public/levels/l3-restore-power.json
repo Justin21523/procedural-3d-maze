@@ -17,6 +17,19 @@
       "BEDROOM": 0.38
     }
   },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "armory": {
+        "enabled": true,
+        "count": 1,
+        "ammoAmount": 40,
+        "toolCount": 1,
+        "charges": 1,
+        "minDistFromSpawn": 8
+      }
+    }
+  },
   "monsters": {
     "count": 4,
     "maxCount": 6,
@@ -42,38 +55,7 @@
           "minDistFromSpawn": 7,
           "hints": [
             "Find and activate the power switches in Labs/Storage.",
-            "Power enables the upload terminal."
-          ]
-        }
-      },
-      {
-        "id": "upload",
-        "template": "uploadEvidence",
-        "required": true,
-        "params": {
-          "requiresPower": true,
-          "powerItemId": "power_on",
-          "count": 5,
-          "required": 3,
-          "itemId": "evidence",
-          "roomTypesEvidence": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
-          "roomTypesTerminal": ["OFFICE", "LAB"],
-          "minDistFromSpawn": 7,
-          "hints": [
-            "Collect evidence pickups (you only need 3).",
-            "After power is on, find the upload terminal and press E."
-          ]
-        }
-      },
-      {
-        "id": "kills",
-        "template": "killCount",
-        "required": true,
-        "params": {
-          "count": 3,
-          "hints": [
-            "Defeat monsters to reduce pressure while completing objectives.",
-            "Use Q grenade / X EMP if you get surrounded."
+            "Once power is restored, head to the exit."
           ]
         }
       },
@@ -89,7 +71,7 @@
         }
       }
     ],
-    "exit": { "requires": ["power", "upload", "kills", "unlockExit"] }
+    "exit": { "requires": ["power", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,

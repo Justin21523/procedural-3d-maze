@@ -4,7 +4,7 @@
  */
 
 import { TILE_TYPES, ROOM_TYPES } from './tileTypes.js';
-import { randomInt } from '../utils/math.js';
+import { randomInt, randomFloat } from '../utils/math.js';
 import { CONFIG } from '../core/config.js';
 /**
  * Generate a room-based map with large open spaces
@@ -111,7 +111,7 @@ function addExtraConnections(grid, chance = 0.05) {
 
   for (let y = 1; y < height - 1; y += 2) {
     for (let x = 1; x < width - 1; x += 2) {
-      if (Math.random() > chance) continue;
+      if (randomFloat(0, 1) > chance) continue;
 
       const candidates = [];
       if (x + 2 < width - 1)  candidates.push({ wx: x + 1, wy: y     }); // 向右連
@@ -353,7 +353,7 @@ function pickRoomType(roomTypeWeights = null) {
     return types[randomInt(0, types.length - 1)];
   }
 
-  let r = Math.random() * total;
+  let r = randomFloat(0, total);
   for (const e of entries) {
     r -= e.weight;
     if (r <= 0) return e.type;

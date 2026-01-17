@@ -10,6 +10,27 @@
     "l7-maintenance.json",
     "l8-blackout-protocol.json",
     "l9-silent-extraction.json",
-    "l10-ritual-circuit.json"
+    "l10-ritual-circuit.json",
+    "l12-sync-uplink.json",
+    "l13-noise-limit.json",
+    "l14-local-blackout.json",
+    "l15-heavy-courier.json",
+    "l16-code-lock-scan.json",
+    "l17-power-grid.json",
+    "l18-lure-capture.json",
+    "l19-rescue-escort.json",
+    "l20-timed-evac.json",
+    "l21-low-health.json",
+    "l22-scan-sweep.json",
+    "l23-reclaim-stolen.json",
+    "l24-occupy-point.json",
+    "l25-hidden-terminal.json",
+    "l26-scan-waypoints.json",
+    "l27-encounter-suite.json",
+    "l28-monster-variety.json",
+    "l29-keycard-doors.json",
+    "l30-rotating-gates.json",
+    "l31-vent-shortcuts.json",
+    "l32-medical-room.json"
   ]
 }

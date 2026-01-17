@@ -40,7 +40,7 @@ export class MonsterManager {
     this.pathfinder = new Pathfinding(worldState);
 
     this.modelSelector = new EnemyModelSelector();
-    this.perception = new MonsterPerception();
+    this.perception = new MonsterPerception({ worldState });
     this.spawner = new MonsterSpawner(this, this.modelSelector);
     this.damage = new MonsterDamage(this);
 
@@ -61,6 +61,12 @@ export class MonsterManager {
       }
     }
     this.perception?.clear?.();
+  }
+
+  setWorldState(worldState) {
+    this.worldState = worldState;
+    this.pathfinder = new Pathfinding(worldState);
+    this.perception?.setWorldState?.(worldState);
   }
 
   setProjectileManager(projectileManager) {
@@ -96,7 +102,7 @@ export class MonsterManager {
   }
 
   pickAudibleNoise(monster, brain) {
-    return this.perception?.pickAudibleNoise?.(monster, brain) ?? null;
+    return this.perception?.pickAudibleNoise?.(monster, brain, this.pathfinder) ?? null;
   }
 
   registerScent(position, options = {}) {
@@ -119,7 +125,22 @@ export class MonsterManager {
     const sprinting = this.playerRef?.isSprinting
       ? this.playerRef.isSprinting()
       : (this.playerRef?.input?.isSprinting?.() ?? false);
-    const entry = this.perception?.updatePlayerNoise?.(dt, playerPos, { sprinting }) ?? null;
+
+    const inSmoke = this.isPositionInSmoke?.(playerPos) ?? false;
+    const radiusMult = inSmoke
+      ? (Number.isFinite(CONFIG.AI_SMOKE_FOOTSTEP_NOISE_MULT) ? CONFIG.AI_SMOKE_FOOTSTEP_NOISE_MULT : 0.55)
+      : 1.0;
+    const strengthMult = inSmoke ? 0.8 : 1.0;
+
+    const pm = this.playerRef?.getPerceptionModifiers?.();
+    const pr = Number.isFinite(pm?.noiseRadiusMult) ? Math.max(0.1, pm.noiseRadiusMult) : 1.0;
+    const ps = Number.isFinite(pm?.noiseStrengthMult) ? Math.max(0.1, pm.noiseStrengthMult) : 1.0;
+
+    const entry = this.perception?.updatePlayerNoise?.(dt, playerPos, {
+      sprinting,
+      radiusMult: radiusMult * pr,
+      strengthMult: strengthMult * ps
+    }) ?? null;
     if (entry && this.eventBus?.emit) {
       this.eventBus.emit(EVENTS.NOISE_EMITTED, entry);
     }
@@ -129,7 +150,119 @@ export class MonsterManager {
     const sprinting = this.playerRef?.isSprinting
       ? this.playerRef.isSprinting()
       : (this.playerRef?.input?.isSprinting?.() ?? false);
-    return this.perception?.updatePlayerScent?.(dt, playerPos, { sprinting }) ?? null;
+
+    const inSmoke = this.isPositionInSmoke?.(playerPos) ?? false;
+    const radiusMult = inSmoke
+      ? (Number.isFinite(CONFIG.AI_SMOKE_SCENT_RADIUS_MULT) ? CONFIG.AI_SMOKE_SCENT_RADIUS_MULT : 0.85)
+      : 1.0;
+    const strengthMult = inSmoke
+      ? (Number.isFinite(CONFIG.AI_SMOKE_SCENT_STRENGTH_MULT) ? CONFIG.AI_SMOKE_SCENT_STRENGTH_MULT : 0.55)
+      : 1.0;
+
+    const pm = this.playerRef?.getPerceptionModifiers?.();
+    const pr = Number.isFinite(pm?.scentRadiusMult) ? Math.max(0.1, pm.scentRadiusMult) : 1.0;
+    const ps = Number.isFinite(pm?.scentStrengthMult) ? Math.max(0.1, pm.scentStrengthMult) : 1.0;
+
+    return this.perception?.updatePlayerScent?.(dt, playerPos, {
+      sprinting,
+      radiusMult: radiusMult * pr,
+      strengthMult: strengthMult * ps
+    }) ?? null;
+  }
+
+  isPositionInSmoke(worldPos) {
+    if (!worldPos) return false;
+    const ws = this.worldState;
+    const clouds = typeof ws?.getSmokeClouds === 'function'
+      ? ws.getSmokeClouds()
+      : (Array.isArray(ws?.smokeClouds) ? ws.smokeClouds : []);
+    if (!Array.isArray(clouds) || clouds.length === 0) return false;
+
+    const x = Number(worldPos.x) || 0;
+    const z = Number(worldPos.z) || 0;
+    for (const cloud of clouds) {
+      if (!cloud) continue;
+      const life = Number(cloud.life) || 0;
+      if (!(life > 0)) continue;
+      const radius = Number(cloud.radius) || 0;
+      if (!(radius > 0)) continue;
+      const cx = Number.isFinite(cloud.x) ? cloud.x : (Number.isFinite(cloud.position?.x) ? cloud.position.x : 0);
+      const cz = Number.isFinite(cloud.z) ? cloud.z : (Number.isFinite(cloud.position?.z) ? cloud.position.z : 0);
+      const dx = x - cx;
+      const dz = z - cz;
+      if (dx * dx + dz * dz <= radius * radius) return true;
+    }
+    return false;
+  }
+
+  applyCommanderAura() {
+    const monsters = this.monsters || [];
+    if (!monsters || monsters.length === 0) return;
+
+    const commanders = [];
+    for (const m of monsters) {
+      if (!m || m.isDead || m.isDying) continue;
+      const aura = m.typeConfig?.special?.commanderAura || null;
+      if (!aura) continue;
+      const radiusTiles = Math.max(1, Math.round(Number(aura.radiusTiles) || 8));
+      const speedMult = Number.isFinite(aura.speedMult) ? Math.max(1.0, Math.min(2.0, aura.speedMult)) : 1.25;
+      commanders.push({ monster: m, radiusTiles, speedMult });
+    }
+    if (commanders.length === 0) return;
+
+    for (const m of monsters) {
+      if (!m || m.isDead || m.isDying) continue;
+      if (!Number.isFinite(m._baseSpeedMultiplier)) {
+        m._baseSpeedMultiplier = Number.isFinite(m.speedMultiplier) ? m.speedMultiplier : 1.0;
+      }
+      let mult = 1.0;
+      const gp = m.getGridPosition?.() || m.gridPos || null;
+      if (gp) {
+        for (const c of commanders) {
+          const cg = c.monster?.getGridPosition?.() || c.monster?.gridPos || null;
+          if (!cg) continue;
+          const dist = Math.abs(gp.x - cg.x) + Math.abs(gp.y - cg.y);
+          if (dist <= c.radiusTiles) {
+            mult = Math.max(mult, c.speedMult);
+          }
+        }
+      }
+      m.speedMultiplier = (m._baseSpeedMultiplier || 1.0) * mult;
+    }
+  }
+
+  applyFearAura(playerPos) {
+    const monsters = this.monsters || [];
+    if (!monsters || monsters.length === 0) return;
+    if (!playerPos) return;
+
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const nowSec = this.playerRef?.gameState?.getElapsedTime?.() ?? 0;
+
+    let bestIntensity = 0;
+    for (const m of monsters) {
+      if (!m || m.isDead || m.isDying) continue;
+      const aura = m.typeConfig?.special?.fearAura || null;
+      if (!aura) continue;
+      const radiusTiles = Math.max(1, Math.round(Number(aura.radiusTiles) || 8));
+      const maxIntensity = Number.isFinite(aura.maxIntensity) ? Math.max(0.1, Math.min(1.0, aura.maxIntensity)) : 0.85;
+
+      const mp = m.getWorldPosition?.() || m.model?.position || m.position || null;
+      if (!mp) continue;
+      const dx = mp.x - playerPos.x;
+      const dz = mp.z - playerPos.z;
+      const distTiles = Math.hypot(dx, dz) / Math.max(0.01, tileSize);
+      if (distTiles > radiusTiles) continue;
+      const t = 1 - distTiles / radiusTiles;
+      bestIntensity = Math.max(bestIntensity, Math.max(0, Math.min(1, t * maxIntensity)));
+    }
+
+    if (bestIntensity > 0) {
+      this.playerRef?.setFearState?.({
+        intensity: bestIntensity,
+        untilSec: Math.round(nowSec + 1)
+      });
+    }
   }
 
   canMonsterSeePlayer(monster, playerGrid) {
@@ -225,12 +358,19 @@ export class MonsterManager {
         console.log(`\n🦊 Spawning ${typeConfig.name} (${i + 1}/${count})...`);
 
         try {
+          const squadSize = Math.max(2, Math.round(CONFIG.AI_SQUAD_SIZE ?? 3));
+          const squadIndex = Math.floor(i / squadSize);
+          const roleIndex = i % squadSize;
+          const roleCycle = ['leader', 'flanker', 'cover', 'rusher', 'support'];
+          const role = roleCycle[Math.min(roleIndex, roleCycle.length - 1)] || 'leader';
+          const squad = { squadId: `squad_${squadIndex}`, role };
+
           const modelPath = this.pickEnemyModelFromBag(enemyModelPool);
 
           if (modelPath) {
             console.log(`   🎲 Model: ${modelPath}`);
             const { model, animations } = await this.modelLoader.loadModelWithAnimations(modelPath);
-            await this.spawnMonster(model, animations, spawnPosition, typeConfig, levelConfig, null, { modelPath });
+            await this.spawnMonster(model, animations, spawnPosition, typeConfig, levelConfig, null, { modelPath, squad });
           } else {
             const spriteResult = createSpriteBillboard({
               path: typeConfig.sprite || '/models/monster.png',
@@ -241,7 +381,7 @@ export class MonsterManager {
               scale: { x: 1.5, y: 2.5 }
             });
             const spriteGroup = spriteResult.group || spriteResult;
-            await this.spawnMonster(spriteGroup, [], spawnPosition, typeConfig, levelConfig, spriteResult.updateAnimation);
+            await this.spawnMonster(spriteGroup, [], spawnPosition, typeConfig, levelConfig, spriteResult.updateAnimation, { squad });
           }
         } catch (error) {
           console.error(`   ❌ Failed to spawn ${typeConfig.name}:`, error.message);
@@ -280,6 +420,14 @@ export class MonsterManager {
       applyEnemyMetaToTypeConfig(instanceTypeConfig, meta);
     }
 
+    if (instanceTypeConfig && options?.squad && typeof options.squad === 'object') {
+      const squadId = String(options.squad.squadId || '').trim();
+      const role = String(options.squad.role || '').trim();
+      if (squadId && role) {
+        instanceTypeConfig.squad = { squadId, role };
+      }
+    }
+
     if (meta) {
       applyEnemyModelMeta(model, meta);
     }
@@ -293,6 +441,9 @@ export class MonsterManager {
     const monster = new Monster(model, spawnPosition, this.worldState, instanceTypeConfig || typeConfig || {}, levelConfig);
     monster.modelPath = modelPath;
     monster.modelMeta = meta;
+
+    this.applyPatrolRouteToMonster(monster, spawnPosition, instanceTypeConfig || typeConfig || {});
+    this.applyEliteTraitsToMonster(monster, levelConfig, options?.elite || null);
 
     // Setup animations
     if (animations && animations.length > 0) {
@@ -323,6 +474,140 @@ export class MonsterManager {
     this.monsters.push(monster);
 
     console.log(`✅ ${typeName} spawned successfully`);
+  }
+
+  applyPatrolRouteToMonster(monster, spawnGrid, typeConfig) {
+    if (!monster || !spawnGrid || !this.worldState) return;
+    if (Array.isArray(monster.patrolRoute) && monster.patrolRoute.length >= 2) return;
+
+    const ws = this.worldState;
+    const origin = { x: spawnGrid.x, y: spawnGrid.y };
+    const roomTypesPref = Array.isArray(typeConfig?.behavior?.patrolRoomTypes) ? typeConfig.behavior.patrolRoomTypes : null;
+    const roomTypeAt = ws.getRoomType ? ws.getRoomType(origin.x, origin.y) : null;
+    const preferRooms = roomTypeAt !== null ? (roomTypeAt !== 0) : true;
+
+    const maxWaypoints = Math.max(3, Math.min(8, Math.round(typeConfig?.behavior?.patrolWaypoints ?? 5)));
+    const radius = Math.max(4, Math.min(18, Math.round(typeConfig?.behavior?.patrolRadius ?? (typeConfig?.behavior?.searchRadius ? typeConfig.behavior.searchRadius * 2 : 10))));
+
+    const isOk = (t) => {
+      if (!t) return false;
+      if (!Number.isFinite(t.x) || !Number.isFinite(t.y)) return false;
+      if (!ws.isWalkableWithMargin?.(t.x, t.y, 1)) return false;
+      if (roomTypesPref && ws.getRoomType) {
+        const rt = ws.getRoomType(t.x, t.y);
+        if (!roomTypesPref.includes(rt)) return false;
+      }
+      return true;
+    };
+
+    const pickCandidate = () => {
+      for (let i = 0; i < 60; i++) {
+        const base = ws.findRandomWalkableTile?.();
+        if (!base) continue;
+        const dx = base.x - origin.x;
+        const dy = base.y - origin.y;
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist > radius) continue;
+        if (!isOk(base)) continue;
+        if (preferRooms && ws.getRoomType && ws.getRoomType(base.x, base.y) === 0) continue;
+        return base;
+      }
+      for (let i = 0; i < 60; i++) {
+        const base = ws.findRandomWalkableTile?.();
+        if (!base) continue;
+        const dx = base.x - origin.x;
+        const dy = base.y - origin.y;
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist > radius) continue;
+        if (!isOk(base)) continue;
+        return base;
+      }
+      return null;
+    };
+
+    const route = [];
+    if (isOk(origin)) route.push({ x: origin.x, y: origin.y });
+
+    // Guard against an infinite loop when candidates repeatedly fail constraints (e.g. tiny rooms/radius).
+    // This can otherwise hard-freeze the game during monster spawn.
+    const maxAttempts = Math.max(120, maxWaypoints * 80);
+    let attempts = 0;
+    while (route.length < maxWaypoints && attempts < maxAttempts) {
+      attempts++;
+      const cand = pickCandidate();
+      if (!cand) break;
+      const tooClose = route.some((p) => (Math.abs(p.x - cand.x) + Math.abs(p.y - cand.y)) < 3);
+      if (tooClose) continue;
+      route.push({ x: cand.x, y: cand.y });
+    }
+
+    if (attempts >= maxAttempts && route.length < maxWaypoints) {
+      console.warn('⚠️ Patrol route generation capped; using partial route', {
+        monster: monster?.type || monster?.name || 'unknown',
+        origin,
+        got: route.length,
+        wanted: maxWaypoints,
+        radius
+      });
+    }
+
+    if (route.length < 2) return;
+
+    monster.patrolRoute = route;
+    monster.patrolIndex = 0;
+  }
+
+  applyEliteTraitsToMonster(monster, levelConfig, eliteHint = null) {
+    if (!monster || monster.isDead || monster.isDying) return;
+
+    const difficulty = Number(levelConfig?.monsters?.difficulty) || Number(CONFIG.AI_DIFFICULTY) || 1.0;
+    const baseChance = Number.isFinite(CONFIG.MONSTER_ELITE_CHANCE) ? CONFIG.MONSTER_ELITE_CHANCE : 0.08;
+    const chance = Math.max(0, Math.min(0.35, baseChance + Math.max(0, difficulty - 1) * 0.02));
+
+    const isElite = eliteHint === true ? true : (eliteHint === false ? false : (Math.random() < chance));
+    if (!isElite) return;
+
+    const traits = [
+      { id: 'shielded', weakness: 'pierce', hpMult: 1.7, speedMult: 1.08, guardChanceMult: 1.6 },
+      { id: 'berserker', weakness: 'explosive', hpMult: 1.55, speedMult: 1.18, guardChanceMult: 1.1 },
+    ];
+    const picked = traits[Math.floor(Math.random() * traits.length)] || traits[0];
+
+    monster.isElite = true;
+    monster.elite = {
+      id: picked.id,
+      weakness: picked.weakness,
+      hpMult: picked.hpMult,
+      speedMult: picked.speedMult,
+      guardChanceMult: picked.guardChanceMult
+    };
+
+    const maxBefore = Math.max(1, Math.round(Number(monster.maxHealth) || 1));
+    const hpBefore = Math.max(0, Math.round(Number(monster.health) || maxBefore));
+    monster.maxHealth = Math.max(1, Math.round(maxBefore * picked.hpMult));
+    // Preserve current % health when scaling.
+    const ratio = maxBefore > 0 ? (hpBefore / maxBefore) : 1.0;
+    monster.health = Math.max(1, Math.round(monster.maxHealth * Math.max(0.05, Math.min(1, ratio))));
+
+    monster.baseSpeed = (monster.baseSpeed || monster.speed || 0) * picked.speedMult;
+    monster.speed = monster.baseSpeed;
+
+    // Visual hint: stronger emissive on elite
+    const eliteColor = picked.id === 'shielded' ? 0x88ffcc : 0xff6688;
+    const root = monster.getModel?.() || monster.model || null;
+    if (root?.traverse) {
+      root.traverse((child) => {
+        if (!child?.isMesh) return;
+        const mat = child.material;
+        const applyMat = (m) => {
+          if (!m) return;
+          if ('emissive' in m && m.emissive) m.emissive.setHex(eliteColor);
+          if ('emissiveIntensity' in m) m.emissiveIntensity = Math.max(Number(m.emissiveIntensity) || 0, 0.35);
+        };
+        if (Array.isArray(mat)) mat.forEach(applyMat);
+        else applyMat(mat);
+      });
+    }
   }
 
   /**
@@ -501,10 +786,20 @@ export class MonsterManager {
           aggressiveness === 'medium' ? 2 :
           1;
 
+        let searchDurationSeconds =
+          behavior.searchDuration ?
+            (behavior.searchDuration / 1000) :
+            undefined;
+        if (Number.isFinite(searchDurationSeconds)) {
+          searchDurationSeconds *= memoryMult;
+        }
+
         return applyOverrides(applySquadRoleDefaults({
           ...baseConfig,
           chaseRange: behavior.chaseRange ?? defaultChaseRange,
-          maxChaseDuration: behavior.maxChaseDuration ?? chaseTimeout
+          maxChaseDuration: behavior.maxChaseDuration ?? chaseTimeout,
+          searchRadius: behavior.searchRadius,
+          searchDurationSeconds
         }));
       }
 
@@ -514,10 +809,30 @@ export class MonsterManager {
           ? Math.max(4, Math.round(behavior.searchRadius * 2))
           : undefined;
 
+        let chaseCooldownSeconds =
+          behavior.chaseCooldown ?
+            (behavior.chaseCooldown / 1000) :
+            undefined;
+        if (Number.isFinite(chaseCooldownSeconds)) {
+          chaseCooldownSeconds *= memoryMult;
+        }
+
+        let searchDurationSeconds =
+          behavior.searchDuration ?
+            (behavior.searchDuration / 1000) :
+            undefined;
+        if (Number.isFinite(searchDurationSeconds)) {
+          searchDurationSeconds *= memoryMult;
+        }
+
         return applyOverrides(applySquadRoleDefaults({
           ...baseConfig,
           homeRadius: behavior.homeRadius ?? inferredHomeRadius,
-          chaseTimeout
+          chaseTimeout,
+          chaseCooldownSeconds,
+          searchRadius: behavior.searchRadius,
+          searchDurationSeconds,
+          interceptEnabled: behavior.interceptEnabled
         }));
       }
 
@@ -527,12 +842,22 @@ export class MonsterManager {
           memoryDuration *= memoryMult;
         }
 
+        let searchDurationSeconds =
+          behavior.searchDuration ?
+            (behavior.searchDuration / 1000) :
+            undefined;
+        if (Number.isFinite(searchDurationSeconds)) {
+          searchDurationSeconds *= memoryMult;
+        }
+
         return applyOverrides(applySquadRoleDefaults({
           ...baseConfig,
           followDistance: behavior.followDistance,
           memoryDuration,
           followWhenPlayerSprints: behavior.followWhenPlayerSprints ?? true,
-          followWhenHasLineOfSight: behavior.followWhenHasLineOfSight ?? true
+          followWhenHasLineOfSight: behavior.followWhenHasLineOfSight ?? true,
+          searchRadius: behavior.searchRadius,
+          searchDurationSeconds
         }));
       }
 
@@ -579,7 +904,37 @@ export class MonsterManager {
     const allowLook = options.allowLook !== false;
 
     const desiredMove = command?.move || { x: 0, y: 0 };
-    const move = allowSteering ? this.applySteering(monster, desiredMove) : desiredMove;
+    let move = allowSteering ? this.applySteering(monster, desiredMove) : desiredMove;
+
+    // If flashed (blinded), back off instead of face-tanking at point-blank.
+    if ((monster?.perceptionBlindedTimer || 0) > 0) {
+      const playerPos = this.playerRef?.position || (this.playerRef?.getPosition ? this.playerRef.getPosition() : null);
+      const selfPos = monster?.getWorldPosition?.() || monster?.position || null;
+      if (playerPos && selfPos) {
+        const tileSize = CONFIG.TILE_SIZE || 1;
+        const distTiles = Math.hypot((playerPos.x - selfPos.x) / tileSize, (playerPos.z - selfPos.z) / tileSize);
+        const retreatDist = Number(CONFIG.AI_BLIND_RETREAT_DISTANCE_TILES) || 2;
+        if (distTiles <= retreatDist) {
+          const vx = playerPos.x - selfPos.x;
+          const vz = playerPos.z - selfPos.z;
+          const len = Math.hypot(vx, vz) || 1;
+          const toPlayerX = vx / len;
+          const toPlayerZ = vz / len;
+          const dot = (Number(move?.x) || 0) * toPlayerX + (Number(move?.y) || 0) * toPlayerZ;
+          if (dot > 0.15) {
+            const m = Number(CONFIG.AI_BLIND_RETREAT_MOVE_MULT);
+            const mult = Number.isFinite(m) ? Math.max(0.2, Math.min(1.2, m)) : 0.9;
+            move = { x: -toPlayerX * mult, y: -toPlayerZ * mult };
+          }
+          // Force a short guard window while blind up close.
+          if ((monster.guardTimer || 0) <= 0) {
+            monster.guardTimer = Math.max(monster.guardTimer || 0, 0.55);
+            monster.guardCooldown = Math.max(monster.guardCooldown || 0, 1.2);
+          }
+        }
+      }
+    }
+
     const speed = monster.getSpeed ? monster.getSpeed(command?.sprint) : CONFIG.MONSTER_SPEED;
     const dx = move.x * speed * deltaTime;
     const dz = move.y * speed * deltaTime;
@@ -908,6 +1263,10 @@ export class MonsterManager {
       this.updatePlayerScent(dt, playerPos);
     }
 
+    // Special archetypes (Commander aura, fear/pressure).
+    this.applyCommanderAura();
+    if (playerPos) this.applyFearAura(playerPos);
+
 	    const tileSize = CONFIG.TILE_SIZE || 1;
 	    const farDistanceTiles = CONFIG.MONSTER_AI_FAR_DISTANCE_TILES ?? 12;
 	    const farDistanceWorld = Math.max(0, farDistanceTiles) * tileSize;
@@ -916,6 +1275,42 @@ export class MonsterManager {
 	    const cullTiles = CONFIG.MONSTER_RENDER_CULL_DISTANCE_TILES ?? 0;
 	    const cullWorld = Number.isFinite(cullTiles) && cullTiles > 0 ? cullTiles * tileSize : 0;
 	    const cullSq = cullWorld > 0 ? cullWorld * cullWorld : 0;
+
+    // Fairness: optionally limit how many monsters may actively "chase" at once.
+    const maxChasers = Number(CONFIG.AI_MAX_CHASERS);
+    if (playerGrid && Number.isFinite(maxChasers) && maxChasers > 0) {
+      const candidates = [];
+      for (const m of this.monsters) {
+        if (!m || m.isDead || m.isDying) continue;
+        const brain = this.brains.get(m) || null;
+        const state = brain?.state ?? brain?.mode ?? null;
+        const canSee = this.canMonsterSeePlayer(m, playerGrid);
+        const mg = m.getGridPosition?.() || m.gridPos || null;
+        const dist = mg ? (Math.abs(mg.x - playerGrid.x) + Math.abs(mg.y - playerGrid.y)) : Infinity;
+        const score = (state === 'chase' ? 2000 : 0) + (canSee ? 1000 : 0) - (Number.isFinite(dist) ? dist : 999);
+        candidates.push({ monster: m, score });
+      }
+      candidates.sort((a, b) => b.score - a.score);
+      const allowed = new Set(candidates.slice(0, Math.max(1, Math.round(maxChasers))).map((c) => c.monster));
+      for (const m of this.monsters) {
+        if (!m) continue;
+        m.aiChaseSuppressed = !allowed.has(m);
+      }
+    } else {
+      for (const m of this.monsters) {
+        if (!m) continue;
+        m.aiChaseSuppressed = false;
+      }
+    }
+
+    if (CONFIG.DEBUG_NAV_HEATMAP_ENABLED !== false && this.worldState?.recordNavHeat) {
+      for (const m of this.monsters) {
+        if (!m || m.isDead || m.isDying) continue;
+        const g = m.getGridPosition?.() || m.gridPos || null;
+        if (g) this.worldState.recordNavHeat(g, 1);
+      }
+      if (playerGrid) this.worldState.recordNavHeat(playerGrid, 0.35);
+    }
 
     for (const monster of this.monsters) {
       if (monster?.isDead) continue;
@@ -936,6 +1331,26 @@ export class MonsterManager {
       }
       if ((monster.perceptionBlindedTimer || 0) > 0) {
         monster.perceptionBlindedTimer = Math.max(0, (monster.perceptionBlindedTimer || 0) - dt);
+      }
+      if ((monster.corrosionTimer || 0) > 0) {
+        monster.corrosionTimer = Math.max(0, (monster.corrosionTimer || 0) - dt);
+      }
+      if ((monster.burnTimer || 0) > 0) {
+        monster.burnTimer = Math.max(0, (monster.burnTimer || 0) - dt);
+        monster.burnTick = (monster.burnTick || 0) + dt;
+        if ((monster.burnTick || 0) >= 0.95) {
+          const ticks = Math.floor((monster.burnTick || 0) / 0.95);
+          monster.burnTick = (monster.burnTick || 0) - ticks * 0.95;
+          const dps = Number(monster.burnDps) || 0;
+          const dmg = Math.round(Math.max(0, dps) * ticks);
+          if (dmg > 0) {
+            this.damage?.applyDamageToMonster?.(monster, dmg, { cause: 'burn', isDot: true });
+          }
+        }
+        if ((monster.burnTimer || 0) <= 0) {
+          monster.burnDps = 0;
+          monster.burnTick = 0;
+        }
       }
       if ((monster.stunTimer || 0) > 0) {
         monster.stunTimer = Math.max(0, (monster.stunTimer || 0) - dt);
@@ -1119,6 +1534,17 @@ export class MonsterManager {
       color: fire.color,
       sourceMonster: monster
     });
+
+    if (fire?.blindFire) {
+      this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+        kind: 'blind_fire',
+        position: origin.clone(),
+        radius: Math.max(6, Number(CONFIG.AI_BLIND_FIRE_NOISE_RADIUS) || 14),
+        ttl: 0.9,
+        strength: 0.9,
+        source: monster
+      });
+    }
   }
 
   /**
@@ -1135,6 +1561,121 @@ export class MonsterManager {
    */
   getMonsters() {
     return this.monsters;
+  }
+
+  /**
+   * Debug helper: return a lightweight snapshot of monster AI state.
+   * Intended for console inspection (debug pages / main game).
+   */
+  getAIDebugSnapshot() {
+    return this.getAIDebugSnapshotFiltered();
+  }
+
+  getAIDebugSnapshotFiltered(options = {}) {
+    const out = [];
+    const picks = this._pickAIDebugMonsters(options);
+    for (const { monster, brain } of picks) {
+      if (!monster) continue;
+      out.push({
+        id: monster.id,
+        type: monster.type || monster.typeConfig?.id || monster.typeConfig?.name || null,
+        grid: monster.getGridPosition?.() || monster.gridPos || null,
+        state: brain?.state ?? brain?.mode ?? null,
+        targetType: brain?.targetType ?? null,
+        currentTarget: brain?.currentTarget ?? null,
+        pathLen: Array.isArray(brain?.currentPath) ? brain.currentPath.length : null,
+        lastKnown: brain?.lastKnownPlayerGrid ?? null,
+        lastSeenSecAgo: Number.isFinite(brain?.lastSeenPlayerTime) ? Math.max(0, (brain.now?.() ?? performance.now() / 1000) - brain.lastSeenPlayerTime) : null,
+        lastNoise: brain?.lastHeardNoise?.grid ? { kind: brain.lastHeardNoise.kind, grid: brain.lastHeardNoise.grid } : null,
+        lastScent: brain?.lastSmelledScent?.grid ? { kind: brain.lastSmelledScent.kind, grid: brain.lastSmelledScent.grid } : null,
+        confidence: Number.isFinite(brain?.targetConfidence) ? brain.targetConfidence : null,
+        squadRole: monster?.typeConfig?.squad?.role ?? null,
+        squadId: monster?.typeConfig?.squad?.squadId ?? null
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Debug helper: markers for minimap overlay (targets / last-known / noises).
+   * @returns {Array<{kind:string,x:number,y:number,color:string,monsterId:number|null}>}
+   */
+  getAIDebugMinimapMarkers(options = {}) {
+    const markers = [];
+    const picks = this._pickAIDebugMonsters(options);
+    for (const { monster, brain } of picks) {
+      const monsterId = Number.isFinite(monster.id) ? monster.id : null;
+
+      const push = (kind, grid, color) => {
+        if (!grid || !Number.isFinite(grid.x) || !Number.isFinite(grid.y)) return;
+        markers.push({ kind, x: grid.x, y: grid.y, color, monsterId });
+      };
+
+      push('ai_target', brain?.currentTarget || null, 'rgba(0, 220, 255, 0.95)');
+      push('ai_lastKnown', brain?.lastKnownPlayerGrid || null, 'rgba(255, 235, 59, 0.95)');
+      push('ai_noise', brain?.lastHeardNoise?.grid || null, 'rgba(255, 112, 67, 0.95)');
+      push('ai_scent', brain?.lastSmelledScent?.grid || null, 'rgba(156, 39, 176, 0.9)');
+    }
+    return markers;
+  }
+
+  /**
+   * Debug helper: 3D debug primitives (paths/targets/last-known) for in-world rendering.
+   * @returns {Array<{id:number|null,worldPos:any,target:any,lastKnown:any,lastNoise:any,path:any,state:any}>}
+   */
+  getAIDebug3DData(options = {}) {
+    const out = [];
+    const maxPts = Math.max(8, Math.round(Number(CONFIG.DEBUG_AI_3D_MAX_PATH_POINTS) || 64));
+    const picks = this._pickAIDebugMonsters(options);
+    for (const { monster, brain } of picks) {
+      const pos = monster.getWorldPosition?.() || monster.position || null;
+      out.push({
+        id: Number.isFinite(monster.id) ? monster.id : null,
+        worldPos: pos?.clone ? pos.clone() : pos,
+        state: brain?.state ?? brain?.mode ?? null,
+        target: brain?.currentTarget || null,
+        lastKnown: brain?.lastKnownPlayerGrid || null,
+        lastNoise: brain?.lastHeardNoise?.grid || null,
+        path: Array.isArray(brain?.currentPath) ? brain.currentPath.slice(0, maxPts) : null
+      });
+    }
+    return out;
+  }
+
+  _pickAIDebugMonsters(options = {}) {
+    const onlyChasing = options.onlyChasing === true;
+    const onlyLeader = options.onlyLeader === true;
+    const nearestN = Math.max(0, Math.round(Number(options.nearestN) || 0));
+
+    const playerGrid = this.playerRef?.getGridPosition?.() || null;
+    const scored = [];
+    for (const monster of this.monsters || []) {
+      if (!monster || monster.isDead || monster.isDying) continue;
+      const brain = this.brains.get(monster) || null;
+
+      const role = monster?.typeConfig?.squad?.role ?? null;
+      if (onlyLeader && role !== 'leader') continue;
+
+      const state = String(brain?.state ?? brain?.mode ?? '');
+      const isChasing = state === 'chase' || state.startsWith('chase');
+      if (onlyChasing && !isChasing) continue;
+
+      let dist = 0;
+      if (playerGrid && monster.getGridPosition) {
+        const mg = monster.getGridPosition();
+        dist = Math.abs(mg.x - playerGrid.x) + Math.abs(mg.y - playerGrid.y);
+      } else if (playerGrid && monster.gridPos) {
+        dist = Math.abs(monster.gridPos.x - playerGrid.x) + Math.abs(monster.gridPos.y - playerGrid.y);
+      }
+
+      scored.push({ monster, brain, dist });
+    }
+
+    if (nearestN > 0 && scored.length > nearestN) {
+      scored.sort((a, b) => a.dist - b.dist);
+      return scored.slice(0, nearestN);
+    }
+    return scored;
   }
 
   /**

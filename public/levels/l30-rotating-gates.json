@@ -1,0 +1,32 @@
+{
+  "id": 30,
+  "name": "L30 - Rotating Gates",
+  "maze": { "width": 31, "height": 31, "roomDensity": 3.0, "extraConnectionChance": 0.12 },
+  "features": {
+    "rotatingDoors": {
+      "enabled": true,
+      "count": 8,
+      "minDistFromSpawn": 7,
+      "autoCloseSeconds": 7,
+      "startOpen": false
+    }
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Gates can be opened from either side, but they auto-close after a few seconds.",
+            "Use them to create risky commits or to cut off chases."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["unlockExit"] }
+  }
+}
+

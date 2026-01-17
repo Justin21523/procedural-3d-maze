@@ -33,6 +33,8 @@ export class FlankCoverTactics {
     if (!this.enabled) return { targetGrid: playerGrid, mode: null, holdPosition: false };
     if (!monsterGrid || !playerGrid) return { targetGrid: playerGrid, mode: null, holdPosition: false };
 
+    const role = String(this.monster?.typeConfig?.squad?.role || '').trim() || 'leader';
+
     if (this.tacticTarget && now < (this.nextPickTime || 0)) {
       if (this.tacticMode === 'cover') {
         const distToCover = manhattan(monsterGrid, this.tacticTarget);
@@ -54,6 +56,26 @@ export class FlankCoverTactics {
         this.tacticMode = 'cover';
         this.tacticHoldUntil = now + 1.2 + Math.random() * 0.5;
         this.nextPickTime = now + 1.6 + Math.random() * 0.6;
+        return { targetGrid: cover, mode: 'cover', holdPosition: false };
+      }
+    }
+
+    // Role-based behavior: leader/rusher tends to chase directly; flanker tries to cut off; cover prefers cover even when not low.
+    if (role === 'leader' || role === 'rusher') {
+      this.tacticTarget = { x: playerGrid.x, y: playerGrid.y };
+      this.tacticMode = 'chase';
+      this.tacticHoldUntil = 0;
+      this.nextPickTime = now + 0.35 + Math.random() * 0.2;
+      return { targetGrid: this.tacticTarget, mode: 'chase', holdPosition: false };
+    }
+
+    if (role === 'cover' && this.coverEnabled) {
+      const cover = this.pickCoverTarget(monsterGrid, playerGrid, isWalkableTile);
+      if (cover) {
+        this.tacticTarget = cover;
+        this.tacticMode = 'cover';
+        this.tacticHoldUntil = now + 0.9 + Math.random() * 0.45;
+        this.nextPickTime = now + 1.2 + Math.random() * 0.6;
         return { targetGrid: cover, mode: 'cover', holdPosition: false };
       }
     }
@@ -151,4 +173,3 @@ export class FlankCoverTactics {
     return best ? { x: best.x, y: best.y } : null;
   }
 }
-

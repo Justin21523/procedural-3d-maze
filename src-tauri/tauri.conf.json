@@ -6,9 +6,9 @@
     "devUrl": "http://127.0.0.1:3002",
     "frontendDist": "../dist"
   },
-  "productName": "Procedural 3D Maze",
+  "productName": "Procedural3DMaze",
   "version": "0.1.0",
-  "identifier": "com.procedural3dmaze.app",
+  "identifier": "com.procedural3dmaze.game",
   "app": {
     "windows": [
       {

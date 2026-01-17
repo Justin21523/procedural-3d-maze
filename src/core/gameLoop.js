@@ -23,7 +23,7 @@ export class GameLoop {
    * @param {GameState} gameState - Game state manager (optional)
    * @param {ExitPoint} exitPoint - Exit point (optional)
    */
-  constructor(sceneManager, player, minimap = null, monsterManager = null, lights = null, worldState = null, gameState = null, exitPoint = null, missionPoints = [], autopilot = null, projectileManager = null, gun = null, spawnDirector = null, toolSystem = null, uiManager = null, interactableSystem = null, missionDirector = null) {
+  constructor(sceneManager, player, minimap = null, monsterManager = null, lights = null, worldState = null, gameState = null, exitPoint = null, missionPoints = [], autopilot = null, projectileManager = null, gun = null, spawnDirector = null, toolSystem = null, deviceManager = null, uiManager = null, interactableSystem = null, missionDirector = null) {
     this.sceneManager = sceneManager;
     this.player = player;
     this.minimap = minimap;
@@ -33,6 +33,7 @@ export class GameLoop {
     this.gun = gun;
     this.spawnDirector = spawnDirector;
     this.toolSystem = toolSystem;
+    this.deviceManager = deviceManager;
     this.uiManager = uiManager;
     this.interactableSystem = interactableSystem;
     this.missionDirector = missionDirector;
@@ -76,6 +77,14 @@ export class GameLoop {
         minimapInterval: this.minimapInterval
       }
     };
+
+    this._watchdog = {
+      lowFpsSeconds: 0,
+      spikeSeconds: 0,
+      tripped: false,
+      reason: null
+    };
+    this.onWatchdogTrip = null;
 
     this.lastProgressPos = null;
     this.noProgressTimer = 0;
@@ -133,13 +142,20 @@ export class GameLoop {
   /**
    * Stop the game loop
    */
-  stop() {
+  stop(reason = '') {
+    if (!this.running) return;
     this.running = false;
     if (this.rafId !== null) {
       try { cancelAnimationFrame(this.rafId); } catch { /* ignore */ }
       this.rafId = null;
     }
-    console.log('Game loop stopped');
+    this.lastStopReason = String(reason || '');
+    console.warn(`⏹️ Game loop stopped${this.lastStopReason ? ` (${this.lastStopReason})` : ''}`);
+    try {
+      console.trace('Game loop stop trace');
+    } catch {
+      // ignore
+    }
   }
 
   registerSystems() {
@@ -244,6 +260,38 @@ export class GameLoop {
       this.autopilotActive = autopilotControlling;
     }, { order: 10 });
 
+    systems.add('moveModifiers', () => {
+      const player = this.player;
+      const md = this.missionDirector;
+      if (!player?.setMoveModifiers) return;
+      if (!md?.missions?.values) {
+        player.setMoveModifiers({ speedMult: 1.0, sprintDisabled: false });
+        return;
+      }
+
+      let speedMult = 1.0;
+      let sprintDisabled = false;
+
+      for (const mission of md.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'deliverFragile') continue;
+        if (mission.state?.delivered) continue;
+        if (!mission.state?.carrying) continue;
+
+        const multRaw = Number(mission.params?.carrySpeedMult);
+        const mult = Number.isFinite(multRaw)
+          ? Math.max(0.2, Math.min(1.0, multRaw))
+          : (Number.isFinite(CONFIG.PLAYER_CARRY_HEAVY_SPEED_MULT) ? CONFIG.PLAYER_CARRY_HEAVY_SPEED_MULT : 0.72);
+        speedMult = Math.min(speedMult, mult);
+
+        const defaultDisable = CONFIG.PLAYER_CARRY_HEAVY_DISABLE_SPRINT === true;
+        const disable = mission.params?.carryDisableSprint === false ? false : defaultDisable;
+        if (disable) sprintDisabled = true;
+      }
+
+      player.setMoveModifiers({ speedMult, sprintDisabled });
+    }, { order: 18 });
+
     systems.add('player', (dt, ctx) => {
       if (this.gameState?.gameOver) return;
       if (!this.player?.update) return;
@@ -288,7 +336,9 @@ export class GameLoop {
         monsterManager: this.monsterManager,
         worldState: this.worldState,
         gameState: this.gameState,
-        missionDirector: this.missionDirector
+        missionDirector: this.missionDirector,
+        autopilot: this.autopilot,
+        gun: this.gun
       });
       this.playerToolAISystem?.update?.(dt, ctx);
     }, { order: 35 });
@@ -307,6 +357,11 @@ export class GameLoop {
       if (this.gameState?.gameOver) return;
       this.toolSystem?.update?.(dt);
     }, { order: 55 });
+
+    systems.add('devices', (dt) => {
+      if (this.gameState?.gameOver) return;
+      this.deviceManager?.update?.(dt);
+    }, { order: 56 });
 
     systems.add('worldMarkers', (dt, ctx) => {
       if (this.gameState?.gameOver) return;
@@ -433,6 +488,52 @@ export class GameLoop {
       }
     }, { order: 140 });
 
+    systems.add('darkZones', () => {
+      const ws = this.worldState;
+      const ve = this.visualEffects;
+      if (!ws || !ve) return;
+
+      const playerPos = this.player?.getPosition?.() || null;
+      if (!playerPos) return;
+
+      const zones = typeof ws.getDarkZones === 'function'
+        ? ws.getDarkZones()
+        : (Array.isArray(ws.darkZones) ? ws.darkZones : []);
+      let tMax = 0;
+      if (Array.isArray(zones) && zones.length > 0) {
+        const px = Number(playerPos.x) || 0;
+        const pz = Number(playerPos.z) || 0;
+        for (const zone of zones) {
+          if (!zone) continue;
+          const r = Number(zone.radius) || 0;
+          if (!(r > 0)) continue;
+          const cx = Number.isFinite(zone.x) ? zone.x : (Number.isFinite(zone.position?.x) ? zone.position.x : 0);
+          const cz = Number.isFinite(zone.z) ? zone.z : (Number.isFinite(zone.position?.z) ? zone.position.z : 0);
+          const dx = px - cx;
+          const dz = pz - cz;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          if (dist >= r) continue;
+          const t = 1 - (dist / r);
+          if (t > tMax) tMax = t;
+        }
+      }
+
+      const overlayMax = Number.isFinite(CONFIG.DARK_OVERLAY_MAX) ? CONFIG.DARK_OVERLAY_MAX : 0.75;
+      ve.setDarkness?.(Math.max(0, Math.min(1, tMax * overlayMax)));
+
+      const scene = this.sceneManager?.getScene?.() || this.sceneManager?.scene || null;
+      const fog = scene?.fog || null;
+      if (fog && typeof fog.density === 'number') {
+        if (!Number.isFinite(this._darkZonesBaseFogDensity)) {
+          this._darkZonesBaseFogDensity = Number(fog.density) || 0;
+        }
+        const base = Number(this._darkZonesBaseFogDensity) || 0;
+        const multRaw = Number(CONFIG.DARK_FOG_MULT);
+        const mult = Number.isFinite(multRaw) ? Math.max(1, Math.min(8, multRaw)) : 2.2;
+        fog.density = base * (1 + (mult - 1) * tMax);
+      }
+    }, { order: 145 });
+
     systems.add('visualEffects', (dt) => {
       if (this.visualEffects) {
         this.visualEffects.update(dt, this.sceneManager.camera);
@@ -455,61 +556,84 @@ export class GameLoop {
     const deltaTime = frameMs / 1000; // Convert to seconds
     this.lastTime = now;
 
-    // Update perf EMA (used for dynamic resolution)
-    if (Number.isFinite(frameMs) && frameMs > 0) {
-      const a = 0.06;
-      this._perf.emaFrameMs = this._perf.emaFrameMs * (1 - a) + frameMs * a;
-    }
+    try {
+      // Update perf EMA (used for dynamic resolution)
+      if (Number.isFinite(frameMs) && frameMs > 0) {
+        const a = 0.06;
+        this._perf.emaFrameMs = this._perf.emaFrameMs * (1 - a) + frameMs * a;
+      }
 
-    // Update game state
-    const updateStart = performance.now();
-    this.update(deltaTime, now);
-    const updateMs = performance.now() - updateStart;
+      // Update game state
+      const updateStart = performance.now();
+      this.update(deltaTime, now);
+      const updateMs = performance.now() - updateStart;
 
-    // Dynamic resolution scaling to maintain target FPS
-    if (CONFIG.RENDER_DYNAMIC_RESOLUTION && this.sceneManager?.setPixelRatio) {
-      const dt = Math.max(0, Math.min(0.1, deltaTime));
-      this._perf.adjustCooldown = Math.max(0, (this._perf.adjustCooldown || 0) - dt);
-      if (this._perf.adjustCooldown <= 0) {
-        const targetFps = Number.isFinite(CONFIG.RENDER_TARGET_FPS) ? CONFIG.RENDER_TARGET_FPS : 60;
-        const ema = Math.max(1, Number(this._perf.emaFrameMs) || 16.67);
-        const fps = 1000 / ema;
-        const ratio = this.sceneManager.pixelRatio || 1.0;
-        const step = 0.05;
-        const downThreshold = targetFps - 5;
-        const upThreshold = targetFps + 10;
+      // Dynamic resolution scaling to maintain target FPS
+      if (CONFIG.RENDER_DYNAMIC_RESOLUTION && this.sceneManager?.setPixelRatio) {
+        const dt = Math.max(0, Math.min(0.1, deltaTime));
+        this._perf.adjustCooldown = Math.max(0, (this._perf.adjustCooldown || 0) - dt);
+        if (this._perf.adjustCooldown <= 0) {
+          const targetFps = Number.isFinite(CONFIG.RENDER_TARGET_FPS) ? CONFIG.RENDER_TARGET_FPS : 60;
+          const ema = Math.max(1, Number(this._perf.emaFrameMs) || 16.67);
+          const fps = 1000 / ema;
+          const ratio = this.sceneManager.pixelRatio || 1.0;
+          const step = 0.05;
+          const downThreshold = targetFps - 5;
+          const upThreshold = targetFps + 10;
 
-        if (fps < downThreshold) {
-          this.sceneManager.setPixelRatio(ratio - step);
-          this._perf.adjustCooldown = 0.9;
-        } else if (fps > upThreshold) {
-          this.sceneManager.setPixelRatio(ratio + step);
-          this._perf.adjustCooldown = 1.6;
-        } else {
-          this._perf.adjustCooldown = 0.6;
+          if (fps < downThreshold) {
+            this.sceneManager.setPixelRatio(ratio - step);
+            this._perf.adjustCooldown = 0.9;
+          } else if (fps > upThreshold) {
+            this.sceneManager.setPixelRatio(ratio + step);
+            this._perf.adjustCooldown = 1.6;
+          } else {
+            this._perf.adjustCooldown = 0.6;
+          }
         }
       }
+
+      // Render scene
+      const renderStart = performance.now();
+      this.render();
+      const renderMs = performance.now() - renderStart;
+
+      const ema = Math.max(1, Number(this._perf.emaFrameMs) || 16.67);
+      const fpsEma = 1000 / ema;
+
+      this.applyPerformanceGuard(deltaTime, fpsEma);
+      this.applyWatchdog(deltaTime, fpsEma);
+
+      this.sceneManager?.setFrameStats?.({
+        frameMs: Number.isFinite(frameMs) ? frameMs : 0,
+        updateMs,
+        renderMs,
+        fpsEma
+      });
+    } catch (err) {
+      // If an exception bubbles out of update/render, it would otherwise kill the RAF chain and "freeze" the game.
+      const msg = String(err?.message || err || 'Unknown loop error');
+      const at = Number(this._lastLoopErrorAtMs) || 0;
+      if (!Number.isFinite(this._loopErrorCount)) this._loopErrorCount = 0;
+      if (now - at > 1000) {
+        this._loopErrorCount = 0;
+      }
+      this._loopErrorCount += 1;
+      this._lastLoopErrorAtMs = now;
+
+      if (this._loopErrorCount <= 3) {
+        console.error('💥 GameLoop frame failed:', msg, err);
+      } else if (this._loopErrorCount === 4) {
+        console.error('💥 GameLoop frame continues failing (muting further logs for 1s)…', msg);
+      }
+      const bus = this.gameState?.eventBus || null;
+      bus?.emit?.(EVENTS.UI_TOAST, { text: `Loop error: ${msg}`, seconds: 2.5 });
+    } finally {
+      // Request next frame (keep the loop alive unless explicitly stopped).
+      if (this.running) {
+        this.rafId = requestAnimationFrame(() => this.loop());
+      }
     }
-
-    // Render scene
-    const renderStart = performance.now();
-    this.render();
-    const renderMs = performance.now() - renderStart;
-
-    const ema = Math.max(1, Number(this._perf.emaFrameMs) || 16.67);
-    const fpsEma = 1000 / ema;
-
-    this.applyPerformanceGuard(deltaTime, fpsEma);
-
-    this.sceneManager?.setFrameStats?.({
-      frameMs: Number.isFinite(frameMs) ? frameMs : 0,
-      updateMs,
-      renderMs,
-      fpsEma
-    });
-
-    // Request next frame
-    this.rafId = requestAnimationFrame(() => this.loop());
   }
 
   applyPerformanceGuard(deltaTime, fpsEma) {
@@ -569,6 +693,57 @@ export class GameLoop {
     }
   }
 
+  applyWatchdog(deltaTime, fpsEma) {
+    if (CONFIG.WATCHDOG_ENABLED === false) return;
+    const w = this._watchdog || (this._watchdog = {});
+    if (w.tripped) return;
+
+    const dtRaw = Number(deltaTime) || 0;
+    const dt = Math.max(0, Math.min(0.5, dtRaw));
+    const lowFps = Number(CONFIG.WATCHDOG_LOW_FPS_THRESHOLD) || 18;
+    const lowFpsSec = Number(CONFIG.WATCHDOG_LOW_FPS_SECONDS) || 3.0;
+    const spikeDt = Number(CONFIG.WATCHDOG_DT_SPIKE_THRESHOLD) || 0.22;
+    const spikeSec = Number(CONFIG.WATCHDOG_DT_SPIKE_SECONDS) || 1.2;
+
+    if (Number.isFinite(fpsEma) && fpsEma < lowFps) {
+      w.lowFpsSeconds = (w.lowFpsSeconds || 0) + dt;
+    } else {
+      w.lowFpsSeconds = Math.max(0, (w.lowFpsSeconds || 0) - dt * 0.5);
+    }
+
+    if (dt >= spikeDt) {
+      w.spikeSeconds = (w.spikeSeconds || 0) + dt;
+    } else {
+      w.spikeSeconds = Math.max(0, (w.spikeSeconds || 0) - dt);
+    }
+
+    if ((w.lowFpsSeconds || 0) >= lowFpsSec) {
+      w.tripped = true;
+      w.reason = `low_fps:${Number.isFinite(fpsEma) ? fpsEma.toFixed(1) : 'n/a'}`;
+    } else if ((w.spikeSeconds || 0) >= spikeSec) {
+      w.tripped = true;
+      w.reason = `dt_spike:${dt.toFixed(3)}`;
+    }
+
+    if (w.tripped && typeof this.onWatchdogTrip === 'function') {
+      this.onWatchdogTrip({
+        reason: w.reason,
+        fpsEma: Number.isFinite(fpsEma) ? fpsEma : null,
+        dt
+      });
+    }
+  }
+
+  getWatchdogSnapshot() {
+    const w = this._watchdog || {};
+    return {
+      tripped: !!w.tripped,
+      reason: w.reason || null,
+      lowFpsSeconds: Number(w.lowFpsSeconds) || 0,
+      spikeSeconds: Number(w.spikeSeconds) || 0
+    };
+  }
+
   /**
    * Update all game systems
    * @param {number} deltaTime - Time since last frame in seconds
@@ -610,12 +785,21 @@ export class GameLoop {
       const pickupPositions = this.spawnDirector?.pickupManager?.getPickupMarkers
         ? this.spawnDirector.pickupManager.getPickupMarkers()
         : [];
-      const devicePositions = this.toolSystem?.getDeviceMarkers
-        ? this.toolSystem.getDeviceMarkers()
-        : [];
+      const devicePositions = [
+        ...(this.toolSystem?.getDeviceMarkers ? this.toolSystem.getDeviceMarkers() : []),
+        ...(this.deviceManager?.getDeviceMarkers ? this.deviceManager.getDeviceMarkers() : []),
+      ];
       this.minimap.render(playerGridPos, monsterPositions, exitPosition, missionPositions, {
         pickupPositions,
         devicePositions,
+        navHeat: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (this.worldState?.getNavHeat?.() || null) : null,
+        aiMarkers: (CONFIG.DEBUG_AI_MARKERS_ENABLED !== false && this.monsterManager?.getAIDebugMinimapMarkers)
+          ? this.monsterManager.getAIDebugMinimapMarkers({
+            onlyChasing: CONFIG.DEBUG_AI_FILTER_CHASE_ONLY === true,
+            onlyLeader: CONFIG.DEBUG_AI_FILTER_LEADER_ONLY === true,
+            nearestN: Number(CONFIG.DEBUG_AI_FILTER_NEAREST_N) || 0
+          })
+          : null
       });
     }
   }

@@ -2,6 +2,8 @@
  * Utility math functions for game calculations
  */
 
+import { CONFIG } from '../core/config.js';
+
 /**
  * Calculate Euclidean distance between two points
  * @param {Object} a - First point {x, y} or {x, y, z}
@@ -82,5 +84,35 @@ export function worldToGrid(worldX, worldZ, tileSize) {
  * @returns {number} Random integer
  */
 export function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  const rand = typeof CONFIG.RAND === 'function' ? CONFIG.RAND : Math.random;
+  return Math.floor(rand() * (max - min + 1)) + min;
+}
+
+/**
+ * Generate a random float between min (inclusive) and max (exclusive).
+ * Seed-aware when CONFIG.RAND is provided.
+ * @param {number} min
+ * @param {number} max
+ * @returns {number}
+ */
+export function randomFloat(min = 0, max = 1) {
+  const rand = typeof CONFIG.RAND === 'function' ? CONFIG.RAND : Math.random;
+  const a = Number(min);
+  const b = Number(max);
+  const lo = Number.isFinite(a) ? a : 0;
+  const hi = Number.isFinite(b) ? b : 1;
+  return lo + (hi - lo) * rand();
+}
+
+/**
+ * Seed-aware chance roll helper.
+ * @param {number} chance - 0..1
+ * @returns {boolean}
+ */
+export function chance(chance) {
+  const c = Number(chance);
+  if (!Number.isFinite(c)) return false;
+  if (c <= 0) return false;
+  if (c >= 1) return true;
+  return randomFloat(0, 1) < c;
 }

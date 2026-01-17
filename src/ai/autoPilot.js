@@ -11,7 +11,7 @@ import { SearchTask } from './tasks/searchTask.js';
  * based on mission points, exit, and monster avoidance.
  */
 export class AutoPilot {
-  constructor(worldState, monsterManager, missionPointsRef, exitPointRef, playerController, levelConfig = null, pickupMarkersRef = null) {
+  constructor(worldState, monsterManager, missionPointsRef, exitPointRef, playerController, levelConfig = null, pickupMarkersRef = null, refs = {}) {
     this.worldState = worldState;
     this.monsterManager = monsterManager;
     this.missionPointsRef = missionPointsRef; // function or array reference
@@ -19,6 +19,9 @@ export class AutoPilot {
     this.playerController = playerController;
     this.gun = null;
     this.pickupMarkersRef = pickupMarkersRef; // function returning pickup markers (grid)
+    this.interactableSystem = refs?.interactableSystem || null;
+    this.toolSystem = refs?.toolSystem || null;
+    this.gameState = refs?.gameState || playerController?.gameState || null;
 
     this.pathfinder = new Pathfinding(worldState);
     this.currentPath = [];
@@ -91,6 +94,31 @@ export class AutoPilot {
     this.taskWantsInteract = false;
     this.taskInteractId = null;
     this._missionState = null;
+
+    // Tactical diversions (e.g., after decoy/fake objective to rotate path)
+    this.divertUntilMs = 0;
+
+    // Burst sprint pacing (reduce noise + overshoot while still moving with urgency)
+    this._burst = {
+      sprinting: false,
+      timer: 0
+    };
+
+    // Utility routing (special rooms / support stations)
+    this.utilityCooldowns = {
+      medicalUntilMs: 0,
+      armoryUntilMs: 0,
+      controlUntilMs: 0
+    };
+
+    // Interaction stall guard: if we keep "interact"-ing the same id without progress, temporarily skip it.
+    this.interactStall = {
+      key: '',
+      id: '',
+      firstMs: 0,
+      lastTryMs: 0,
+      tries: 0
+    };
   }
 
   getPickupMarkers() {
@@ -106,6 +134,131 @@ export class AutoPilot {
 
   setGun(gun) {
     this.gun = gun || null;
+  }
+
+  getHealthPct() {
+    const gs = this.gameState || this.playerController?.gameState || null;
+    const hp = Number(gs?.currentHealth);
+    const max = Number(gs?.maxHealth);
+    if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return null;
+    return Math.max(0, Math.min(1, hp / max));
+  }
+
+  getAmmoTotal() {
+    const gun = this.gun || null;
+    if (!gun?.getHudState) return null;
+    const hud = gun.getHudState();
+    const mag = Number(hud?.ammoInMag);
+    const reserve = Number(hud?.ammoReserve);
+    if (!Number.isFinite(mag) || !Number.isFinite(reserve)) return null;
+    return Math.max(0, mag + reserve);
+  }
+
+  pickClosestInteractableByKind(kinds, playerGrid) {
+    const system = this.interactableSystem;
+    if (!system?.list) return null;
+    const all = system.list();
+    if (!Array.isArray(all) || all.length === 0) return null;
+
+    const want = new Set((kinds || []).map((k) => String(k || '').trim()).filter(Boolean));
+    if (want.size === 0) return null;
+
+    let best = null;
+    for (const e of all) {
+      if (!e || e.enabled === false || e.collected) continue;
+      if (!e.id || !e.gridPos) continue;
+      if (!want.has(String(e.kind || ''))) continue;
+      if (this.isTemporarilyUnreachable(e.gridPos)) continue;
+      const d = Math.abs(e.gridPos.x - playerGrid.x) + Math.abs(e.gridPos.y - playerGrid.y);
+      if (!best || d < best.d) best = { id: e.id, gridPos: e.gridPos, kind: e.kind, d };
+    }
+    return best;
+  }
+
+  shouldDetourForUtility(missionState) {
+    const objective = missionState?.objective || null;
+    const template = String(objective?.template || '').trim();
+    // Do not intentionally create extra noise during "stay quiet / don't get hit" objectives.
+    if (template === 'stealthNoise' || template === 'surviveNoDamage') return false;
+    return true;
+  }
+
+  maybeQueueUtilityTask(playerGrid, missionState) {
+    const now = Date.now();
+    if (!playerGrid) return false;
+    if (!this.interactableSystem?.list) return false;
+
+    const canDetour = this.shouldDetourForUtility(missionState);
+    const healthPct = this.getHealthPct();
+    const ammoTotal = this.getAmmoTotal();
+
+    const hpThreshold = 0.7;
+    const hpEmergency = 0.55;
+    const ammoThreshold = 30;
+    const ammoEmergency = 12;
+
+    const objective = missionState?.objective || null;
+    const objectiveTemplate = String(objective?.template || '').trim();
+    const nextGrid = objective?.nextInteractGridPos || null;
+    const hasImmediateTarget = !!(nextGrid && Number.isFinite(nextGrid.x) && Number.isFinite(nextGrid.y));
+
+    const emergency =
+      (healthPct !== null && healthPct <= hpEmergency) ||
+      (ammoTotal !== null && ammoTotal <= ammoEmergency);
+
+    // Keep objective order strict: only detour when it's an emergency, or when we don't have an immediate interact target.
+    if (!emergency && hasImmediateTarget && objectiveTemplate !== 'exit' && objectiveTemplate !== 'unlockExit') {
+      return false;
+    }
+
+    // Medical detour (priority when low HP).
+    if (healthPct !== null && (healthPct <= hpEmergency || (canDetour && healthPct <= hpThreshold))) {
+      if (now >= (this.utilityCooldowns?.medicalUntilMs || 0)) {
+        const med = this.pickClosestInteractableByKind(['medicalStation'], playerGrid);
+        if (med) {
+          this.utilityCooldowns.medicalUntilMs = now + 25_000;
+          this.taskTargetType = 'utility';
+          this.taskRunner.setTasks([new InteractTask(med.id, med.gridPos, { threshold: 0 })]);
+          return true;
+        }
+      }
+    }
+
+    // Armory detour (priority when low ammo).
+    if (ammoTotal !== null && (ammoTotal <= ammoEmergency || (canDetour && ammoTotal <= ammoThreshold))) {
+      if (now >= (this.utilityCooldowns?.armoryUntilMs || 0)) {
+        const armory = this.pickClosestInteractableByKind(['armoryLocker'], playerGrid);
+        if (armory) {
+          this.utilityCooldowns.armoryUntilMs = now + 30_000;
+          this.taskTargetType = 'utility';
+          this.taskRunner.setTasks([new InteractTask(armory.id, armory.gridPos, { threshold: 0 })]);
+          return true;
+        }
+      }
+    }
+
+    // Control terminal detour (rare; best as a navigation aid when not actively pressured).
+    if (canDetour && now >= (this.utilityCooldowns?.controlUntilMs || 0)) {
+      const monsters = this.monsterManager?.getMonsterPositions?.() || [];
+      let nearest = Infinity;
+      for (const m of monsters) {
+        if (!m) continue;
+        const d = Math.abs(m.x - playerGrid.x) + Math.abs(m.y - playerGrid.y);
+        nearest = Math.min(nearest, d);
+      }
+      const safeEnough = nearest >= 7;
+      if (safeEnough) {
+        const control = this.pickClosestInteractableByKind(['controlTerminal'], playerGrid);
+        if (control) {
+          this.utilityCooldowns.controlUntilMs = now + 40_000;
+          this.taskTargetType = 'utility';
+          this.taskRunner.setTasks([new InteractTask(control.id, control.gridPos, { threshold: 0 })]);
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   resetCombatRhythm() {
@@ -295,6 +448,43 @@ export class AutoPilot {
     this.clearStepLock();
   }
 
+  requestDiversion(seconds = null, reason = '') {
+    void reason;
+    const sec = Number.isFinite(seconds) ? Math.max(0, Number(seconds)) : (Number(CONFIG.AUTOPILOT_DIVERSION_DEFAULT_SECONDS) || 5);
+    if (!(sec > 0)) return;
+    const ttlMs = Math.max(250, Math.round(sec * 1000));
+    this.divertUntilMs = Math.max(this.divertUntilMs || 0, Date.now() + ttlMs);
+
+    const target = this.taskTarget || this.currentTarget || null;
+    if (target && Number.isFinite(target.x) && Number.isFinite(target.y)) {
+      this.recordUnreachable({ x: target.x, y: target.y }, ttlMs);
+    }
+
+    this.taskRunner?.clear?.();
+    this.taskTarget = null;
+    this.taskWantsInteract = false;
+    this.taskInteractId = null;
+    this.resetPath();
+  }
+
+  applyBurstSprint(deltaTime, { threatened = false, wantsSprint = false, panicSprint = false } = {}) {
+    if (!wantsSprint) return false;
+    if (panicSprint) return true;
+    if (!threatened) return true;
+    if (CONFIG.AUTOPILOT_BURST_SPRINT_ENABLED === false) return true;
+
+    const onSec = Math.max(0.1, Number(CONFIG.AUTOPILOT_BURST_SPRINT_ON_SECONDS) || 0.65);
+    const offSec = Math.max(0.1, Number(CONFIG.AUTOPILOT_BURST_SPRINT_OFF_SECONDS) || 0.9);
+    const dt = Math.max(0, Number(deltaTime) || 0);
+
+    this._burst.timer = Math.max(0, (this._burst.timer || 0) - dt);
+    if (this._burst.timer <= 0) {
+      this._burst.sprinting = !this._burst.sprinting;
+      this._burst.timer = this._burst.sprinting ? onSec : offSec;
+    }
+    return !!this._burst.sprinting;
+  }
+
   recordUnreachable(gridPos, ttlMs = null) {
     if (!gridPos) return;
     const now = Date.now();
@@ -420,6 +610,17 @@ export class AutoPilot {
       this.taskWantsInteract = false;
       this.taskInteractId = null;
       this.resetPath();
+
+      // Any objective progress change means old interaction stalls should be forgotten.
+      this.interactStall = { key: '', id: '', firstMs: 0, lastTryMs: 0, tries: 0 };
+    }
+
+    if ((this.divertUntilMs || 0) > Date.now()) {
+      this.taskTargetType = 'explore';
+      this.taskRunner.setTasks([
+        new SearchTask({ roomTypes: null, waypoints: 2, margin: 1, minDist: 4 })
+      ]);
+      return;
     }
 
     const hasTasks = !!this.taskRunner.current || (this.taskRunner.queue && this.taskRunner.queue.length > 0);
@@ -433,6 +634,9 @@ export class AutoPilot {
     const objectiveTemplate = String(objective?.template || '').trim();
     const objectiveNextId = String(objective?.nextInteractId || '').trim();
     const objectiveGoalGrid = objective?.progress?.goalGridPos || null;
+
+    // Opportunistic utility detours (medical/armory/control terminals).
+    if (this.maybeQueueUtilityTask(playerGrid, state)) return;
 
     if (objectiveTemplate === 'escort' || objectiveTemplate === 'escortToSafeRoom') {
       const started = !!objective?.progress?.started;
@@ -531,14 +735,14 @@ export class AutoPilot {
           if (nextTarget?.gridPos && nextTarget.id && !this.isTemporarilyUnreachable(nextTarget.gridPos)) {
             this.taskTargetType = 'mission';
             this.taskRunner.setTasks([
-              new InteractTask(nextTarget.id || '', nextTarget.gridPos, { threshold: 1 })
+              new InteractTask(nextTarget.id || '', nextTarget.gridPos, { threshold: 0 })
             ]);
             return;
           }
           if (nextGridPos && Number.isFinite(nextGridPos.x) && Number.isFinite(nextGridPos.y) && !this.isTemporarilyUnreachable(nextGridPos)) {
             this.taskTargetType = 'mission';
             this.taskRunner.setTasks([
-              new InteractTask(objectiveNextId, nextGridPos, { threshold: 1 })
+              new InteractTask(objectiveNextId, nextGridPos, { threshold: 0 })
             ]);
             return;
           }
@@ -554,7 +758,7 @@ export class AutoPilot {
         if (next) {
           this.taskTargetType = 'mission';
           this.taskRunner.setTasks([
-            new InteractTask(next.id || '', next.gridPos, { threshold: 1 })
+            new InteractTask(next.id || '', next.gridPos, { threshold: 0 })
           ]);
           return;
         }
@@ -567,7 +771,7 @@ export class AutoPilot {
       if (!this.isTemporarilyUnreachable(exit)) {
       this.taskTargetType = 'exit';
       this.taskRunner.setTasks([
-        new InteractTask('exit', exit, { threshold: 1 })
+        new InteractTask('exit', exit, { threshold: 0 })
       ]);
       return;
       }
@@ -579,7 +783,7 @@ export class AutoPilot {
       if (!this.isTemporarilyUnreachable(exit)) {
       this.taskTargetType = 'exit';
       this.taskRunner.setTasks([
-        new InteractTask('exit', exit, { threshold: 1 })
+        new InteractTask('exit', exit, { threshold: 0 })
       ]);
       return;
       }
@@ -716,7 +920,7 @@ export class AutoPilot {
     const hasAmmoInfo = !!weaponState;
     const ammoTotal = hasAmmoInfo ? ((weaponState?.ammoInMag || 0) + (weaponState?.ammoReserve || 0)) : Infinity;
 
-    const urgentHealth = healthPct < 45;
+    const urgentHealth = healthPct < 55;
     const urgentAmmo = hasAmmoInfo && ammoTotal < 10;
 
     const threat = this.getThreatInfo(playerGrid);
@@ -762,10 +966,18 @@ export class AutoPilot {
       let kindBias = 0;
       let distWeight = 4.0;
 
-      if (kind === 'health') {
-        need = Math.max(0, Math.min(1, (70 - healthPct) / 70));
+      if (kind === 'health' || kind === 'healthSmall' || kind === 'healthBig') {
+        const strength = kind === 'healthBig' ? 1.25 : (kind === 'healthSmall' ? 0.85 : 1.0);
+        need = Math.max(0, Math.min(1, (70 - healthPct) / 70)) * strength;
         distWeight = 6.0;
-        kindBias = 10;
+        kindBias = kind === 'healthBig' ? 12 : 10;
+      } else if (kind === 'monsterHeart') {
+        const maxHealth = Number(gs?.maxHealth) || 100;
+        // Permanent-ish advantage: prioritize unless already very high max health.
+        const want = maxHealth < 160 ? 1.0 : 0.25;
+        need = want;
+        distWeight = 5.2;
+        kindBias = 13;
       } else if (kind === 'ammo') {
         if (!hasAmmoInfo) continue;
         need = Math.max(0, Math.min(1, (22 - ammoTotal) / 22));
@@ -787,8 +999,12 @@ export class AutoPilot {
       const opportunistic = dist <= 1;
       // Avoid getting "stuck" farming pickups we don't need.
       if (need <= 0) {
-        if (kind === 'health') {
+        if (kind === 'health' || kind === 'healthSmall' || kind === 'healthBig') {
           if (healthPct >= 95 && !urgentHealth) continue;
+        } else if (kind === 'monsterHeart') {
+          // If max health is already high, only grab it opportunistically.
+          const maxHealth = Number(gs?.maxHealth) || 100;
+          if (maxHealth >= 160 && !opportunistic) continue;
         } else if (kind === 'ammo') {
           if (!hasAmmoInfo) continue;
           if (ammoTotal >= 40 && !urgentAmmo) continue;
@@ -1085,7 +1301,11 @@ export class AutoPilot {
     const panicSprint = threat.nearestDist <= 4;
     // Keep blocking early, but only suppress firing when the monster is *extremely* close.
     const panic = threat.nearestDist <= 1;
-    const combat = this.computeCombatDirective(playerPos, deltaTime, { panic });
+    let combat = this.computeCombatDirective(playerPos, deltaTime, { panic });
+    const bossCombat = this.computeBossCombatDirective(playerPos, deltaTime, { panic, threat });
+    if (bossCombat) {
+      combat = { ...(combat || {}), ...bossCombat };
+    }
     this.interactCooldown = Math.max(0, (this.interactCooldown || 0) - (deltaTime ?? 0));
     if (combat && this._missionState?.objective?.template === 'stealthNoise') {
       combat.fire = false;
@@ -1277,6 +1497,27 @@ export class AutoPilot {
       }
     }
 
+    if (objective?.template === 'surviveInZone') {
+      const started = !!objective?.progress?.started;
+      const completed = !!objective?.progress?.completed;
+      const goal = objective?.progress?.goalGridPos || objective?.progress?.beaconGridPos || null;
+      if (started && !completed && goal && goal.x === playerPos.x && goal.y === playerPos.y) {
+        return {
+          move: { x: 0, y: 0 },
+          lookYaw: Number.isFinite(combat?.lookYaw) ? combat.lookYaw : 0,
+          lookPitch: Number.isFinite(combat?.lookPitch) ? combat.lookPitch : null,
+          sprint: false,
+          block,
+          interact: false,
+          fire: !!combat?.fire,
+          skillGrenade: !!combat?.skillGrenade,
+          skillEmp: !!combat?.skillEmp,
+          weaponMode: typeof combat?.weaponMode === 'string' ? combat.weaponMode : null,
+          camera: false
+        };
+      }
+    }
+
     if (objective?.template === 'lureToSensor') {
       const stage = String(objective?.progress?.stage || '').trim();
       const goal = objective?.progress?.goalGridPos || null;
@@ -1354,6 +1595,8 @@ export class AutoPilot {
       this.interactCooldown = 0.65;
     }
 
+    this.trackInteractStall(interact, playerPos, this._missionState);
+
     if (!this.currentPath || this.currentPath.length === 0) {
       return {
         move: { x: 0, y: 0 },
@@ -1415,6 +1658,25 @@ export class AutoPilot {
       sprint = distToGoal > 8;
     }
     if (panicSprint) sprint = true;
+    sprint = this.applyBurstSprint(deltaTime, {
+      threatened: (threat.nearestDist ?? Infinity) <= 6,
+      wantsSprint: sprint,
+      panicSprint
+    });
+
+    // Proactive reload when safe (keeps the AI from running dry at bad times).
+    let reload = false;
+    if (!panic && !combat?.fire) {
+      const hud = this.gun?.getHudState ? this.gun.getHudState() : null;
+      const ammoInMag = Number(hud?.ammoInMag) || 0;
+      const ammoReserve = Number(hud?.ammoReserve) || 0;
+      const isReloading = !!hud?.isReloading;
+      const safe = (threat.nearestDist ?? Infinity) >= (CONFIG.AUTOPILOT_SAFE_RELOAD_MIN_DIST_TILES ?? 6);
+      const minMag = Math.max(1, Math.round(Number(CONFIG.AUTOPILOT_RELOAD_WHEN_MAG_BELOW) || 3));
+      if (safe && !isReloading && ammoReserve > 0 && ammoInMag > 0 && ammoInMag <= minMag) {
+        reload = true;
+      }
+    }
 
     // --- 簡易卡住偵測：同一格逾 1.2 秒就強制重規劃 ---
     if (this.lastGrid && this.lastGrid.x === playerPos.x && this.lastGrid.y === playerPos.y) {
@@ -1468,6 +1730,7 @@ export class AutoPilot {
       lookPitch,
       sprint,
       block,
+      reload,
       interact,
       fire: !!combat?.fire,
       skillGrenade: !!combat?.skillGrenade,
@@ -1475,6 +1738,161 @@ export class AutoPilot {
       weaponMode: typeof combat?.weaponMode === 'string' ? combat.weaponMode : null,
       camera: false
     };
+  }
+
+  findGridPosForInteractId(interactId, missionState) {
+    const id = String(interactId || '').trim();
+    if (!id) return null;
+
+    const objective = missionState?.objective || null;
+    const nextId = String(objective?.nextInteractId || '').trim();
+    const nextGrid = objective?.nextInteractGridPos || null;
+    if (nextId && id === nextId && nextGrid && Number.isFinite(nextGrid.x) && Number.isFinite(nextGrid.y)) {
+      return { x: nextGrid.x, y: nextGrid.y };
+    }
+
+    const targets = Array.isArray(missionState?.targets) ? missionState.targets : [];
+    const t = targets.find((e) => String(e?.id || '').trim() === id) || null;
+    if (t?.gridPos && Number.isFinite(t.gridPos.x) && Number.isFinite(t.gridPos.y)) {
+      return { x: t.gridPos.x, y: t.gridPos.y };
+    }
+
+    const current = this.currentTarget || null;
+    if (current && Number.isFinite(current.x) && Number.isFinite(current.y)) {
+      return { x: current.x, y: current.y };
+    }
+    return null;
+  }
+
+  trackInteractStall(interactCmd, playerGrid, missionState) {
+    if (typeof interactCmd !== 'string') {
+      // Reset when not explicitly interacting with an id (prevents false positives).
+      if (this.interactStall?.tries) {
+        this.interactStall = { key: '', id: '', firstMs: 0, lastTryMs: 0, tries: 0 };
+      }
+      return;
+    }
+
+    const id = interactCmd.trim();
+    if (!id) return;
+
+    const now = Date.now();
+    const windowSec = Math.max(1, Number(CONFIG.AUTOPILOT_INTERACT_STALL_WINDOW_SECONDS) || 10);
+    const maxTries = Math.max(2, Math.round(Number(CONFIG.AUTOPILOT_INTERACT_STALL_MAX_TRIES) || 5));
+    const ttl = Math.max(1500, Math.round(Number(CONFIG.AUTOPILOT_INTERACT_STALL_UNREACHABLE_TTL_MS) || 25_000));
+
+    const stallKey = `${String(this.taskGoalKey || '')}:${id}`;
+    const s = this.interactStall || { key: '', id: '', firstMs: 0, lastTryMs: 0, tries: 0 };
+    const same = s.key === stallKey;
+    if (!same) {
+      this.interactStall = { key: stallKey, id, firstMs: now, lastTryMs: now, tries: 1 };
+      return;
+    }
+
+    const age = (now - (s.firstMs || now)) / 1000;
+    if (age > windowSec) {
+      this.interactStall = { key: stallKey, id, firstMs: now, lastTryMs: now, tries: 1 };
+      return;
+    }
+
+    // Only count a "try" once per cooldown-ish window.
+    const sinceLast = now - (s.lastTryMs || 0);
+    if (sinceLast < 450) return;
+
+    s.lastTryMs = now;
+    s.tries = (s.tries || 0) + 1;
+    this.interactStall = s;
+
+    if ((s.tries || 0) < maxTries) return;
+
+    const gridPos = this.findGridPosForInteractId(id, missionState);
+    if (gridPos) {
+      this.recordUnreachable(gridPos, ttl);
+    }
+
+    // Break the loop: clear tasks and explore briefly so the mission director can pick a different target.
+    this.requestDiversion(Math.min(6, Math.max(2, windowSec * 0.35)), 'interactStall');
+
+    // If the stalled interact was our current task target, let the task try an alternate waypoint.
+    const target = gridPos || this.taskTarget || this.currentTarget || null;
+    if (target) this.handleUnreachableTaskTarget(playerGrid, target);
+
+    // Reset stall counter after applying the skip.
+    this.interactStall = { key: '', id: '', firstMs: 0, lastTryMs: 0, tries: 0 };
+  }
+
+  computeBossCombatDirective(playerGrid, deltaTime, options = {}) {
+    const state = this._missionState || this.readMissionState();
+    const objective = state?.objective || null;
+    if (objective?.template !== 'bossFinale') return null;
+
+    const phase = Math.max(0, Math.round(Number(objective?.progress?.phase) || 0));
+    if (phase !== 1) return null;
+
+    // In phase 1, shoot shield nodes instead of wasting ammo on a shielded boss.
+    const targets = Array.isArray(state?.targets) ? state.targets : [];
+    const nodes = targets.filter((t) => t && t.template === 'bossFinale' && String(t.id || '').startsWith('bossNode:') && t.gridPos);
+    if (nodes.length === 0) return null;
+
+    let nearest = null;
+    let bestDist = Infinity;
+    for (const n of nodes) {
+      const gp = n.gridPos;
+      if (!gp || !Number.isFinite(gp.x) || !Number.isFinite(gp.y)) continue;
+      const d = Math.abs(gp.x - playerGrid.x) + Math.abs(gp.y - playerGrid.y);
+      if (d < bestDist) {
+        bestDist = d;
+        nearest = gp;
+      }
+    }
+    if (!nearest) return null;
+
+    const requireLOS = CONFIG.AUTOPILOT_BOSS_NODE_REQUIRE_LOS ?? true;
+    if (requireLOS && this.worldState?.hasLineOfSight) {
+      if (!this.worldState.hasLineOfSight(playerGrid, nearest)) return null;
+    }
+
+    const maxRange = CONFIG.AUTOPILOT_BOSS_NODE_MAX_RANGE_TILES ?? 12;
+    if (bestDist > maxRange) return null;
+
+    this.maybeSwitchCombatWeapon(bestDist, this.monsterManager?.getMonsters?.() || [], playerGrid, deltaTime ?? 0);
+
+    const cam = this.playerController?.camera || null;
+    const camObj = cam?.getCamera ? cam.getCamera() : null;
+    const playerWorld = camObj?.position || this.playerController?.position || null;
+    if (!playerWorld) return null;
+
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const targetWorldX = nearest.x * tileSize + tileSize / 2;
+    const targetWorldZ = nearest.y * tileSize + tileSize / 2;
+    const targetWorldY = Number(CONFIG.AUTOPILOT_BOSS_NODE_AIM_Y) || 0.55;
+
+    const dx = targetWorldX - playerWorld.x;
+    const dy = targetWorldY - playerWorld.y;
+    const dz = targetWorldZ - playerWorld.z;
+
+    const aimYaw = Math.atan2(-dx, -dz);
+    const aimPitch = Math.atan2(dy, Math.hypot(dx, dz));
+
+    const currentYaw = this.getCurrentYaw();
+    const deltaYaw = this.wrapAngle(aimYaw - currentYaw);
+    const alignYawDeg = CONFIG.AUTOPILOT_COMBAT_FIRE_ALIGN_DEG ?? 8;
+    const alignYawRad = (Math.max(1, Math.min(45, alignYawDeg)) * Math.PI) / 180;
+    const alignedYaw = Math.abs(deltaYaw) <= alignYawRad;
+
+    const currentPitch = this.getCurrentPitch();
+    const deltaPitch = aimPitch - currentPitch;
+    const alignPitchDeg = CONFIG.AUTOPILOT_COMBAT_FIRE_ALIGN_PITCH_DEG ?? 10;
+    const alignPitchRad = (Math.max(1, Math.min(60, alignPitchDeg)) * Math.PI) / 180;
+    const alignedPitch = Math.abs(deltaPitch) <= alignPitchRad;
+
+    const threat = options?.threat || this.getThreatInfo(playerGrid);
+    const panic = options?.panic === true || (threat?.nearestDist ?? Infinity) <= 1;
+    const fireRange = CONFIG.AUTOPILOT_BOSS_NODE_FIRE_RANGE_TILES ?? 10;
+    const shouldShoot = !panic && bestDist <= fireRange && alignedYaw && alignedPitch;
+    const fire = this.computeCombatFire(shouldShoot);
+
+    return { lookYaw: aimYaw, lookPitch: aimPitch, fire };
   }
 
   computeCombatDirective(playerGrid, deltaTime, options = {}) {
@@ -1681,6 +2099,8 @@ export class AutoPilot {
     let best = null;
     for (const m of monsters) {
       if (!m || m.isDead || m.isDying) continue;
+      // Don't waste time shooting the boss while its shield is still up.
+      if (m.isBoss && m?.boss?.shieldActive) continue;
       const mg = m.getGridPosition ? m.getGridPosition() : null;
       if (!mg) continue;
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CONFIG } from '../../core/config.js';
 import { EVENTS } from '../../core/events.js';
+import { getMonsterType } from '../../ai/monsterTypes.js';
 
 export class MonsterDamage {
   constructor(manager) {
@@ -27,12 +28,40 @@ export class MonsterDamage {
       ? projectile.damage
       : (CONFIG.PLAYER_BULLET_DAMAGE ?? 1);
 
+    this.applyStatusFromProjectile(monster, projectile);
+
     const stunSeconds = this.getMonsterHitStunSeconds(monster, projectile);
     this.applyDamageToMonster(monster, damage, {
       hitPosition,
       stunSeconds,
-      cause: projectile?.owner || 'player'
+      cause: projectile?.owner || 'player',
+      projectile
     });
+  }
+
+  applyStatusFromProjectile(monster, projectile) {
+    if (!monster || !projectile) return;
+    const element = String(projectile.element || '').trim().toLowerCase();
+    if (!element) return;
+
+    if (element === 'fire') {
+      const seconds = Number.isFinite(projectile.burnSeconds) ? projectile.burnSeconds : 3.5;
+      const dps = Number.isFinite(projectile.burnDps) ? projectile.burnDps : 1.0;
+      monster.burnTimer = Math.max(monster.burnTimer || 0, Math.max(0.2, seconds));
+      monster.burnDps = Math.max(monster.burnDps || 0, Math.max(0, dps));
+      return;
+    }
+
+    if (element === 'electric') {
+      const jam = Number.isFinite(projectile.jamSeconds) ? projectile.jamSeconds : 1.15;
+      monster.perceptionJammedTimer = Math.max(monster.perceptionJammedTimer || 0, Math.max(0.1, jam));
+      return;
+    }
+
+    if (element === 'acid') {
+      const seconds = Number.isFinite(projectile.corrosionSeconds) ? projectile.corrosionSeconds : 4.0;
+      monster.corrosionTimer = Math.max(monster.corrosionTimer || 0, Math.max(0.2, seconds));
+    }
   }
 
   getMonsterHitStunSeconds(monster, projectile = null) {
@@ -61,9 +90,49 @@ export class MonsterDamage {
     if (!monster || monster.isDead || monster.isDying) return;
     this.ensureMonsterHealth(monster);
 
+    let amountIn = Number.isFinite(damage) ? damage : 0;
+    const isDot = options.isDot === true;
+
+    // Boss shield: ignore incoming damage until shield nodes are destroyed.
+    if (!isDot && monster?.isBoss && monster?.boss?.shieldActive) {
+      const now = performance.now() / 1000;
+      monster.lastDamagedAt = now;
+      monster.lastDamageCause = options.cause || monster.lastDamageCause || null;
+      // Still allow small feedback without draining HP.
+      const last = Number(monster._bossShieldSfxAt) || 0;
+      if (now - last >= 0.25) {
+        monster._bossShieldSfxAt = now;
+        this.manager?.audioManager?.playMonsterGuard?.();
+      }
+      return;
+    }
+    if (amountIn > 0 && monster?.isElite && monster?.elite && typeof monster.elite === 'object') {
+      const weakness = String(monster.elite.weakness || '').toLowerCase();
+      const projectile = options.projectile || null;
+
+      // Baseline toughness for elites.
+      const baseMult = Number.isFinite(monster.elite.damageTakenMult) ? monster.elite.damageTakenMult : 0.9;
+      amountIn *= Math.max(0.35, Math.min(1.2, baseMult));
+
+      if (weakness) {
+        const pierce = Number(projectile?.pierce) || 0;
+        const explosive = Number(projectile?.explosionRadius) > 0 || String(projectile?.kind || '').toLowerCase() === 'grenade';
+
+        if (weakness === 'pierce') {
+          amountIn *= pierce > 0 ? 1.35 : 0.92;
+        } else if (weakness === 'explosive') {
+          amountIn *= explosive ? 1.35 : 0.92;
+        }
+      }
+    }
+
+    if (amountIn > 0 && (monster.corrosionTimer || 0) > 0) {
+      amountIn *= 1.12;
+    }
+
     // Monster guard (simple defense mechanic)
     const guardEnabled = CONFIG.MONSTER_GUARD_ENABLED ?? true;
-    if (guardEnabled) {
+    if (guardEnabled && !isDot) {
       const health = Math.max(0, Number(monster.health) || 0);
       const max = Math.max(1, Number(monster.maxHealth) || 1);
       const ratio = health / max;
@@ -71,11 +140,18 @@ export class MonsterDamage {
       const canStartGuard = (monster.guardTimer || 0) <= 0 && (monster.guardCooldown || 0) <= 0;
       if (canStartGuard) {
         const chance = Math.max(0, Math.min(1, Number(CONFIG.MONSTER_GUARD_CHANCE) || 0));
+        const eliteMult = monster?.isElite && Number.isFinite(monster?.elite?.guardChanceMult)
+          ? Math.max(0.5, Math.min(3.0, monster.elite.guardChanceMult))
+          : 1.0;
         const threshold = Math.max(0, Math.min(1, Number(CONFIG.MONSTER_GUARD_MIN_HEALTH_RATIO) || 0.55));
         const bias = ratio <= threshold ? 1.0 : 0.6;
-        if (Math.random() < chance * bias) {
-          monster.guardTimer = Math.max(0.05, Number(CONFIG.MONSTER_GUARD_DURATION_SECONDS) || 0.7);
-          monster.guardCooldown = Math.max(0.1, Number(CONFIG.MONSTER_GUARD_COOLDOWN_SECONDS) || 2.2);
+        if (Math.random() < chance * bias * eliteMult) {
+          const baseDur = Math.max(0.05, Number(CONFIG.MONSTER_GUARD_DURATION_SECONDS) || 0.7);
+          const baseCd = Math.max(0.1, Number(CONFIG.MONSTER_GUARD_COOLDOWN_SECONDS) || 2.2);
+          const durMult = monster?.elite?.id === 'shielded' ? 1.25 : 1.0;
+          const cdMult = monster?.elite?.id === 'shielded' ? 0.9 : 1.0;
+          monster.guardTimer = baseDur * durMult;
+          monster.guardCooldown = baseCd * cdMult;
           this.manager?.audioManager?.playMonsterGuard?.();
         }
       }
@@ -91,7 +167,7 @@ export class MonsterDamage {
       monster.stunTimer = Math.max(monster.stunTimer || 0, stunSeconds * guardMult);
     }
 
-    const baseAmount = Number.isFinite(damage) ? damage : 0;
+    const baseAmount = amountIn;
     const guardDamageMult =
       (CONFIG.MONSTER_GUARD_ENABLED ?? true) && (monster.guardTimer || 0) > 0
         ? (Number(CONFIG.MONSTER_GUARD_DAMAGE_MULT) || 0.35)
@@ -136,10 +212,15 @@ export class MonsterDamage {
 
       if (scaledDamage <= 0 && scaledStun <= 0) continue;
 
+      if (options.projectile) {
+        this.applyStatusFromProjectile(monster, options.projectile);
+      }
+
       this.applyDamageToMonster(monster, scaledDamage, {
         hitPosition: centerPos,
         stunSeconds: scaledStun,
-        cause: owner
+        cause: owner,
+        projectile: options.projectile || null
       });
     }
 
@@ -377,6 +458,35 @@ export class MonsterDamage {
       modelPath,
       modelMeta
     });
+
+    // Splitter: spawn smaller offspring on death.
+    try {
+      const split = typeConfig?.special?.splitOnDeath || null;
+      if (split && gridPosition && manager?.spawner?.spawnAtGrid) {
+        const count = Math.max(0, Math.min(6, Math.round(Number(split.count) || 0)));
+        if (count > 0) {
+          const childTypeId = String(split.childType || 'RUSHER').trim();
+          const baseChild = getMonsterType(childTypeId);
+          const childScaleMult = Number.isFinite(split.childScaleMult) ? Math.max(0.35, Math.min(1.2, split.childScaleMult)) : 0.75;
+          const childHealthMult = Number.isFinite(split.childHealthMult) ? Math.max(0.2, Math.min(1.0, split.childHealthMult)) : 0.6;
+          const childConfig = JSON.parse(JSON.stringify(baseChild || {}));
+          childConfig.stats = childConfig.stats || {};
+          childConfig.stats.scale = (Number(childConfig.stats.scale) || 1.0) * childScaleMult;
+          childConfig.stats.health = Math.max(1, Math.round((Number(childConfig.stats.health) || (CONFIG.MONSTER_BASE_HEALTH ?? 10)) * childHealthMult));
+
+          for (let i = 0; i < count; i++) {
+            // Fire-and-forget directed spawn; uses spread-out placement near the death tile.
+            const spawn = manager.spawner.pickSpreadOutSpawn
+              ? manager.spawner.pickSpreadOutSpawn([gridPosition], { margin: 1, minPlayerDist: 0, minOtherDist: 0, samples: 80 })
+              : gridPosition;
+            void manager.spawner.spawnAtGrid(spawn || gridPosition, childConfig);
+          }
+          manager.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'It split!', seconds: 1.2 });
+        }
+      }
+    } catch (err) {
+      void err;
+    }
 
     // Drops: health + "heart" that can increase max health.
     try {

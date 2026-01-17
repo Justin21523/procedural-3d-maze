@@ -1,0 +1,79 @@
+{
+  "id": 26,
+  "name": "L26 - Multi-Point Scan",
+  "maze": { "width": 29, "height": 29, "roomDensity": 2.95, "extraConnectionChance": 0.11 },
+  "rooms": {
+    "typeWeights": {
+      "LAB": 1.7,
+      "OFFICE": 1.4,
+      "STORAGE": 1.2,
+      "CLASSROOM": 1.1,
+      "LIBRARY": 0.6,
+      "CAFETERIA": 0.6,
+      "BATHROOM": 0.65,
+      "GYM": 0.2,
+      "POOL": 0.15,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 7,
+    "maxCount": 9,
+    "speedMultiplier": 1.03,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.02,
+    "typeWeights": { "WANDERER": 0.2, "HUNTER": 0.52, "SENTINEL": 0.18, "STALKER": 0.08, "GREETER": 0.02 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 55
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "scan",
+        "template": "scanWaypoints",
+        "required": true,
+        "params": {
+          "count": 5,
+          "seconds": 4,
+          "radius": 2,
+          "requireLOS": false,
+          "roomTypesTargets": ["LAB", "OFFICE", "STORAGE"],
+          "minDistFromSpawn": 8,
+          "label": "Scan Site",
+          "hints": [
+            "Find a scan site marker, then use the camera tool while standing in range.",
+            "Each site needs 4 seconds of scanning.",
+            "Markers help: toggle world markers with M."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["scan", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.46,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+

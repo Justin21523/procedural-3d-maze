@@ -1,4 +1,5 @@
 import { EVENTS } from './events.js';
+import { CONFIG } from './config.js';
 
 function isVec3(v) {
   return !!v && typeof v.x === 'number' && typeof v.y === 'number' && typeof v.z === 'number';
@@ -49,7 +50,13 @@ export class NoiseBridgeSystem {
 
     const entry = mm.registerNoise(position, {
       kind: normalizeKind(payload?.kind),
-      radius: payload?.radius,
+      radius: (() => {
+        const base = Number(payload?.radius);
+        const mult = Number(CONFIG.GLOBAL_NOISE_RADIUS_MULT);
+        if (!Number.isFinite(base)) return payload?.radius;
+        const m = Number.isFinite(mult) ? Math.max(0.1, Math.min(5.0, mult)) : 1.0;
+        return base * m;
+      })(),
       ttl: payload?.ttl,
       strength: payload?.strength,
       source: payload?.source || null,
@@ -65,4 +72,3 @@ export class NoiseBridgeSystem {
     this.unsubscribers = [];
   }
 }
-

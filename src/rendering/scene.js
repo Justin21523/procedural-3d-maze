@@ -54,12 +54,13 @@ export class SceneManager {
     // PBR / 色彩 / tone mapping 設定
     this.renderer.physicallyCorrectLights = !!(CONFIG.RENDER_USE_PHYSICAL_MATERIALS ?? false);
 
-    if ('outputEncoding' in this.renderer) {
-      // three r150 以前
-      this.renderer.outputEncoding = THREE.sRGBEncoding;
-    } else if ('outputColorSpace' in this.renderer) {
-      // three r152 之後
+    // Prefer the modern API; fall back for older three versions.
+    if ('outputColorSpace' in this.renderer) {
+      // three r152+
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    } else if ('outputEncoding' in this.renderer) {
+      // three <= r151 (legacy)
+      this.renderer.outputEncoding = THREE.sRGBEncoding;
     }
 
     if ('toneMapping' in this.renderer && THREE.ACESFilmicToneMapping !== undefined) {
@@ -446,10 +447,11 @@ export class SceneManager {
         tex.wrapT = THREE.RepeatWrapping;
         tex.anisotropy = aniso;
 
-        if ('encoding' in tex) {
-          tex.encoding = THREE.sRGBEncoding;
-        } else if ('colorSpace' in tex) {
+        // Prefer the modern API; fall back for older three versions.
+        if ('colorSpace' in tex) {
           tex.colorSpace = THREE.SRGBColorSpace;
+        } else if ('encoding' in tex) {
+          tex.encoding = THREE.sRGBEncoding;
         }
       });
 

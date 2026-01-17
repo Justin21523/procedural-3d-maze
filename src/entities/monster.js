@@ -30,7 +30,8 @@ export class Monster {
     this.speedMultiplier = 1.0;
 
     const visionMult = levelConfig?.monsters?.visionMultiplier ?? 1.0;
-    this.visionRange = (this.stats.visionRange ?? CONFIG.MONSTER_VISION_RANGE) * visionMult;
+    const globalVisionMult = Number.isFinite(CONFIG.AI_VISION_GLOBAL_MULT) ? CONFIG.AI_VISION_GLOBAL_MULT : 1.0;
+    this.visionRange = (this.stats.visionRange ?? CONFIG.MONSTER_VISION_RANGE) * visionMult * globalVisionMult;
     this.visionFOV = this.stats.visionFOV ?? CONFIG.MONSTER_FOV;
     this.scale = this.stats.scale ?? CONFIG.MONSTER_SCALE_MULTIPLIER;
     this.groundOffset = Number.isFinite(this.stats.groundOffset) ? this.stats.groundOffset : null;
@@ -50,6 +51,12 @@ export class Monster {
     this.health = this.maxHealth;
     this.stunTimer = 0;
     this.lastDamagedAt = -Infinity;
+
+    // Status effects (combat depth)
+    this.burnTimer = 0;
+    this.burnDps = 0;
+    this.burnTick = 0;
+    this.corrosionTimer = 0;
 
     // Positioning
     this.gridX = spawnGrid.x ?? 0;
