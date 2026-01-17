@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { CONFIG } from '../../core/config.js';
 
 export class MonsterPerception {
-  constructor() {
+  constructor(options = {}) {
+    this.worldState = options.worldState || null;
     this.noiseEvents = [];
     this.scentEvents = [];
     this.alertCooldowns = new Map(); // Monster -> seconds
@@ -10,6 +11,10 @@ export class MonsterPerception {
     this.playerNoiseAccumulator = 0;
     this.lastPlayerScentPos = null;
     this.playerScentAccumulator = 0;
+  }
+
+  setWorldState(worldState) {
+    this.worldState = worldState || null;
   }
 
   clear() {
@@ -20,6 +25,28 @@ export class MonsterPerception {
     this.playerNoiseAccumulator = 0;
     this.lastPlayerScentPos = null;
     this.playerScentAccumulator = 0;
+  }
+
+  isInDarkZoneWorld(x, z) {
+    const ws = this.worldState;
+    const zones = typeof ws?.getDarkZones === 'function'
+      ? ws.getDarkZones()
+      : (Array.isArray(ws?.darkZones) ? ws.darkZones : []);
+    if (!Array.isArray(zones) || zones.length === 0) return false;
+
+    const px = Number(x) || 0;
+    const pz = Number(z) || 0;
+    for (const zone of zones) {
+      if (!zone) continue;
+      const r = Number(zone.radius) || 0;
+      if (!(r > 0)) continue;
+      const cx = Number.isFinite(zone.x) ? zone.x : (Number.isFinite(zone.position?.x) ? zone.position.x : 0);
+      const cz = Number.isFinite(zone.z) ? zone.z : (Number.isFinite(zone.position?.z) ? zone.position.z : 0);
+      const dx = px - cx;
+      const dz = pz - cz;
+      if (dx * dx + dz * dz <= r * r) return true;
+    }
+    return false;
   }
 
   registerNoise(position, options = {}) {
@@ -123,11 +150,26 @@ export class MonsterPerception {
     if (range === null && Number.isFinite(statsHearing)) range = statsHearing;
     if (range === null) range = 0;
 
+    const globalMult = Number(CONFIG.AI_HEARING_GLOBAL_MULT);
+    if (Number.isFinite(globalMult)) range *= Math.max(0.1, Math.min(3.0, globalMult));
+
     const jammed = Number(monster?.perceptionJammedTimer) || 0;
     if (jammed > 0) {
       const multRaw = Number(CONFIG.AI_JAMMED_HEARING_MULT);
       const mult = Number.isFinite(multRaw) ? Math.max(0, Math.min(1, multRaw)) : 0.2;
       range *= mult;
+    }
+
+    const mg = monster?.getGridPosition?.() || null;
+    if (mg && Number.isFinite(mg.x) && Number.isFinite(mg.y)) {
+      const tileSize = CONFIG.TILE_SIZE || 1;
+      const mx = (mg.x + 0.5) * tileSize;
+      const mz = (mg.y + 0.5) * tileSize;
+      if (this.isInDarkZoneWorld(mx, mz)) {
+        const multRaw = Number(CONFIG.AI_DARK_HEARING_MULT);
+        const mult = Number.isFinite(multRaw) ? Math.max(0.5, Math.min(3.0, multRaw)) : 1.35;
+        range *= mult;
+      }
     }
 
     return range;
@@ -140,6 +182,9 @@ export class MonsterPerception {
     if (range === null && Number.isFinite(statsSmell)) range = statsSmell;
     if (range === null) range = 0;
 
+    const globalMult = Number(CONFIG.AI_SMELL_GLOBAL_MULT);
+    if (Number.isFinite(globalMult)) range *= Math.max(0.1, Math.min(3.0, globalMult));
+
     const jammed = Number(monster?.perceptionJammedTimer) || 0;
     if (jammed > 0) {
       const multRaw = Number(CONFIG.AI_JAMMED_SMELL_MULT);
@@ -147,10 +192,22 @@ export class MonsterPerception {
       range *= mult;
     }
 
+    const mg = monster?.getGridPosition?.() || null;
+    if (mg && Number.isFinite(mg.x) && Number.isFinite(mg.y)) {
+      const tileSize = CONFIG.TILE_SIZE || 1;
+      const mx = (mg.x + 0.5) * tileSize;
+      const mz = (mg.y + 0.5) * tileSize;
+      if (this.isInDarkZoneWorld(mx, mz)) {
+        const multRaw = Number(CONFIG.AI_DARK_SMELL_MULT);
+        const mult = Number.isFinite(multRaw) ? Math.max(0.5, Math.min(3.0, multRaw)) : 1.25;
+        range *= mult;
+      }
+    }
+
     return range;
   }
 
-  pickAudibleNoise(monster, brain) {
+  pickAudibleNoise(monster, brain, pathfinder = null) {
     if (!monster || !brain) return null;
     if (!this.noiseEvents || this.noiseEvents.length === 0) return null;
 
@@ -164,7 +221,7 @@ export class MonsterPerception {
     const difficulty = CONFIG.AI_DIFFICULTY ?? 1.0;
     const hearingScale = Math.max(0.15, hearingRange / Math.max(1, baseHearing)) * Math.max(0.5, difficulty);
 
-    let best = null;
+    const candidates = [];
     for (const noise of this.noiseEvents) {
       if (!noise?.grid) continue;
       const dx = monsterGrid.x - noise.grid.x;
@@ -175,19 +232,89 @@ export class MonsterPerception {
 
       const priority = this.getNoisePriority(noise.kind);
       const score = priority * 1000 + (audible - dist) * 10 + (noise.life / (noise.maxLife || 1));
-      if (!best || score > best.score) {
-        best = {
-          score,
-          kind: noise.kind,
-          grid: noise.grid,
-          world: noise.world,
-          priority,
-          strength: noise.strength ?? 1.0
+      candidates.push({
+        score,
+        kind: noise.kind,
+        grid: noise.grid,
+        world: noise.world,
+        priority,
+        strength: noise.strength ?? 1.0,
+        audible
+      });
+    }
+
+    if (candidates.length === 0) return null;
+
+    // Wall attenuation: optionally re-score the best few candidates using shortest-path distance.
+    const usePathDist = CONFIG.AI_HEARING_USE_PATH_DISTANCE !== false;
+    const maxPathChecks = Math.max(0, Math.round(Number(CONFIG.AI_HEARING_PATH_DISTANCE_CANDIDATES) || 4));
+    if (usePathDist && maxPathChecks > 0 && pathfinder?.findPath && this.worldState?.isWalkable) {
+      candidates.sort((a, b) => b.score - a.score);
+      const slice = candidates.slice(0, Math.min(maxPathChecks, candidates.length));
+
+      let best = null;
+      for (const c of slice) {
+        const path = pathfinder.findPath(monsterGrid, c.grid, true, null) || [];
+        const hasPath = Array.isArray(path) && path.length > 0;
+
+        const corridorMult = Number(CONFIG.AI_HEARING_CORRIDOR_COST_MULT);
+        const roomMult = Number(CONFIG.AI_HEARING_ROOM_COST_MULT);
+        const doorMult = Number(CONFIG.AI_HEARING_DOOR_COST_MULT);
+
+        const tileCost = (x, y) => {
+          const ws = this.worldState;
+          const rt = ws?.getRoomType ? ws.getRoomType(x, y) : 0;
+          const tile = ws?.getTile ? ws.getTile(x, y) : null;
+
+          let mult = 1.0;
+          const isCorridor = rt === 0; // ROOM_TYPES.CORRIDOR == 0
+          if (isCorridor && Number.isFinite(corridorMult)) mult *= Math.max(0.2, corridorMult);
+          if (!isCorridor && Number.isFinite(roomMult)) mult *= Math.max(0.2, roomMult);
+
+          if (tile === 2 && Number.isFinite(doorMult)) mult *= Math.max(0.2, doorMult); // TILE_TYPES.DOOR == 2
+          return mult;
         };
+
+        let effectiveDist = Infinity;
+        if (hasPath) {
+          let cost = 0;
+          for (let i = 1; i < path.length; i++) {
+            const t = path[i];
+            cost += tileCost(t.x, t.y);
+          }
+          effectiveDist = cost;
+        } else if (CONFIG.AI_HEARING_THROUGH_WALL_ENABLED !== false && this.worldState?.getSoundOcclusionStats) {
+          const stats = this.worldState.getSoundOcclusionStats(monsterGrid, c.grid);
+          const maxWalls = Math.max(0, Math.round(Number(CONFIG.AI_HEARING_MAX_WALL_TILES) || 0));
+          if (stats && (stats.blocked || 0) > 0 && (stats.blocked || 0) <= maxWalls) {
+            const wallPenalty = Math.max(0, Number(CONFIG.AI_HEARING_WALL_PENALTY) || 6);
+            const doorPenalty = Math.max(0, Number(CONFIG.AI_HEARING_BLOCKED_DOOR_PENALTY) || 3);
+            const dist = Math.abs(monsterGrid.x - c.grid.x) + Math.abs(monsterGrid.y - c.grid.y);
+            effectiveDist = dist + (stats.blocked * wallPenalty) + ((stats.blockedDoors || 0) * doorPenalty);
+          }
+        }
+
+        if (!Number.isFinite(effectiveDist) || effectiveDist > c.audible) continue;
+
+        const score = c.priority * 1000 + (c.audible - effectiveDist) * 10 + Math.random() * 0.5;
+        if (!best || score > best.score) {
+          best = { ...c, score };
+        }
+      }
+      if (best) {
+        const { audible, ...out } = best;
+        return out;
       }
     }
 
-    return best;
+    // Fallback: simple Manhattan scoring.
+    let best = null;
+    for (const c of candidates) {
+      if (!best || c.score > best.score) best = c;
+    }
+    if (!best) return null;
+    const { audible, ...out } = best;
+    return out;
   }
 
   pickSmelledScent(monster, brain) {
@@ -265,7 +392,16 @@ export class MonsterPerception {
     const ttl = CONFIG.AI_NOISE_TTL_FOOTSTEP ?? 0.55;
     const strength = sprinting ? 1.0 : 0.65;
 
-    return this.registerNoise(playerPos, { kind, radius, ttl, strength, source: 'player' });
+    const radiusMult = Number.isFinite(options.radiusMult) ? options.radiusMult : 1.0;
+    const strengthMult = Number.isFinite(options.strengthMult) ? options.strengthMult : 1.0;
+
+    return this.registerNoise(playerPos, {
+      kind,
+      radius: radius * radiusMult,
+      ttl,
+      strength: strength * strengthMult,
+      source: 'player'
+    });
   }
 
   updatePlayerScent(dt, playerPos, options = {}) {
@@ -303,7 +439,16 @@ export class MonsterPerception {
     const radius = CONFIG.AI_SCENT_RADIUS ?? 10;
     const kind = sprinting ? 'scent_sprint' : 'scent';
 
-    return this.registerScent(playerPos, { kind, radius, ttl, strength, source: 'player' });
+    const radiusMult = Number.isFinite(options.radiusMult) ? options.radiusMult : 1.0;
+    const strengthMult = Number.isFinite(options.strengthMult) ? options.strengthMult : 1.0;
+
+    return this.registerScent(playerPos, {
+      kind,
+      radius: radius * radiusMult,
+      ttl,
+      strength: strength * strengthMult,
+      source: 'player'
+    });
   }
 
   canMonsterSeePlayer(monster, playerGrid, worldState) {
@@ -311,7 +456,48 @@ export class MonsterPerception {
     if ((monster.perceptionBlindedTimer || 0) > 0) return false;
     const monsterGrid = monster.getGridPosition?.();
     if (!monsterGrid) return false;
-    const vision = monster.visionRange ?? monster.typeConfig?.stats?.visionRange ?? CONFIG.MONSTER_VISION_RANGE ?? 12;
+    let vision = monster.visionRange ?? monster.typeConfig?.stats?.visionRange ?? CONFIG.MONSTER_VISION_RANGE ?? 12;
+
+    // Jammed: shorter effective vision.
+    if ((monster.perceptionJammedTimer || 0) > 0) {
+      const m = Number(CONFIG.AI_JAMMED_VISION_MULT);
+      const mult = Number.isFinite(m) ? Math.max(0.15, Math.min(1.0, m)) : 0.65;
+      vision *= mult;
+    }
+
+    // Darkness reduces effective vision range (e.g. destroyed light fixtures).
+    const darkZones = typeof worldState?.getDarkZones === 'function'
+      ? worldState.getDarkZones()
+      : (Array.isArray(worldState?.darkZones) ? worldState.darkZones : []);
+    if (Array.isArray(darkZones) && darkZones.length > 0) {
+      const tileSize = CONFIG.TILE_SIZE || 1;
+      const mx = (monsterGrid.x + 0.5) * tileSize;
+      const mz = (monsterGrid.y + 0.5) * tileSize;
+      const px = (playerGrid.x + 0.5) * tileSize;
+      const pz = (playerGrid.y + 0.5) * tileSize;
+
+      let inDark = false;
+      for (const z of darkZones) {
+        if (!z) continue;
+        const r = Number(z.radius) || 0;
+        if (!(r > 0)) continue;
+        const cx = Number.isFinite(z.x) ? z.x : (Number.isFinite(z.position?.x) ? z.position.x : 0);
+        const cz = Number.isFinite(z.z) ? z.z : (Number.isFinite(z.position?.z) ? z.position.z : 0);
+        const dxm = mx - cx;
+        const dzm = mz - cz;
+        const dxp = px - cx;
+        const dzp = pz - cz;
+        if (dxm * dxm + dzm * dzm <= r * r || dxp * dxp + dzp * dzp <= r * r) {
+          inDark = true;
+          break;
+        }
+      }
+      if (inDark) {
+        const m = Number(CONFIG.AI_DARK_VISION_MULT);
+        const mult = Number.isFinite(m) ? Math.max(0.15, Math.min(1.0, m)) : 0.55;
+        vision *= mult;
+      }
+    }
     const dist = Math.abs(monsterGrid.x - playerGrid.x) + Math.abs(monsterGrid.y - playerGrid.y);
     if (dist > vision) return false;
 

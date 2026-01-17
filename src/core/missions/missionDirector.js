@@ -145,6 +145,7 @@ export class MissionDirector {
     this.gameState = options.gameState || null;
     this.exitPoint = options.exitPoint || null;
     this.interactables = options.interactableSystem || null;
+    this.bossSystem = options.bossSystem || null;
     this.pathfinder = this.worldState ? new Pathfinding(this.worldState) : null;
 
     this.levelConfig = null;
@@ -178,7 +179,7 @@ export class MissionDirector {
     this.unsubs = [];
   }
 
-  setRefs({ eventBus, worldState, monsterManager, scene, gameState, exitPoint, interactableSystem } = {}) {
+  setRefs({ eventBus, worldState, monsterManager, scene, gameState, exitPoint, interactableSystem, bossSystem } = {}) {
     if (eventBus) this.eventBus = eventBus;
     if (worldState) {
       this.worldState = worldState;
@@ -189,6 +190,7 @@ export class MissionDirector {
     if (gameState) this.gameState = gameState;
     if (exitPoint) this.exitPoint = exitPoint;
     if (interactableSystem) this.interactables = interactableSystem;
+    if (bossSystem) this.bossSystem = bossSystem;
   }
 
   dispose() {
@@ -198,6 +200,27 @@ export class MissionDirector {
   clear() {
     this.unsubs.forEach((fn) => fn?.());
     this.unsubs = [];
+
+    // Best-effort restore any temporary monster escalation changes.
+    try {
+      for (const mission of this.missions.values()) {
+        if (!mission || mission.template !== 'timedEvac') continue;
+        if (!mission.state?._boostApplied) continue;
+        const mm = this.monsterManager;
+        if (!mm) continue;
+
+        const origMax = mission.state._origMaxCount;
+        if (mm.levelConfig?.monsters && Number.isFinite(origMax)) {
+          mm.levelConfig.monsters.maxCount = origMax;
+        }
+        const origDelay = mission.state._origRespawnDelay;
+        if (Number.isFinite(origDelay) && mm.spawner?.setRespawnDelay) {
+          mm.spawner.setRespawnDelay(origDelay);
+        }
+      }
+    } catch {
+      // ignore
+    }
 
     if (this.interactables && this.registeredIds.length > 0) {
       for (const id of this.registeredIds) {
@@ -297,6 +320,16 @@ export class MissionDirector {
       return;
     }
 
+    if (template === 'syncActivate') {
+      mission.state.total = 0;
+      mission.state.switches = [];
+      if (!(mission.state.activated instanceof Set)) mission.state.activated = new Set();
+      mission.state.windowSec = 0;
+      mission.state.activeUntilSec = 0;
+      mission.state.started = false;
+      return;
+    }
+
     if (template === 'reroutePower') {
       mission.state.total = 0;
       mission.state.requiredOn = 0;
@@ -326,12 +359,36 @@ export class MissionDirector {
       return;
     }
 
+    if (template === 'powerGrid') {
+      mission.state.total = 0;
+      mission.state.requiredPowered = 0;
+      mission.state.powered = 0;
+      mission.state.itemId = String(mission.params?.itemId || 'fuse').trim() || 'fuse';
+      mission.state.fuses = [];
+      mission.state.fusesCollected = 0;
+      mission.state.branches = [];
+      return;
+    }
+
     if (template === 'uploadEvidence') {
       mission.state.collected = 0;
       mission.state.required = 0;
       mission.state.total = 0;
       mission.state.items = [];
       mission.state.uploaded = true;
+      mission.state.uploading = false;
+      mission.state.uploadSeconds = 0;
+      mission.state.uploadProgressSec = 0;
+      mission.state.uploadRadius = 0;
+      return;
+    }
+
+    if (template === 'blackoutZone') {
+      mission.state.total = 0;
+      mission.state.required = 0;
+      mission.state.restored = 0;
+      mission.state.radius = 0;
+      mission.state.zones = [];
       return;
     }
 
@@ -342,6 +399,20 @@ export class MissionDirector {
       mission.state.cluesTotal = 0;
       mission.state.cluesCollected = 0;
       mission.state.clues = [];
+      return;
+    }
+
+    if (template === 'codeLockScan') {
+      mission.state.unlocked = true;
+      mission.state.codeReady = true;
+      mission.state.code = '';
+      mission.state.cluesTotal = 0;
+      mission.state.cluesCollected = 0;
+      mission.state.clues = [];
+      mission.state.scanSeconds = 0;
+      mission.state.scanRequired = 0;
+      mission.state.scanned = 0;
+      mission.state.scanTargets = [];
       return;
     }
 
@@ -416,6 +487,15 @@ export class MissionDirector {
       mission.state.requireLure = false;
       mission.state.lureSeconds = 0;
       mission.state.lureUntilSec = 0;
+      mission.state.requiredTriggers = 0;
+      mission.state.triggered = 0;
+      mission.state.cooldownSec = 0;
+      mission.state.cooldownUntilSec = 0;
+      mission.state.requireClear = false;
+      mission.state.awaitingClear = false;
+      mission.state.lastTriggerAtSec = 0;
+      mission.state.successFlashSec = 0;
+      mission.state.rearmEachTrigger = false;
       mission.state.playerRadius = 0;
       mission.state.triggerRadius = 0;
       mission.state.sensorId = null;
@@ -474,6 +554,68 @@ export class MissionDirector {
       return;
     }
 
+    if (template === 'surviveTimer') {
+      mission.state.seconds = 0;
+      mission.state.completed = true;
+      return;
+    }
+
+    if (template === 'surviveInZone') {
+      mission.state.seconds = 0;
+      mission.state.heldForSec = 0;
+      mission.state.radius = 0;
+      mission.state.exitGraceSec = 0;
+      mission.state.outOfZoneSec = 0;
+      mission.state.started = true;
+      mission.state.completed = true;
+      mission.state.beaconId = null;
+      mission.state.beaconGridPos = null;
+      return;
+    }
+
+    if (template === 'occupyPoint') {
+      mission.state.seconds = 0;
+      mission.state.heldForSec = 0;
+      mission.state.radius = 0;
+      mission.state.exitGraceSec = 0;
+      mission.state.outOfZoneSec = 0;
+      mission.state.started = true;
+      mission.state.completed = true;
+      mission.state.beaconId = null;
+      mission.state.beaconGridPos = null;
+      mission.state.hazardIntervalSec = 0;
+      mission.state.hazardDurationSec = 0;
+      mission.state.hazardDamage = 0;
+      mission.state.hazardActiveUntilSec = 0;
+      mission.state.nextHazardAtSec = 0;
+      return;
+    }
+
+    if (template === 'surviveNoDamage') {
+      mission.state.seconds = 0;
+      mission.state.lastDamagedAtSec = 0;
+      mission.state.hits = 0;
+      mission.state.completed = true;
+      return;
+    }
+
+    if (template === 'lowHealthForSeconds') {
+      mission.state.seconds = 0;
+      mission.state.healthPct = 0;
+      mission.state.underForSec = 0;
+      mission.state.currentHealthPct = null;
+      mission.state.completed = true;
+      return;
+    }
+
+    if (template === 'noHitRun') {
+      mission.state.hits = 0;
+      mission.state.failed = false;
+      mission.state.completed = true;
+      mission.state.loseOnHit = true;
+      return;
+    }
+
     if (template === 'hideForSeconds') {
       mission.state.seconds = 0;
       mission.state.hiddenForSec = 0;
@@ -520,6 +662,91 @@ export class MissionDirector {
       mission.state.checkpointMarker = null;
       return;
     }
+
+    if (template === 'bossFinale') {
+      mission.state.phase = 3;
+      mission.state.nodesTotal = 0;
+      mission.state.nodesRemaining = 0;
+      mission.state.bossMaxHealth = 1;
+      mission.state.bossHealth = 0;
+      mission.state.shieldActive = false;
+      mission.state.escapeUntilSec = 0;
+      mission.state.escapeSeconds = 0;
+      return;
+    }
+
+    if (template === 'escortRescue') {
+      mission.state.completed = true;
+      mission.state.started = true;
+      mission.state.escortId = null;
+      mission.state.escortGridPos = null;
+      mission.state.goalGridPos = null;
+      mission.state.followDistance = 0;
+      mission.state.aggroNoiseIntervalSec = 0;
+      mission.state.aggroScentIntervalSec = 0;
+      mission.state.lastAggroNoiseAtSec = 0;
+      mission.state.lastAggroScentAtSec = 0;
+      return;
+    }
+
+    if (template === 'timedEvac') {
+      mission.state.started = true;
+      mission.state.seconds = 0;
+      mission.state.untilSec = 0;
+      mission.state.startedAtSec = 0;
+      mission.state.unlockExitMissionId = null;
+      mission.state.autoUnlockExit = false;
+      mission.state.escalateMonsters = false;
+      mission.state.maxCountBonus = 0;
+      mission.state.respawnDelaySec = 0;
+      mission.state.spawnBurstCount = 0;
+      mission.state.spawnPulseSec = 0;
+      mission.state.spawnPulseCount = 0;
+      mission.state.lastSpawnPulseAtSec = 0;
+      mission.state._origMaxCount = null;
+      mission.state._origRespawnDelay = null;
+      mission.state._boostApplied = false;
+      return;
+    }
+
+    if (template === 'reclaimStolenItem') {
+      mission.state.itemId = String(mission.params?.itemId || 'stolen_item').trim() || 'stolen_item';
+      mission.state.itemCount = 0;
+      mission.state.itemLabel = String(mission.params?.itemLabel || mission.params?.label || 'stolen item').trim() || 'stolen item';
+      mission.state.objectKind = String(mission.params?.objectKind || 'package').trim() || 'package';
+      mission.state.recovered = true;
+      mission.state.dropped = false;
+      mission.state.dropId = null;
+      mission.state.dropGridPos = null;
+      mission.state.thiefMonsterId = null;
+      mission.state.thiefHits = 0;
+      mission.state.dropOnHit = false;
+      mission.state.hitsToDrop = 0;
+      mission.state.dropAtHealthPct = null;
+      return;
+    }
+
+    if (template === 'hiddenTerminal') {
+      mission.state.completed = true;
+      mission.state.terminalId = null;
+      mission.state.terminalGridPos = null;
+      mission.state.roomType = null;
+      mission.state.pingIntervalSec = 0;
+      mission.state.lastPingAtSec = 0;
+      mission.state.revealMarkerAtHintTier = 99;
+      return;
+    }
+
+    if (template === 'scanWaypoints') {
+      mission.state.required = 0;
+      mission.state.scanned = 0;
+      mission.state.seconds = 0;
+      mission.state.radius = 0;
+      mission.state.requireLOS = false;
+      mission.state.targets = [];
+      mission.state.completed = true;
+      return;
+    }
   }
 
   bindEvents() {
@@ -544,6 +771,9 @@ export class MissionDirector {
       bus.on(EVENTS.MONSTER_KILLED, (payload) => this.onMonsterKilled(payload))
     );
     this.unsubs.push(
+      bus.on(EVENTS.PLAYER_HIT_MONSTER, (payload) => this.onPlayerHitMonster(payload))
+    );
+    this.unsubs.push(
       bus.on(EVENTS.PLAYER_DAMAGED, (payload) => this.onPlayerDamaged(payload))
     );
     this.unsubs.push(
@@ -557,6 +787,9 @@ export class MissionDirector {
     );
     this.unsubs.push(
       bus.on(EVENTS.KEYPAD_CODE_SUBMITTED, (payload) => this.onKeypadCodeSubmitted(payload))
+    );
+    this.unsubs.push(
+      bus.on(EVENTS.BOSS_UPDATED, (payload) => this.onBossUpdated(payload))
     );
   }
 
@@ -595,6 +828,18 @@ export class MissionDirector {
         const switches = clamp(Math.round(mission.params.switches ?? 3), 1, 12);
         mission.state = { activated: new Set(), total: switches };
         this.spawnPowerSwitches(mission, { avoid: [spawn, exit] });
+      } else if (template === 'syncActivate') {
+        const switches = clamp(Math.round(mission.params.switches ?? mission.params.count ?? 3), 2, 12);
+        const windowSec = clamp(Math.round(mission.params.windowSec ?? mission.params.seconds ?? 15), 5, 90);
+        mission.state = {
+          activated: new Set(),
+          total: switches,
+          switches: [],
+          started: false,
+          windowSec,
+          activeUntilSec: 0
+        };
+        this.spawnSyncActivateSwitches(mission, { avoid: [spawn, exit] });
       } else if (template === 'reroutePower') {
         const breakers = clamp(Math.round(mission.params.breakers ?? mission.params.switches ?? mission.params.count ?? 4), 2, 10);
         const onCount = clamp(Math.round(mission.params.onCount ?? mission.params.requiredOn ?? 3), 1, breakers);
@@ -627,19 +872,53 @@ export class MissionDirector {
           panelGridPos: null
         };
         this.spawnRestorePowerFuses(mission, { avoid: [spawn, exit] });
+      } else if (template === 'powerGrid') {
+        const branches = clamp(Math.round(mission.params.branches ?? mission.params.sectors ?? mission.params.count ?? 3), 1, 8);
+        const requiredPowered = clamp(Math.round(mission.params.requiredPowered ?? mission.params.required ?? branches), 1, branches);
+        const itemId = String(mission.params.itemId || 'fuse').trim() || 'fuse';
+        mission.state = {
+          total: branches,
+          requiredPowered,
+          powered: 0,
+          itemId,
+          fuses: [],
+          fusesCollected: 0,
+          branches: []
+        };
+        this.spawnPowerGrid(mission, { avoid: [spawn, exit] });
       } else if (template === 'uploadEvidence') {
         const total = clamp(Math.round(mission.params.count ?? 3), 1, 999);
         const required = clamp(Math.round(mission.params.required ?? total), 1, total);
+        const uploadSeconds = clamp(Math.round(mission.params.uploadSeconds ?? mission.params.seconds ?? 0), 0, 600);
+        const uploadRadius = clamp(Math.round(mission.params.uploadRadius ?? mission.params.radius ?? 2), 1, 8);
+        const uploadResetOnLeave = mission.params.uploadResetOnLeave !== false;
         mission.state = {
           collected: 0,
           required,
           total,
           uploaded: false,
+          uploading: false,
+          uploadSeconds,
+          uploadRadius,
+          uploadResetOnLeave,
+          uploadProgressSec: 0,
           items: [],
           terminalId: null,
           terminalGridPos: null
         };
         this.spawnUploadEvidence(mission, { avoid: [spawn, exit] });
+      } else if (template === 'blackoutZone') {
+        const zones = clamp(Math.round(mission.params.zones ?? mission.params.count ?? 2), 1, 8);
+        const required = clamp(Math.round(mission.params.required ?? zones), 1, zones);
+        const radius = clamp(Math.round(mission.params.radius ?? mission.params.zoneRadius ?? 9), 3, 30);
+        mission.state = {
+          total: zones,
+          required,
+          restored: 0,
+          radius,
+          zones: []
+        };
+        this.spawnBlackoutZones(mission, { avoid: [spawn, exit] });
       } else if (template === 'lockedDoor') {
         mission.state = {
           unlocked: false,
@@ -702,14 +981,35 @@ export class MissionDirector {
         const seconds = clamp(Math.round(mission.params.seconds ?? mission.params.holdSeconds ?? 5), 2, 120);
         mission.state = { required: count, scanned: 0, seconds, targets: [], completed: false };
         this.spawnHoldToScan(mission, { avoid: [spawn, exit] });
+      } else if (template === 'scanWaypoints') {
+        const count = clamp(Math.round(mission.params.count ?? 4), 1, 24);
+        const seconds = clamp(Math.round(mission.params.seconds ?? mission.params.holdSeconds ?? 4), 1, 120);
+        const radius = clamp(Math.round(mission.params.radius ?? mission.params.playerRadius ?? 2), 0, 10);
+        const requireLOS = mission.params.requireLOS === true;
+        mission.state = { required: count, scanned: 0, seconds, radius, requireLOS, targets: [], completed: false };
+        this.spawnScanWaypoints(mission, { avoid: [spawn, exit] });
       } else if (template === 'lureToSensor') {
         const lureSeconds = clamp(Math.round(mission.params.lureSeconds ?? mission.params.seconds ?? 10), 3, 120);
+        const requiredTriggers = clamp(Math.round(mission.params.requiredTriggers ?? mission.params.count ?? mission.params.required ?? 1), 1, 12);
+        const requireClear = mission.params.requireClear === undefined ? (requiredTriggers > 1) : (mission.params.requireClear !== false);
+        const rearmEachTrigger = mission.params.rearmEachTrigger === true;
+        const cooldownSec = clamp(Math.round(mission.params.cooldownSec ?? 3), 0, 60);
+        const successFlashSec = clamp(toFinite(mission.params.successFlashSec, 2) ?? 2, 0, 10);
         mission.state = {
           armed: false,
           completed: false,
           requireLure: mission.params.requireLure !== false,
           lureSeconds,
           lureUntilSec: 0,
+          requiredTriggers,
+          triggered: 0,
+          cooldownSec,
+          cooldownUntilSec: 0,
+          requireClear,
+          awaitingClear: false,
+          lastTriggerAtSec: -999,
+          successFlashSec,
+          rearmEachTrigger,
           playerRadius: clamp(Math.round(mission.params.playerRadius ?? 3), 1, 20),
           triggerRadius: clamp(Math.round(mission.params.triggerRadius ?? 1), 0, 10),
           sensorId: null,
@@ -796,6 +1096,59 @@ export class MissionDirector {
           object3d: null
         };
         this.spawnEscort(mission, { avoid: [spawn, exit] });
+      } else if (template === 'escortRescue') {
+        const followDistance = clamp(Math.round(mission.params.followDistance ?? 1), 1, 4);
+        mission.state = {
+          started: false,
+          completed: false,
+          escortId: null,
+          escortGridPos: null,
+          goalGridPos: null,
+          followDistance,
+          object3d: null,
+          // Aggro bias: periodically emits strong lure/noise and scent from the buddy position.
+          aggroNoiseIntervalSec: clamp(toFinite(mission.params.aggroNoiseIntervalSec, 2) ?? 2, 0, 60),
+          aggroNoiseRadius: clamp(toFinite(mission.params.aggroNoiseRadius, 16) ?? 16, 2, 80),
+          aggroNoiseStrength: clamp(toFinite(mission.params.aggroNoiseStrength, 0.85) ?? 0.85, 0.05, 2.0),
+          aggroNoiseTtl: clamp(toFinite(mission.params.aggroNoiseTtl, 0.9) ?? 0.9, 0.1, 6.0),
+          aggroNoiseKind: String(mission.params.aggroNoiseKind || 'lure').trim() || 'lure',
+          aggroScentIntervalSec: clamp(toFinite(mission.params.aggroScentIntervalSec, 1) ?? 1, 0, 60),
+          aggroScentRadius: clamp(toFinite(mission.params.aggroScentRadius, 14) ?? 14, 2, 80),
+          aggroScentStrength: clamp(toFinite(mission.params.aggroScentStrength, 1.15) ?? 1.15, 0.05, 3.0),
+          aggroScentTtl: clamp(toFinite(mission.params.aggroScentTtl, 4) ?? 4, 0.2, 30),
+          lastAggroNoiseAtSec: -999,
+          lastAggroScentAtSec: -999
+        };
+        this.spawnEscort(mission, { avoid: [spawn, exit] });
+      } else if (template === 'timedEvac') {
+        const seconds = clamp(Math.round(mission.params.seconds ?? mission.params.timeSec ?? 45), 5, 600);
+        const autoUnlockExit = mission.params.autoUnlockExit !== false;
+        const unlockExitMissionId = String(mission.params.unlockExitMissionId || 'unlockExit').trim() || 'unlockExit';
+
+        const maxCountBonus = clamp(Math.round(mission.params.maxCountBonus ?? mission.params.spawnMaxCountBonus ?? 2), 0, 12);
+        const respawnDelaySec = clamp(toFinite(mission.params.respawnDelaySec ?? mission.params.spawnRespawnDelaySec, 0.35) ?? 0.35, 0, 10);
+        const spawnBurstCount = clamp(Math.round(mission.params.spawnBurstCount ?? 2), 0, 10);
+        const spawnPulseSec = clamp(toFinite(mission.params.spawnPulseSec, 6) ?? 6, 0, 60);
+        const spawnPulseCount = clamp(Math.round(mission.params.spawnPulseCount ?? 1), 0, 6);
+
+        mission.state = {
+          started: false,
+          seconds,
+          untilSec: 0,
+          startedAtSec: 0,
+          unlockExitMissionId,
+          autoUnlockExit,
+          escalateMonsters: mission.params.escalateMonsters !== false,
+          maxCountBonus,
+          respawnDelaySec,
+          spawnBurstCount,
+          spawnPulseSec,
+          spawnPulseCount,
+          lastSpawnPulseAtSec: -999,
+          _origMaxCount: null,
+          _origRespawnDelay: null,
+          _boostApplied: false
+        };
       } else if (template === 'escortToSafeRoom') {
         mission.state = {
           started: false,
@@ -817,9 +1170,98 @@ export class MissionDirector {
       } else if (template === 'surviveTimer') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 60), 5, 3600);
         mission.state = { seconds, completed: false };
+      } else if (template === 'surviveInZone') {
+        const seconds = clamp(Math.round(mission.params.seconds ?? 25), 5, 3600);
+        const radius = clamp(Math.round(mission.params.radius ?? mission.params.playerRadius ?? 2), 1, 8);
+        const exitGraceSec = clamp(Math.round(mission.params.exitGraceSec ?? 2), 0, 20);
+        mission.state = {
+          seconds,
+          radius,
+          exitGraceSec,
+          heldForSec: 0,
+          outOfZoneSec: 0,
+          started: false,
+          completed: false,
+          beaconId: null,
+          beaconGridPos: null
+        };
+        this.spawnSurviveInZone(mission, { avoid: [spawn, exit] });
+      } else if (template === 'occupyPoint') {
+        const seconds = clamp(Math.round(mission.params.seconds ?? 30), 5, 3600);
+        const radius = clamp(Math.round(mission.params.radius ?? mission.params.playerRadius ?? 2), 1, 8);
+        const exitGraceSec = clamp(Math.round(mission.params.exitGraceSec ?? 2), 0, 20);
+        const hazardIntervalSec = clamp(Math.round(mission.params.hazardIntervalSec ?? mission.params.pulseSec ?? 8), 2, 120);
+        const hazardDurationSec = clamp(Math.round(mission.params.hazardDurationSec ?? mission.params.pulseDurationSec ?? 2), 1, 30);
+        const hazardDamage = clamp(Math.round(mission.params.hazardDamage ?? 3), 0, 50);
+        mission.state = {
+          seconds,
+          radius,
+          exitGraceSec,
+          heldForSec: 0,
+          outOfZoneSec: 0,
+          started: false,
+          completed: false,
+          beaconId: null,
+          beaconGridPos: null,
+          hazardIntervalSec,
+          hazardDurationSec,
+          hazardDamage,
+          hazardActiveUntilSec: 0,
+          nextHazardAtSec: 0
+        };
+        this.spawnSurviveInZone(mission, { avoid: [spawn, exit] });
       } else if (template === 'surviveNoDamage') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 20), 5, 3600);
         mission.state = { seconds, lastDamagedAtSec: 0, completed: false, hits: 0 };
+      } else if (template === 'lowHealthForSeconds') {
+        const seconds = clamp(Math.round(mission.params.seconds ?? mission.params.timeSec ?? 12), 1, 3600);
+        const healthPct = clamp(Math.round(mission.params.healthPct ?? mission.params.thresholdPct ?? 35), 1, 99);
+        mission.state = { seconds, healthPct, underForSec: 0, currentHealthPct: null, completed: false };
+      } else if (template === 'noHitRun') {
+        const loseOnHit = mission.params.loseOnHit === undefined
+          ? (mission.required !== false)
+          : (mission.params.loseOnHit !== false);
+        mission.state = { hits: 0, failed: false, completed: false, loseOnHit };
+      } else if (template === 'reclaimStolenItem') {
+        const itemId = String(mission.params.itemId || 'stolen_item').trim() || 'stolen_item';
+        const itemCount = clamp(Math.round(mission.params.itemCount ?? mission.params.count ?? 1), 1, 99);
+        const itemLabel = String(mission.params.itemLabel || mission.params.label || itemId).trim() || itemId;
+        const objectKind = String(mission.params.objectKind || 'package').trim() || 'package';
+        const dropOnHit = mission.params.dropOnHit === true;
+        const hitsToDrop = clamp(Math.round(mission.params.hitsToDrop ?? 3), 1, 20);
+        const dropAtHealthPctRaw = toFinite(mission.params.dropAtHealthPct ?? mission.params.dropHealthPct, null);
+        const dropAtHealthPct = Number.isFinite(dropAtHealthPctRaw)
+          ? clamp(dropAtHealthPctRaw, 1, 99)
+          : null;
+
+        mission.state = {
+          itemId,
+          itemCount,
+          itemLabel,
+          objectKind,
+          recovered: false,
+          dropped: false,
+          dropId: null,
+          dropGridPos: null,
+          thiefMonsterId: null,
+          thiefHits: 0,
+          dropOnHit,
+          hitsToDrop,
+          dropAtHealthPct
+        };
+      } else if (template === 'hiddenTerminal') {
+        const pingIntervalSec = clamp(Math.round(mission.params.pingIntervalSec ?? 8), 0, 120);
+        const revealMarkerAtHintTier = clamp(Math.round(mission.params.revealMarkerAtHintTier ?? 99), 0, 99);
+        mission.state = {
+          completed: false,
+          terminalId: null,
+          terminalGridPos: null,
+          roomType: null,
+          pingIntervalSec,
+          lastPingAtSec: -999,
+          revealMarkerAtHintTier
+        };
+        this.spawnHiddenTerminal(mission, { avoid: [spawn, exit] });
       } else if (template === 'enterRoomType') {
         const required = clamp(Math.round(mission.params.count ?? 1), 1, 999);
         const roomTypes = normalizeRoomTypes(mission.params.roomTypes) || null;
@@ -863,20 +1305,64 @@ export class MissionDirector {
           keypadGridPos: null
         };
         this.spawnCodeLock(mission, { avoid: [spawn, exit] });
+      } else if (template === 'codeLockScan') {
+        const cluesTotal = clamp(Math.round(mission.params.clues ?? 3), 2, 6);
+        const scanSeconds = clamp(Math.round(mission.params.sampleSeconds ?? mission.params.scanSeconds ?? mission.params.holdSeconds ?? 4), 1, 60);
+        const scanCount = clamp(Math.round(mission.params.sampleCount ?? mission.params.scanCount ?? 1), 1, 6);
+        mission.state = {
+          cluesTotal,
+          cluesCollected: 0,
+          codeReady: false,
+          code: '',
+          unlocked: false,
+          failedAttempts: 0,
+          clues: [],
+          keypadId: null,
+          keypadGridPos: null,
+          scanSeconds,
+          scanRequired: scanCount,
+          scanned: 0,
+          scanTargets: []
+        };
+        this.spawnCodeLockScan(mission, { avoid: [spawn, exit] });
       } else if (template === 'unlockExit') {
         mission.state = { unlocked: false };
       } else if (template === 'stealthNoise') {
         const seconds = clamp(Math.round(mission.params.seconds ?? 20), 5, 3600);
         const resetOnGunshot = mission.params.resetOnGunshot !== false;
         const maxGunshotsTotal = toFinite(mission.params.maxGunshotsTotal, null);
+        const maxNoiseStrengthRaw = Number(mission.params.maxNoiseStrength ?? mission.params.noiseLimit ?? mission.params.maxNoise ?? NaN);
+        const maxNoiseStrength = Number.isFinite(maxNoiseStrengthRaw) ? clamp(maxNoiseStrengthRaw, 0, 1) : null;
+        const penaltySecondsPerStrike = clamp(Math.round(mission.params.penaltySecondsPerStrike ?? mission.params.penaltySeconds ?? 0), 0, 60);
+        const maxPenaltySeconds = clamp(Math.round(mission.params.maxPenaltySeconds ?? 60), 0, 600);
+        const maxStrikes = clamp(Math.round(mission.params.maxStrikes ?? 0), 0, 999);
         mission.state = {
           seconds,
           resetOnGunshot,
           maxGunshotsTotal,
+          maxNoiseStrength,
+          penaltySecondsPerStrike,
+          maxPenaltySeconds,
+          maxStrikes,
+          strikes: 0,
           gunshots: 0,
           lastNoiseAtSec: 0,
+          lastStrikeAtSec: 0,
+          lastStrikeToastAtSec: -999,
           completed: false
         };
+      } else if (template === 'bossFinale') {
+        mission.state = {
+          phase: 0,
+          nodesTotal: 0,
+          nodesRemaining: 0,
+          bossMaxHealth: 0,
+          bossHealth: 0,
+          shieldActive: false,
+          escapeUntilSec: 0,
+          escapeSeconds: 0
+        };
+        this.syncBossFinaleMission(mission);
       } else {
         console.warn(`⚠️ Unknown mission template: ${template}`);
         mission.state = {};
@@ -1101,6 +1587,142 @@ export class MissionDirector {
     mission.state.total = mission.state.switches.length;
   }
 
+  spawnSyncActivateSwitches(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    const allowedRoomTypes = Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null;
+
+    const desired = clamp(Math.round(mission.state.total || 0), 0, 999);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+
+    const tiles = pickDistinctTiles(ws, want, {
+      allowedRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, want <= 0 ? 'mission object budget exhausted' : 'no valid spawn tiles');
+      return;
+    }
+
+    mission.state.total = tiles.length;
+    mission.state.switches = [];
+
+    const windowSec = clamp(Math.round(mission.state.windowSec ?? mission.params.windowSec ?? mission.params.seconds ?? 15), 5, 90);
+    mission.state.windowSec = windowSec;
+    mission.state.started = false;
+    mission.state.activeUntilSec = 0;
+    if (!(mission.state.activated instanceof Set)) mission.state.activated = new Set();
+
+    for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = tiles[i];
+      const object3d = createPowerSwitchObject(false);
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const slot = toSlotLabel(i);
+      const interactableId = `sync:${mission.id}:${slot}`;
+      const label = `Sync Switch ${slot}`;
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'syncSwitch',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: ({ entry }) => {
+            const on = !!entry?.meta?.on;
+            if (on) return `E: ${label} (On)`;
+            return mission.state.started ? `E: ${label} (Sync)` : `E: ${label} (Start sync)`;
+          },
+          interact: ({ entry }) => {
+            const meta = entry?.meta || {};
+            if (meta.on) return { ok: true, message: 'Switch already on', state: { on: true, slot } };
+            meta.on = true;
+            setPowerSwitchState(object3d, true);
+            return { ok: true, message: `Switch ${slot} activated`, state: { on: true, slot } };
+          },
+          meta: { missionId: mission.id, template: mission.template, index: i, slot, on: false }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i, slot });
+      mission.state.switches.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, slot, on: false, object3d });
+    }
+
+    if (mission.state.switches.length < 2) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    mission.state.total = mission.state.switches.length;
+  }
+
+  spawnSurviveInZone(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    const allowedRoomTypes = Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null;
+
+    const tiles = pickDistinctTiles(ws, 1, {
+      allowedRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, 'no valid beacon tiles');
+      return;
+    }
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const pos = tiles[0];
+    const object3d = createSensorObject({ armed: false, active: false, success: false });
+    const world = gridToWorldCenter(pos);
+    object3d.position.set(world.x, 0, world.z);
+
+    this.scene.add(object3d);
+    this.spawnedObjects.push(object3d);
+    this.consumeMissionObjectBudget(1);
+
+    const interactableId = `zone:${mission.id}`;
+    const label = mission.params.label || 'Start hold zone';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: interactableId,
+        kind: 'survivalBeacon',
+        label,
+        gridPos: { x: pos.x, y: pos.y },
+        object3d,
+        prompt: ({ entry }) => {
+          const started = !!entry?.meta?.started;
+          return started ? `E: ${label} (Active)` : `E: ${label}`;
+        },
+        interact: ({ entry }) => {
+          const meta = entry?.meta || {};
+          if (meta.started) return { ok: true, message: 'Zone already active', state: { started: true } };
+          meta.started = true;
+          setSensorState(object3d, { armed: true, active: true, success: false });
+          return { ok: true, message: 'Zone started', state: { started: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, started: false }
+      })
+    );
+    this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template });
+
+    mission.state.beaconId = interactableId;
+    mission.state.beaconGridPos = { x: pos.x, y: pos.y };
+  }
+
   spawnReroutePower(mission, options = {}) {
     const ws = this.worldState;
     const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
@@ -1292,6 +1914,23 @@ export class MissionDirector {
       if (obj) {
         setPowerSwitchState(obj, false);
       }
+    }
+  }
+
+  resetSyncActivateSwitches(mission) {
+    if (!mission || mission.template !== 'syncActivate') return;
+    if (mission.state?.activated?.clear) mission.state.activated.clear();
+    mission.state.started = false;
+    mission.state.activeUntilSec = 0;
+
+    const switches = Array.isArray(mission.state.switches) ? mission.state.switches : [];
+    for (const sw of switches) {
+      if (!sw?.id) continue;
+      sw.on = false;
+      const entry = this.interactables?.get?.(sw.id) || null;
+      if (entry?.meta) entry.meta.on = false;
+      const obj = entry?.object3d || sw.object3d || null;
+      if (obj) setPowerSwitchState(obj, false);
     }
   }
 
@@ -1504,6 +2143,247 @@ export class MissionDirector {
     this.interactableMeta.set(panelId, { missionId: mission.id, template: mission.template });
   }
 
+  spawnPowerGrid(mission, options = {}) {
+    const ws = this.worldState;
+    const scene = this.scene;
+    if (!ws || !scene) return;
+
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+
+    const desiredBranches = clamp(Math.round(mission.state.total ?? mission.params.branches ?? mission.params.count ?? 3), 1, 8);
+    const requiredPoweredRaw = clamp(
+      Math.round(mission.state.requiredPowered ?? mission.params.requiredPowered ?? mission.params.required ?? desiredBranches),
+      1,
+      desiredBranches
+    );
+
+    const itemId = String(mission.state.itemId || mission.params.itemId || 'fuse').trim() || 'fuse';
+    mission.state.itemId = itemId;
+
+    const minDist = mission.params.minDistFromSpawn ?? 7;
+    const zoneRadius = clamp(Math.round(mission.params.zoneRadius ?? mission.params.darkRadius ?? 9), 3, 30);
+
+    const panelRoomTypes = Array.isArray(mission.params.roomTypesPanels)
+      ? mission.params.roomTypesPanels
+      : (Array.isArray(mission.params.roomTypesPanel)
+        ? mission.params.roomTypesPanel
+        : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null));
+
+    const fuseRoomTypes = Array.isArray(mission.params.roomTypesFuses)
+      ? mission.params.roomTypesFuses
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const branchBudget = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desiredBranches, Math.floor(this.objectBudgetRemaining / 2)))
+      : desiredBranches;
+    const branchCount = Math.max(0, Math.min(desiredBranches, branchBudget));
+
+    if (branchCount <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const panelTiles = pickDistinctTiles(ws, branchCount, {
+      allowedRoomTypes: panelRoomTypes,
+      minDistFrom: avoid,
+      minDist,
+      margin: 1
+    });
+
+    if (panelTiles.length === 0) {
+      this.failOpenMission(mission, 'no valid grid panel tiles');
+      return;
+    }
+
+    const fuseTiles = pickDistinctTiles(ws, panelTiles.length, {
+      allowedRoomTypes: fuseRoomTypes,
+      minDistFrom: avoid.concat(panelTiles),
+      minDist,
+      margin: 1
+    });
+
+    const zones = Array.isArray(ws.darkZones) ? ws.darkZones : [];
+
+    // Optional per-branch door locks (best-effort).
+    const doorCandidates = [];
+    if (ws.grid && ws.setObstacle && ws.isWalkable) {
+      for (let y = 0; y < ws.height; y++) {
+        for (let x = 0; x < ws.width; x++) {
+          if (ws.grid?.[y]?.[x] !== TILE_TYPES.DOOR) continue;
+          if (!ws.isWalkable(x, y)) continue;
+          const pos = { x, y };
+          if (avoid.some((p) => p && manhattan(p, pos) < minDist)) continue;
+          doorCandidates.push(pos);
+        }
+      }
+      shuffleInPlace(doorCandidates);
+    }
+
+    const doorsPicked = [];
+    const minDoorDist = mission.params.minDoorDist ?? 6;
+    const pickDoor = () => {
+      for (const pos of doorCandidates) {
+        if (!pos) continue;
+        if (doorsPicked.some((p) => manhattan(p, pos) < minDoorDist)) continue;
+        doorsPicked.push(pos);
+        return pos;
+      }
+      return null;
+    };
+
+    const findApproachFor = (doorPos) => {
+      const dirs = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 }
+      ];
+      for (const d of dirs) {
+        const nx = doorPos.x + d.dx;
+        const ny = doorPos.y + d.dy;
+        if (ws.isWalkable?.(nx, ny)) return { x: nx, y: ny };
+      }
+      return { x: doorPos.x, y: doorPos.y };
+    };
+
+    mission.state.total = panelTiles.length;
+    mission.state.requiredPowered = clamp(requiredPoweredRaw, 1, mission.state.total);
+    mission.state.powered = 0;
+    mission.state.fuses = [];
+    mission.state.fusesCollected = 0;
+    mission.state.branches = [];
+
+    for (let i = 0; i < panelTiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = panelTiles[i];
+      const slot = toSlotLabel(i);
+
+      const panelObject = createFusePanelObject({ installed: false, powered: false });
+      const panelWorld = gridToWorldCenter(pos);
+      panelObject.position.set(panelWorld.x, 0, panelWorld.z);
+      scene.add(panelObject);
+      this.spawnedObjects.push(panelObject);
+      this.consumeMissionObjectBudget(1);
+
+      const panelId = `gridPanel:${mission.id}:${slot}`;
+
+      const label = `Power Node ${slot}`;
+      this.registeredIds.push(
+        this.interactables.register({
+          id: panelId,
+          kind: 'powerGridPanel',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d: panelObject,
+          maxDistance: 2.6,
+          consumeItem: [{ itemId, count: 1, message: `Need ${itemId}.` }],
+          prompt: ({ entry }) => {
+            const meta = entry?.meta || {};
+            if (meta.powered) return `E: ${label} (Online)`;
+            if (meta.installed) return `E: ${label} (Turn On)`;
+            return `E: ${label} (Install Fuse)`;
+          },
+          interact: ({ entry }) => {
+            const meta = entry?.meta || {};
+            if (meta.powered) return { ok: true, message: 'Already online', state: { powered: true } };
+
+            if (!meta.installed) {
+              meta.installed = true;
+              if (entry) {
+                entry.requiresItem = [];
+                entry.consumeItem = [];
+              }
+              setFusePanelState(panelObject, { installed: true, powered: false });
+              return { ok: true, message: 'Fuse installed', state: { installed: true } };
+            }
+
+            meta.powered = true;
+            setFusePanelState(panelObject, { installed: true, powered: true });
+            return { ok: true, message: 'Node online', state: { powered: true } };
+          },
+          meta: { missionId: mission.id, template: mission.template, index: i, slot, installed: false, powered: false }
+        })
+      );
+      this.interactableMeta.set(panelId, { missionId: mission.id, template: mission.template, index: i, slot });
+
+      const doorPos = pickDoor();
+      let doorGridPos = null;
+      let doorApproachGridPos = null;
+      let doorObject3d = null;
+
+      if (doorPos && ws.setObstacle && this.canSpawnMissionObject(1)) {
+        doorGridPos = { x: doorPos.x, y: doorPos.y };
+        doorApproachGridPos = findApproachFor(doorPos);
+        ws.setObstacle(doorPos.x, doorPos.y, true);
+
+        doorObject3d = createLockedDoorObject({ unlocked: false });
+        const doorWorld = gridToWorldCenter(doorPos);
+        doorObject3d.position.set(doorWorld.x, 0, doorWorld.z);
+
+        const ew = (ws.isWalkable?.(doorPos.x - 1, doorPos.y) ? 1 : 0) + (ws.isWalkable?.(doorPos.x + 1, doorPos.y) ? 1 : 0);
+        const ns = (ws.isWalkable?.(doorPos.x, doorPos.y - 1) ? 1 : 0) + (ws.isWalkable?.(doorPos.x, doorPos.y + 1) ? 1 : 0);
+        doorObject3d.rotation.y = ew > ns ? Math.PI / 2 : 0;
+
+        scene.add(doorObject3d);
+        this.spawnedObjects.push(doorObject3d);
+        this.consumeMissionObjectBudget(1);
+      }
+
+      const zoneCenter = doorPos ? gridToWorldCenter(doorPos) : panelWorld;
+      const zoneId = `powerGridZone:${mission.id}:${slot}`;
+      zones.push({
+        id: zoneId,
+        kind: 'powerGrid',
+        x: zoneCenter.x,
+        z: zoneCenter.z,
+        radius: zoneRadius
+      });
+
+      mission.state.branches.push({
+        slot,
+        panelId,
+        panelGridPos: { x: pos.x, y: pos.y },
+        installed: false,
+        powered: false,
+        doorGridPos,
+        doorApproachGridPos,
+        doorObject3d,
+        zoneId
+      });
+    }
+
+    ws.darkZones = zones;
+
+    for (let i = 0; i < fuseTiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = fuseTiles[i];
+      const object3d = createFuseObject();
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+
+      scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const interactableId = `gridFuse:${mission.id}:${i + 1}`;
+      const label = 'Pick up Fuse';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'fuse',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: () => `E: ${label}`,
+          interact: () => ({ ok: true, picked: true, message: 'Fuse acquired' }),
+          meta: { missionId: mission.id, template: mission.template, index: i, itemId }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.fuses.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, collected: false });
+    }
+  }
+
   spawnUploadEvidence(mission, options = {}) {
     const ws = this.worldState;
     const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
@@ -1600,6 +2480,8 @@ export class MissionDirector {
     const itemId = String(mission.params.itemId || 'evidence').trim() || 'evidence';
     const requiresPower = mission.params.requiresPower === true;
     const powerItemId = String(mission.params.powerItemId || 'power_on').trim() || 'power_on';
+    const uploadSeconds = clamp(Math.round(mission.state.uploadSeconds ?? mission.params.uploadSeconds ?? mission.params.seconds ?? 0), 0, 600);
+    mission.state.uploadSeconds = uploadSeconds;
 
     const label = 'Upload Terminal';
     this.registeredIds.push(
@@ -1610,42 +2492,301 @@ export class MissionDirector {
         gridPos: { x: terminalPos.x, y: terminalPos.y },
         object3d: terminalObject,
         maxDistance: 2.6,
-        requiresItem: requiresPower ? { itemId: powerItemId, count: 1, message: 'Power is off.' } : null,
-        consumeItem: (mission.state.required || 0) > 0 ? { itemId, count: mission.state.required || 0 } : null,
+        requiresItem: [
+          ...(requiresPower ? [{ itemId: powerItemId, count: 1, message: 'Power is off.' }] : []),
+          ...((mission.state.required || 0) > 0 ? [{ itemId, count: mission.state.required || 0 }] : [])
+        ],
         prompt: () => {
           if (mission.state.uploaded) return 'E: Terminal (Uploaded)';
+          if (mission.state.uploading && uploadSeconds > 0) {
+            const progress = Math.max(0, Math.min(1, (Number(mission.state.uploadProgressSec) || 0) / uploadSeconds));
+            const pct = Math.round(progress * 100);
+            return `E: Terminal (Uploading ${pct}%)`;
+          }
           if (requiresPower) {
             const q = { itemId: powerItemId, result: null };
             this.eventBus?.emit?.(EVENTS.INVENTORY_QUERY_ITEM, q);
             const havePower = Number(q.result?.count) || 0;
             if (havePower <= 0) return 'E: Terminal (No Power)';
           }
-          const missing = Math.max(0, (mission.state.required || 0) - (mission.state.collected || 0));
+          const required = Number(mission.state.required) || 0;
+          const q = { itemId, result: null };
+          this.eventBus?.emit?.(EVENTS.INVENTORY_QUERY_ITEM, q);
+          const have = Number(q.result?.count) || 0;
+          const missing = Math.max(0, required - have);
           if (missing > 0) return `E: Terminal (Need ${missing} evidence)`;
-          return 'E: Upload Evidence';
+          return uploadSeconds > 0 ? 'E: Start Upload' : 'E: Upload Evidence';
         },
         interact: ({ entry }) => {
           if (mission.state.uploaded) {
             if (entry) {
               entry.requiresItem = [];
-              entry.consumeItem = [];
             }
             return { ok: true, message: 'Already uploaded', state: { uploaded: true } };
+          }
+
+          if (mission.state.uploading && uploadSeconds > 0) {
+            return { ok: true, message: 'Uploading...', state: { uploading: true } };
+          }
+
+          if (uploadSeconds > 0) {
+            mission.state.uploading = true;
+            mission.state.uploadProgressSec = 0;
+            const meta = entry?.meta || {};
+            meta.uploading = true;
+            return { ok: true, message: 'Upload started', state: { uploading: true } };
           }
 
           const meta = entry?.meta || {};
           meta.uploaded = true;
           if (entry) {
             entry.requiresItem = [];
-            entry.consumeItem = [];
+          }
+          if (this.eventBus?.emit && (mission.state.required || 0) > 0) {
+            const consume = { actorKind: 'player', itemId, count: mission.state.required || 0, result: null };
+            this.eventBus.emit(EVENTS.INVENTORY_CONSUME_ITEM, consume);
+            if (!consume.result?.ok) {
+              meta.uploaded = false;
+              if (entry) entry.requiresItem = [{ itemId, count: mission.state.required || 0 }];
+              return { ok: false, message: 'Missing evidence' };
+            }
           }
           setTerminalState(terminalObject, { uploaded: true });
+          mission.state.uploaded = true;
           return { ok: true, message: 'Evidence uploaded', state: { uploaded: true } };
         },
-        meta: { missionId: mission.id, template: mission.template, uploaded: false }
+        meta: { missionId: mission.id, template: mission.template, uploaded: false, uploading: false }
       })
     );
     this.interactableMeta.set(terminalId, { missionId: mission.id, template: mission.template });
+  }
+
+  spawnHiddenTerminal(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const allowedRoomTypes = Array.isArray(mission.params.roomTypesTarget)
+      ? mission.params.roomTypesTarget
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    if (!this.canSpawnMissionObject(1)) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+      return;
+    }
+
+    const tiles = pickDistinctRoomTiles(ws, 1, {
+      allowedRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 8,
+      margin: 1
+    });
+    const pos = tiles[0] || null;
+    if (!pos) {
+      this.failOpenMission(mission, 'no valid terminal tile');
+      return;
+    }
+
+    const terminalObject = createTerminalObject({ uploaded: false });
+    const terminalWorld = gridToWorldCenter(pos);
+    terminalObject.position.set(terminalWorld.x, 0, terminalWorld.z);
+    this.scene.add(terminalObject);
+    this.spawnedObjects.push(terminalObject);
+    this.consumeMissionObjectBudget(1);
+
+    const terminalId = `hiddenTerminal:${mission.id}`;
+    mission.state.terminalId = terminalId;
+    mission.state.terminalGridPos = { x: pos.x, y: pos.y };
+    mission.state.roomType = Number.isFinite(pos.roomType) ? pos.roomType : null;
+
+    const label = String(mission.params.label || 'Terminal').trim() || 'Terminal';
+    this.registeredIds.push(
+      this.interactables.register({
+        id: terminalId,
+        kind: 'terminal',
+        label,
+        gridPos: { x: pos.x, y: pos.y },
+        object3d: terminalObject,
+        maxDistance: clamp(toFinite(mission.params.maxDistance, 2.6) ?? 2.6, 1.5, 8),
+        prompt: () => mission.state.completed ? `E: ${label} (Complete)` : `E: Access ${label}`,
+        interact: ({ entry }) => {
+          if (mission.state.completed) return { ok: true, message: 'Already complete', state: { completed: true } };
+          mission.state.completed = true;
+          if (entry?.meta) entry.meta.completed = true;
+          setTerminalState(terminalObject, { uploaded: true });
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `${label} accessed.`, seconds: 1.7 });
+          this.syncStatus();
+          return { ok: true, message: 'Terminal accessed', state: { completed: true } };
+        },
+        meta: { missionId: mission.id, template: mission.template, completed: false }
+      })
+    );
+    this.interactableMeta.set(terminalId, { missionId: mission.id, template: mission.template });
+  }
+
+  spawnScanWaypoints(mission, options = {}) {
+    const ws = this.worldState;
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    if (!ws) return;
+
+    const roomTypes = Array.isArray(mission.params.roomTypesTargets)
+      ? mission.params.roomTypesTargets
+      : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null);
+
+    const desired = clamp(Math.round(mission.state.required ?? mission.params.count ?? 4), 1, 24);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+    const tiles = pickDistinctRoomTiles(ws, want, {
+      allowedRoomTypes: roomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 8,
+      margin: 1
+    });
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, want <= 0 ? 'mission object budget exhausted' : 'no valid scan tiles');
+      return;
+    }
+
+    const seconds = clamp(Math.round(mission.state.seconds ?? mission.params.seconds ?? mission.params.holdSeconds ?? 4), 1, 120);
+    const radius = clamp(Math.round(mission.state.radius ?? mission.params.radius ?? 2), 0, 10);
+    const label = String(mission.params.label || 'Scan Site').trim() || 'Scan Site';
+
+    mission.state.seconds = seconds;
+    mission.state.radius = radius;
+    mission.state.required = tiles.length;
+    mission.state.scanned = 0;
+    mission.state.completed = false;
+    mission.state.targets = [];
+
+    for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = tiles[i];
+      const object3d = createSensorObject({ armed: true, active: false, success: false });
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const waypointId = `scanSite:${mission.id}:${i + 1}`;
+      this.registeredIds.push(
+        this.interactables.register({
+          id: waypointId,
+          kind: 'scanBeacon',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          maxDistance: 2.8,
+          prompt: () => {
+            const t = mission.state.targets?.[i] || null;
+            const done = !!t?.completed;
+            return done ? `${label} (Scanned)` : `${label} (Use camera)`;
+          },
+          interact: () => ({ ok: true, message: 'Use the camera to scan.' }),
+          meta: { missionId: mission.id, template: mission.template, index: i }
+        })
+      );
+      this.interactableMeta.set(waypointId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.targets.push({ id: waypointId, gridPos: { x: pos.x, y: pos.y }, heldForSec: 0, completed: false });
+    }
+
+    mission.state.required = mission.state.targets.length;
+    if ((mission.state.required || 0) <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+    }
+  }
+
+  spawnBlackoutZones(mission, options = {}) {
+    const ws = this.worldState;
+    const scene = this.scene;
+    if (!ws || !scene) return;
+
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    const allowedRoomTypes = Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null;
+
+    const desired = clamp(Math.round(mission.state.total || 0), 1, 99);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+
+    const tiles = pickDistinctTiles(ws, want, {
+      allowedRoomTypes,
+      minDistFrom: avoid,
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (tiles.length === 0) {
+      this.failOpenMission(mission, 'no valid blackout tiles');
+      return;
+    }
+
+    const radius = clamp(Math.round(mission.state.radius ?? mission.params.radius ?? mission.params.zoneRadius ?? 9), 3, 30);
+    mission.state.radius = radius;
+    mission.state.zones = [];
+
+    const zones = Array.isArray(ws.darkZones) ? ws.darkZones : [];
+
+    for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = tiles[i];
+      const world = gridToWorldCenter(pos);
+      const zoneId = `blackout:${mission.id}:${i + 1}`;
+
+      zones.push({
+        id: zoneId,
+        kind: 'blackout',
+        x: world.x,
+        z: world.z,
+        radius
+      });
+
+      const object3d = createPowerSwitchObject(false);
+      object3d.position.set(world.x, 0, world.z);
+      scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const interactableId = `blackoutSwitch:${mission.id}:${i + 1}`;
+      const label = `Restore Lights (${i + 1})`;
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'blackoutSwitch',
+          label,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          prompt: ({ entry }) => {
+            const restored = !!entry?.meta?.restored;
+            return restored ? `E: ${label} (Restored)` : `E: ${label}`;
+          },
+          interact: ({ entry }) => {
+            const meta = entry?.meta || {};
+            if (meta.restored) return { ok: true, message: 'Already restored', state: { restored: true } };
+            meta.restored = true;
+            setPowerSwitchState(object3d, true);
+            return { ok: true, message: 'Lights restored', state: { restored: true } };
+          },
+          meta: { missionId: mission.id, template: mission.template, index: i, zoneId, restored: false }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i, zoneId });
+      mission.state.zones.push({
+        id: interactableId,
+        zoneId,
+        gridPos: { x: pos.x, y: pos.y },
+        restored: false
+      });
+    }
+
+    ws.darkZones = zones;
+
+    mission.state.total = mission.state.zones.length;
+    mission.state.required = clamp(Math.round(mission.state.required ?? mission.state.total), 1, mission.state.total);
+
+    if (mission.state.total <= 0) {
+      this.failOpenMission(mission, 'mission object budget exhausted');
+    }
   }
 
   spawnCodeLock(mission, options = {}) {
@@ -1804,6 +2945,97 @@ export class MissionDirector {
       })
     );
     this.interactableMeta.set(keypadId, { missionId: mission.id, template: mission.template });
+  }
+
+  spawnCodeLockScan(mission, options = {}) {
+    this.spawnCodeLock(mission, options);
+    if (mission.state.unlocked) return;
+
+    const ws = this.worldState;
+    if (!ws) return;
+
+    const avoid = Array.isArray(options.avoid) ? options.avoid.filter(Boolean) : [];
+    const sampleRoomTypes = Array.isArray(mission.params.roomTypesSample)
+      ? mission.params.roomTypesSample
+      : (Array.isArray(mission.params.roomTypesTargets)
+        ? mission.params.roomTypesTargets
+        : (Array.isArray(mission.params.roomTypes) ? mission.params.roomTypes : null));
+
+    const desired = clamp(Math.round(mission.state.scanRequired ?? mission.params.sampleCount ?? mission.params.scanCount ?? 1), 1, 6);
+    const want = Number.isFinite(this.objectBudgetRemaining)
+      ? Math.max(0, Math.min(desired, this.objectBudgetRemaining))
+      : desired;
+    if (want <= 0) return;
+
+    const tiles = pickDistinctTiles(ws, want, {
+      allowedRoomTypes: sampleRoomTypes,
+      minDistFrom: avoid.concat([mission.state.keypadGridPos].filter(Boolean)),
+      minDist: mission.params.minDistFromSpawn ?? 7,
+      margin: 1
+    });
+    if (tiles.length === 0) {
+      // Keep the mission solvable: treat "scan step" as already satisfied if no targets could be spawned.
+      mission.state.scanRequired = 0;
+      mission.state.scanned = 0;
+      mission.state.scanTargets = [];
+      return;
+    }
+
+    const seconds = clamp(Math.round(mission.state.scanSeconds ?? mission.params.sampleSeconds ?? mission.params.scanSeconds ?? mission.params.holdSeconds ?? 4), 1, 60);
+    mission.state.scanSeconds = seconds;
+    mission.state.scanTargets = [];
+
+    const maxDistance = clamp(toFinite(mission.params.sampleMaxDistance ?? mission.params.maxDistance, 3.6) ?? 3.6, 1.5, 10);
+    const aimMinDotParam = toFinite(mission.params.sampleAimMinDot ?? mission.params.aimMinDot, null);
+    const aimAngleDeg = clamp(toFinite(mission.params.sampleAimAngleDeg ?? mission.params.aimAngleDeg, 14) ?? 14, 5, 60);
+    const aimMinDot = Number.isFinite(aimMinDotParam)
+      ? clamp(aimMinDotParam, 0.2, 0.9999)
+      : Math.cos((aimAngleDeg * Math.PI) / 180);
+    const aimOffsetY = clamp(toFinite(mission.params.sampleAimOffsetY ?? mission.params.aimOffsetY, 0.9) ?? 0.9, 0, 2.5);
+
+    for (let i = 0; i < tiles.length; i++) {
+      if (!this.canSpawnMissionObject(1)) break;
+      const pos = tiles[i];
+      const object3d = createPhotoTargetObject();
+      const world = gridToWorldCenter(pos);
+      object3d.position.set(world.x, 0, world.z);
+      object3d.rotation.y = Math.random() * Math.PI * 2;
+      object3d.visible = false;
+
+      this.scene.add(object3d);
+      this.spawnedObjects.push(object3d);
+      this.consumeMissionObjectBudget(1);
+
+      const interactableId = `sample:${mission.id}:${i + 1}`;
+      const label = 'Collect Sample';
+      this.registeredIds.push(
+        this.interactables.register({
+          id: interactableId,
+          kind: 'scanTarget',
+          label,
+          enabled: false,
+          gridPos: { x: pos.x, y: pos.y },
+          object3d,
+          maxDistance,
+          prompt: () => `Hold aim to sample (${seconds}s)`,
+          interact: () => ({ ok: true, message: 'Hold aim to sample' }),
+          meta: {
+            missionId: mission.id,
+            template: mission.template,
+            index: i,
+            aimMinDot,
+            aimOffsetY,
+            seconds,
+            maxDistance
+          }
+        })
+      );
+      this.interactableMeta.set(interactableId, { missionId: mission.id, template: mission.template, index: i });
+      mission.state.scanTargets.push({ id: interactableId, gridPos: { x: pos.x, y: pos.y }, heldForSec: 0, completed: false });
+    }
+
+    mission.state.scanRequired = mission.state.scanTargets.length;
+    mission.state.scanned = 0;
   }
 
   spawnLockedDoor(mission, options = {}) {
@@ -2190,6 +3422,14 @@ export class MissionDirector {
             door.unlocked = true;
             ws.setObstacle(doorPos.x, doorPos.y, false);
             setLockedDoorState(doorObject, { unlocked: true });
+            this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+              kind: 'door_unlock',
+              position: doorObject?.position ? doorObject.position.clone() : null,
+              radius: Math.max(4, Number(CONFIG.AI_NOISE_DOOR_RADIUS) || 12),
+              ttl: Math.max(0.1, Number(CONFIG.AI_NOISE_DOOR_TTL) || 0.9),
+              strength: Math.max(0.05, Number(CONFIG.AI_NOISE_DOOR_STRENGTH) || 0.85),
+              source: 'door'
+            });
 
             if (entry) {
               entry.requiresItem = [];
@@ -3160,6 +4400,9 @@ export class MissionDirector {
     const itemId = String(mission.state.itemId || mission.params.itemId || 'fragile_package').trim() || 'fragile_package';
     mission.state.itemId = itemId;
 
+    const pkgLabel = String(mission.params.packageLabel || mission.params.label || 'fragile package').trim() || 'fragile package';
+    const terminalLabel = String(mission.params.terminalLabel || 'Delivery Terminal').trim() || 'Delivery Terminal';
+
     const terminalObject = createTerminalObject({ uploaded: false });
     const terminalWorld = gridToWorldCenter(terminalPos);
     terminalObject.position.set(terminalWorld.x, 0, terminalWorld.z);
@@ -3175,13 +4418,13 @@ export class MissionDirector {
       this.interactables.register({
         id: terminalId,
         kind: 'terminal',
-        label: 'Fragile Delivery Terminal',
+        label: terminalLabel,
         gridPos: { x: terminalPos.x, y: terminalPos.y },
         object3d: terminalObject,
         maxDistance: 2.6,
-        requiresItem: { itemId, count: 1, message: 'Need the fragile package.' },
+        requiresItem: { itemId, count: 1, message: `Need the ${pkgLabel}.` },
         consumeItem: true,
-        prompt: () => (mission.state.delivered ? 'E: Terminal (Delivered)' : 'E: Deliver Fragile Package'),
+        prompt: () => (mission.state.delivered ? 'E: Terminal (Delivered)' : `E: Deliver ${pkgLabel}`),
         interact: ({ entry }) => {
           if (mission.state.delivered) {
             if (entry) {
@@ -3203,7 +4446,7 @@ export class MissionDirector {
           if (pkgEntry?.object3d) pkgEntry.object3d.visible = false;
           if (pkgEntry) pkgEntry.enabled = false;
 
-          return { ok: true, message: 'Fragile package delivered', state: { delivered: true } };
+          return { ok: true, message: `${pkgLabel} delivered`, state: { delivered: true } };
         },
         meta: { missionId: mission.id, template: mission.template, delivered: false }
       })
@@ -3226,10 +4469,10 @@ export class MissionDirector {
       this.interactables.register({
         id: packageId,
         kind: 'fragilePackage',
-        label: 'Fragile Package',
+        label: pkgLabel,
         gridPos: { x: itemPos.x, y: itemPos.y },
         object3d: packageObject,
-        prompt: () => (mission.state.carrying ? 'Fragile package (carried)' : 'E: Pick Up Fragile Package'),
+        prompt: () => (mission.state.carrying ? `${pkgLabel} (carried)` : `E: Pick Up ${pkgLabel}`),
         interact: ({ actorKind, entry }) => {
           if (mission.state.delivered) return { ok: true, message: 'Already delivered', state: { carrying: false } };
           if (mission.state.carrying) return { ok: true, message: 'Already carrying', state: { carrying: true } };
@@ -3238,7 +4481,7 @@ export class MissionDirector {
           if (entry) entry.enabled = false;
           packageObject.visible = false;
           this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: actorKind || 'player', itemId, count: 1, sourceId: packageId });
-          return { ok: true, message: 'Fragile package acquired', state: { carrying: true } };
+          return { ok: true, message: `${pkgLabel} acquired`, state: { carrying: true } };
         },
         meta: { missionId: mission.id, template: mission.template, itemId }
       })
@@ -3606,7 +4849,7 @@ export class MissionDirector {
     if (!meta) return;
 
     const mission = this.missions.get(meta.missionId);
-    if (!mission || mission.template !== 'codeLock') return;
+    if (!mission || (mission.template !== 'codeLock' && mission.template !== 'codeLockScan')) return;
 
     const actorKind = payload?.actorKind || 'player';
     const submitted = String(payload?.code || '').trim();
@@ -3637,6 +4880,20 @@ export class MissionDirector {
       if (actorKind === 'player') {
         this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Correct code. Keypad unlocked.', seconds: 2.0 });
       }
+
+      if (mission.template === 'codeLockScan') {
+        const targets = Array.isArray(mission.state.scanTargets) ? mission.state.scanTargets : [];
+        for (const t of targets) {
+          if (!t?.id) continue;
+          const e = this.interactables?.get?.(t.id) || null;
+          if (e) e.enabled = true;
+          if (e?.object3d) e.object3d.visible = true;
+        }
+        if (actorKind === 'player' && targets.length > 0) {
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Now collect the sample.', seconds: 1.8 });
+        }
+      }
+
       this.eventBus?.emit?.(EVENTS.KEYPAD_CODE_RESULT, { actorKind, keypadId, ok: true, code: submitted });
       this.syncStatus();
       return;
@@ -3658,7 +4915,74 @@ export class MissionDirector {
         });
       }
     }
+
+    if (mission.template === 'codeLockScan') {
+      const alarmOnWrong = mission.params?.alarmOnWrong !== false;
+      const entry = this.interactables?.get?.(keypadId) || null;
+      const pos = entry?.object3d?.position || null;
+      if (alarmOnWrong && pos) {
+        const now = Number.isFinite(this.elapsedSec) ? this.elapsedSec : 0;
+        const last = Number(mission.state.lastAlarmAtSec) || -999;
+        const cooldown = clamp(Math.round(mission.params?.alarmCooldownSec ?? 3), 0, 30);
+        if (now - last >= cooldown) {
+          mission.state.lastAlarmAtSec = now;
+          this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+            source: 'alarm',
+            kind: String(mission.params?.alarmKind || 'alarm'),
+            strength: clamp(Number(mission.params?.alarmStrength ?? 0.9), 0.1, 2.0),
+            position: pos,
+            radius: clamp(Math.round(mission.params?.alarmRadius ?? 22), 4, 80),
+            ttl: clamp(Number(mission.params?.alarmTtl ?? 1.2), 0.2, 6.0)
+          });
+          if (actorKind === 'player') {
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Alarm triggered.', seconds: 1.4 });
+          }
+        }
+      }
+    }
+
     this.eventBus?.emit?.(EVENTS.KEYPAD_CODE_RESULT, { actorKind, keypadId, ok: false, code: submitted, message: 'Incorrect' });
+  }
+
+  syncBossFinaleMission(mission) {
+    if (!mission || mission.template !== 'bossFinale') return;
+    const boss = this.bossSystem?.getState ? this.bossSystem.getState() : null;
+    if (!boss || boss.active !== true) {
+      const cfg = this.levelConfig?.boss || null;
+      const fallbackNodes = cfg?.enabled === true ? Math.max(1, Math.round(Number(cfg.shieldNodes) || 3)) : 0;
+      const fallbackHp = Math.max(1, Math.round(Number(CONFIG.BOSS_CORE_HEALTH) || 120));
+      mission.state = {
+        ...(mission.state || {}),
+        phase: fallbackNodes > 0 ? 1 : 0,
+        nodesTotal: fallbackNodes,
+        nodesRemaining: fallbackNodes,
+        bossMaxHealth: fallbackHp,
+        bossHealth: fallbackHp,
+        shieldActive: false,
+        escapeUntilSec: 0
+      };
+      return;
+    }
+
+    mission.state.phase = Math.max(0, Math.round(Number(boss.phase) || 0));
+    mission.state.nodesTotal = Math.max(0, Math.round(Number(boss.nodesTotal) || 0));
+    mission.state.nodesRemaining = Math.max(0, Math.round(Number(boss.nodesRemaining) || 0));
+    mission.state.bossMaxHealth = Math.max(1, Math.round(Number(boss.bossMaxHealth) || 1));
+    mission.state.bossHealth = Math.max(0, Math.round(Number(boss.bossHealth) || 0));
+    mission.state.shieldActive = boss.shieldActive === true;
+    mission.state.escapeUntilSec = Number.isFinite(Number(boss.escapeUntilSec)) ? Number(boss.escapeUntilSec) : 0;
+    mission.state.escapeSeconds = Math.max(0, Math.round(Number(boss.escapeSeconds) || 0));
+  }
+
+  onBossUpdated(payload) {
+    void payload;
+    let changed = false;
+    for (const mission of this.missions.values()) {
+      if (!mission || mission.template !== 'bossFinale') continue;
+      this.syncBossFinaleMission(mission);
+      changed = true;
+    }
+    if (changed) this.syncStatus();
   }
 
   onItemPicked(payload) {
@@ -3693,6 +5017,24 @@ export class MissionDirector {
 
       if (!mission.state.installed && collected >= (mission.state.fusesRequired || 0)) {
         this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All fuses collected. Find the power panel.', seconds: 2.0 });
+      }
+    } else if (mission.template === 'powerGrid') {
+      const fuses = Array.isArray(mission.state.fuses) ? mission.state.fuses : [];
+      const fuse = fuses.find((f) => f && f.id === id);
+      if (fuse && !fuse.collected) {
+        fuse.collected = true;
+        const itemId = String(mission.state.itemId || mission.params.itemId || 'fuse').trim() || 'fuse';
+        mission.state.itemId = itemId;
+        this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: payload?.actorKind || 'player', itemId, count: 1, sourceId: id });
+      }
+
+      const collected = fuses.filter((f) => f?.collected).length;
+      mission.state.fusesCollected = collected;
+
+      const branches = Array.isArray(mission.state.branches) ? mission.state.branches : [];
+      const required = Number(mission.state.requiredPowered) || branches.length || 0;
+      if (payload?.actorKind === 'player' && required > 0 && collected >= required) {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Enough fuses collected. Restore the power nodes.', seconds: 2.0 });
       }
     } else if (mission.template === 'uploadEvidence') {
       mission.state.collected = Math.min(mission.state.total || 0, (mission.state.collected || 0) + 1);
@@ -3928,6 +5270,42 @@ export class MissionDirector {
           if (sw) sw.on = true;
         }
       }
+    } else if (mission.template === 'syncActivate') {
+      const on = !!payload?.result?.state?.on;
+      if (on) {
+        const windowSec = clamp(Math.round(mission.state.windowSec ?? mission.params?.windowSec ?? 15), 5, 90);
+        mission.state.windowSec = windowSec;
+
+        const expired = mission.state.started && Number.isFinite(mission.state.activeUntilSec) && this.elapsedSec > mission.state.activeUntilSec;
+        if (expired) {
+          this.resetSyncActivateSwitches(mission);
+        }
+        if (!mission.state.started) {
+          mission.state.started = true;
+          mission.state.activeUntilSec = this.elapsedSec + windowSec;
+        }
+
+        mission.state.activated.add(id);
+        if (Array.isArray(mission.state.switches)) {
+          const sw = mission.state.switches.find((s) => s.id === id);
+          if (sw) {
+            sw.on = true;
+            const entry = this.interactables?.get?.(id) || null;
+            if (entry?.meta) entry.meta.on = true;
+            if (entry?.object3d) setPowerSwitchState(entry.object3d, true);
+            if (sw.object3d) setPowerSwitchState(sw.object3d, true);
+          }
+        }
+
+        const total = Number(mission.state.total) || (Array.isArray(mission.state.switches) ? mission.state.switches.length : 0);
+        const activated = mission.state.activated?.size || 0;
+        if (total > 0 && activated >= total) {
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Sync complete.', seconds: 1.6 });
+        } else if (payload?.actorKind === 'player') {
+          const remaining = Math.max(0, (Number(mission.state.activeUntilSec) || 0) - this.elapsedSec);
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Sync ${activated}/${total} (${Math.ceil(remaining)}s)`, seconds: 1.1 });
+        }
+      }
     } else if (mission.template === 'reroutePower') {
       if (mission.state.powered) {
         // No-op.
@@ -3999,12 +5377,73 @@ export class MissionDirector {
           this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Power restored.', seconds: 1.8 });
         }
       }
+    } else if (mission.template === 'powerGrid') {
+      if (payload?.kind === 'powerGridPanel' && Array.isArray(mission.state.branches) && Number.isFinite(meta.index)) {
+        const branch = mission.state.branches[meta.index] || null;
+        if (branch) {
+          const installed = !!payload?.result?.state?.installed;
+          const powered = !!payload?.result?.state?.powered;
+
+          if (installed) branch.installed = true;
+
+          if (powered && !branch.powered) {
+            branch.powered = true;
+            mission.state.powered = mission.state.branches.filter((b) => b?.powered).length;
+
+            const zoneId = String(branch.zoneId || '').trim();
+            if (zoneId && this.worldState) {
+              const cur = Array.isArray(this.worldState.darkZones) ? this.worldState.darkZones : [];
+              this.worldState.darkZones = cur.filter((z) => String(z?.id || '') !== zoneId);
+            }
+
+            const doorPos = branch.doorGridPos || null;
+            if (doorPos && this.worldState?.setObstacle) {
+              this.worldState.setObstacle(doorPos.x, doorPos.y, false);
+            }
+            if (branch.doorObject3d) {
+              setLockedDoorState(branch.doorObject3d, { unlocked: true });
+            }
+
+            const required = Number(mission.state.requiredPowered) || 0;
+            const done = Number(mission.state.powered) || 0;
+            if (payload?.actorKind === 'player') {
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Power node ${branch.slot} online (${done}/${required})`, seconds: 1.6 });
+            }
+          }
+        }
+      }
     } else if (mission.template === 'uploadEvidence') {
       if (payload?.kind === 'terminal') {
-        const uploaded = !!payload?.result?.state?.uploaded;
-        if (uploaded && !mission.state.uploaded) {
-          mission.state.uploaded = true;
-          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Evidence uploaded.', seconds: 1.8 });
+        const uploading = !!payload?.result?.state?.uploading;
+        if (uploading && !mission.state.uploading) {
+          mission.state.uploading = true;
+          mission.state.uploadProgressSec = 0;
+          if (payload?.actorKind === 'player') {
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Upload started.', seconds: 1.4 });
+          }
+        }
+      }
+    } else if (mission.template === 'blackoutZone') {
+      if (payload?.kind === 'blackoutSwitch') {
+        const restored = !!payload?.result?.state?.restored;
+        if (restored && Array.isArray(mission.state.zones) && Number.isFinite(meta.index)) {
+          const zone = mission.state.zones[meta.index] || null;
+          if (zone) zone.restored = true;
+
+          const restoredCount = mission.state.zones.filter((z) => z?.restored).length;
+          mission.state.restored = restoredCount;
+
+          const zoneId = String(meta.zoneId || zone?.zoneId || '').trim();
+          if (zoneId && this.worldState) {
+            const cur = Array.isArray(this.worldState.darkZones) ? this.worldState.darkZones : [];
+            this.worldState.darkZones = cur.filter((z) => String(z?.id || '') !== zoneId);
+          }
+
+          const required = Number(mission.state.required) || 0;
+          if (payload?.actorKind === 'player') {
+            const msg = required > 0 ? `Lights restored (${restoredCount}/${required})` : 'Lights restored';
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: msg, seconds: 1.6 });
+          }
         }
       }
     } else if (mission.template === 'deliverItemToTerminal') {
@@ -4076,14 +5515,17 @@ export class MissionDirector {
           }
         }
       }
-    } else if (mission.template === 'escort') {
+    } else if (mission.template === 'escort' || mission.template === 'escortRescue') {
       if (payload?.kind === 'escortBuddy') {
         const started = !!payload?.result?.state?.started;
         if (started && !mission.state.started) {
           mission.state.started = true;
           const entry = this.interactables?.get?.(id) || null;
           if (entry) entry.enabled = false;
-          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Escort started. Lead them to the exit.', seconds: 2.0 });
+          const msg = mission.template === 'escortRescue'
+            ? 'Rescue started. Lead them to the exit.'
+            : 'Escort started. Lead them to the exit.';
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: msg, seconds: 2.0 });
         }
       }
     } else if (mission.template === 'escortToSafeRoom') {
@@ -4108,6 +5550,28 @@ export class MissionDirector {
           }
 
           this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Escort started. Lead them to the checkpoint.', seconds: 2.0 });
+        }
+      }
+    } else if (mission.template === 'surviveInZone') {
+      if (payload?.kind === 'survivalBeacon') {
+        const started = !!payload?.result?.state?.started;
+        if (started && !mission.state.started) {
+          mission.state.started = true;
+          mission.state.outOfZoneSec = 0;
+          mission.state.heldForSec = 0;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Hold the zone.', seconds: 1.6 });
+        }
+      }
+    } else if (mission.template === 'occupyPoint') {
+      if (payload?.kind === 'survivalBeacon') {
+        const started = !!payload?.result?.state?.started;
+        if (started && !mission.state.started) {
+          mission.state.started = true;
+          mission.state.outOfZoneSec = 0;
+          mission.state.heldForSec = 0;
+          mission.state.hazardActiveUntilSec = 0;
+          mission.state.nextHazardAtSec = 0;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Hold the control point.', seconds: 1.6 });
         }
       }
     } else if (mission.template === 'codeLock') {
@@ -4227,7 +5691,10 @@ export class MissionDirector {
   }
 
   onMonsterKilled(payload) {
-    void payload;
+    const killed = payload?.monster || null;
+    const killedId = Number(killed?.id);
+    const killedWorldPos = payload?.worldPosition || killed?.getWorldPosition?.() || null;
+    const killedGridPos = payload?.gridPosition || killed?.getGridPosition?.() || killed?.gridPos || null;
 
     for (const mission of this.missions.values()) {
       if (!mission) continue;
@@ -4237,7 +5704,149 @@ export class MissionDirector {
       mission.state.killed = Math.min(mission.state.required || 1, (mission.state.killed || 0) + 1);
     }
 
+    if (Number.isFinite(killedId)) {
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'reclaimStolenItem') continue;
+        if (mission.state?.recovered) continue;
+        if (mission.state?.dropped) continue;
+
+        const thiefId = Number(mission.state?.thiefMonsterId);
+        if (!Number.isFinite(thiefId) || thiefId <= 0) continue;
+        if (thiefId !== killedId) continue;
+
+        this.spawnReclaimStolenDrop(mission, { worldPosition: killedWorldPos, gridPosition: killedGridPos });
+      }
+    }
+
     this.syncStatus();
+  }
+
+  onPlayerHitMonster(payload) {
+    const monster = payload?.monster || null;
+    const id = Number(monster?.id);
+    if (!Number.isFinite(id)) return;
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'reclaimStolenItem') continue;
+      if (mission.state?.recovered) continue;
+      if (mission.state?.dropped) continue;
+
+      const thiefId = Number(mission.state?.thiefMonsterId);
+      if (!Number.isFinite(thiefId) || thiefId <= 0) continue;
+      if (thiefId !== id) continue;
+
+      mission.state.thiefHits = (Number(mission.state.thiefHits) || 0) + 1;
+
+      const maxHp = Number(monster?.maxHealth) || 0;
+      const hp = Number(monster?.health);
+      const hpPct = maxHp > 0 && Number.isFinite(hp) ? clamp((hp / maxHp) * 100, 0, 100) : null;
+      const dropAtHealthPct = Number.isFinite(Number(mission.state.dropAtHealthPct))
+        ? clamp(Number(mission.state.dropAtHealthPct), 1, 99)
+        : null;
+
+      const dropOnHit = mission.state.dropOnHit === true;
+      const hitsToDrop = clamp(Math.round(mission.state.hitsToDrop ?? 3), 1, 20);
+      mission.state.hitsToDrop = hitsToDrop;
+
+      const shouldDropByHits = dropOnHit && (Number(mission.state.thiefHits) || 0) >= hitsToDrop;
+      const shouldDropByHealth = dropAtHealthPct !== null && hpPct !== null && hpPct <= dropAtHealthPct;
+
+      if (shouldDropByHits || shouldDropByHealth) {
+        const worldPosition = monster?.getWorldPosition?.() || null;
+        const gridPosition = monster?.getGridPosition?.() || monster?.gridPos || null;
+        this.spawnReclaimStolenDrop(mission, { worldPosition, gridPosition });
+      }
+    }
+  }
+
+  spawnReclaimStolenDrop(mission, { worldPosition = null, gridPosition = null } = {}) {
+    if (!mission || mission.template !== 'reclaimStolenItem') return;
+    if (mission.state?.recovered) return;
+    if (mission.state?.dropped) return;
+
+    if (!mission.state) mission.state = {};
+
+    const itemId = String(mission.state.itemId || mission.params?.itemId || 'stolen_item').trim() || 'stolen_item';
+    const itemCount = clamp(Math.round(mission.state.itemCount ?? mission.params?.itemCount ?? 1), 1, 99);
+    mission.state.itemId = itemId;
+    mission.state.itemCount = itemCount;
+
+    const itemLabel = String(mission.state.itemLabel || mission.params?.itemLabel || mission.params?.label || itemId).trim() || itemId;
+    mission.state.itemLabel = itemLabel;
+
+    if (!this.canSpawnMissionObject(1)) {
+      this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: 'player', itemId, count: itemCount });
+      mission.state.recovered = true;
+      mission.state.dropped = false;
+      mission.state.dropId = null;
+      mission.state.dropGridPos = null;
+      mission.state.thiefMonsterId = null;
+      this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `${itemLabel} secured (fallback).`, seconds: 1.7 });
+      return;
+    }
+
+    const objKind = String(mission.state.objectKind || mission.params?.objectKind || 'package').trim().toLowerCase();
+    const object3d = objKind === 'keycard'
+      ? createKeycardObject()
+      : (objKind === 'evidence' ? createEvidenceObject() : createDeliveryItemObject());
+
+    let pos = null;
+    if (worldPosition?.clone) {
+      pos = worldPosition.clone();
+    } else if (worldPosition) {
+      pos = new THREE.Vector3(Number(worldPosition.x) || 0, Number(worldPosition.y) || 0, Number(worldPosition.z) || 0);
+    } else if (gridPosition && Number.isFinite(gridPosition.x) && Number.isFinite(gridPosition.y)) {
+      const w = gridToWorldCenter({ x: gridPosition.x, y: gridPosition.y });
+      pos = new THREE.Vector3(w.x, 0, w.z);
+    } else {
+      pos = new THREE.Vector3(0, 0, 0);
+    }
+    pos.y = 0;
+    object3d.position.copy(pos);
+    object3d.rotation.y = Math.random() * Math.PI * 2;
+
+    this.scene?.add?.(object3d);
+    this.spawnedObjects.push(object3d);
+    this.consumeMissionObjectBudget(1);
+
+    const gp = (gridPosition && Number.isFinite(gridPosition.x) && Number.isFinite(gridPosition.y))
+      ? { x: Math.round(gridPosition.x), y: Math.round(gridPosition.y) }
+      : (this.interactables?.worldToGrid ? this.interactables.worldToGrid(pos) : null);
+
+    const dropId = `stolen:${mission.id}`;
+    mission.state.dropped = true;
+    mission.state.dropId = dropId;
+    mission.state.dropGridPos = gp;
+    mission.state.thiefMonsterId = null;
+
+    const maxDistance = clamp(toFinite(mission.params?.maxDistance, 2.8) ?? 2.8, 1.5, 8);
+
+    this.registeredIds.push(
+      this.interactables.register({
+        id: dropId,
+        kind: 'stolenItem',
+        label: itemLabel,
+        gridPos: gp,
+        object3d,
+        maxDistance,
+        prompt: () => `E: Recover ${itemLabel}`,
+        interact: ({ actorKind = 'player' } = {}) => {
+          if (mission.state.recovered) return { ok: true, message: 'Already recovered', picked: true, remove: true };
+          this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind, itemId, count: itemCount, sourceId: dropId });
+          mission.state.recovered = true;
+          mission.state.dropped = false;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `${itemLabel} recovered.`, seconds: 1.7 });
+          this.syncStatus();
+          return { ok: true, message: 'Recovered', picked: true, remove: true };
+        },
+        meta: { missionId: mission.id, template: mission.template }
+      })
+    );
+    this.interactableMeta.set(dropId, { missionId: mission.id, template: mission.template });
+
+    this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `${itemLabel} dropped! Retrieve it.`, seconds: 1.8 });
   }
 
   onPlayerDamaged(payload) {
@@ -4252,6 +5861,23 @@ export class MissionDirector {
 
       mission.state.lastDamagedAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
       mission.state.hits = (mission.state.hits || 0) + 1;
+    }
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'noHitRun') continue;
+      if (mission.state.completed) continue;
+      if (mission.state.failed) continue;
+
+      mission.state.failed = true;
+      mission.state.hits = (mission.state.hits || 0) + 1;
+
+      const loseOnHit = mission.state.loseOnHit !== false;
+      if (loseOnHit && !this.gameState?.gameOver) {
+        this.gameState?.lose?.('No-hit objective failed (took damage).');
+      } else {
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'No-hit objective failed.', seconds: 1.7 });
+      }
     }
 
     for (const mission of this.missions.values()) {
@@ -4314,6 +5940,8 @@ export class MissionDirector {
     if (source !== 'player') return;
 
     const kind = String(payload?.kind || '').toLowerCase();
+    const strengthRaw = Number(payload?.strength);
+    const strength = Number.isFinite(strengthRaw) ? clamp(strengthRaw, 0, 1) : null;
 
     const nowSec = this.gameState?.getElapsedTime
       ? this.gameState.getElapsedTime()
@@ -4325,6 +5953,14 @@ export class MissionDirector {
       if (this.isMissionComplete(mission)) continue;
 
       const isGunshot = kind.includes('gun') || kind.includes('shot');
+      const maxNoiseStrength = mission.state.maxNoiseStrength;
+      const thresholdEnabled = Number.isFinite(maxNoiseStrength);
+      const effectiveStrength = strength === null ? (isGunshot ? 1 : 0.5) : strength;
+      const overLimit = thresholdEnabled ? (effectiveStrength > maxNoiseStrength || isGunshot) : true;
+
+      // In threshold mode, only "loud enough" noises reset the timer / apply penalties.
+      if (!overLimit) continue;
+
       if (isGunshot) {
         mission.state.gunshots = (mission.state.gunshots || 0) + 1;
         if (mission.state.resetOnGunshot) {
@@ -4341,6 +5977,23 @@ export class MissionDirector {
         mission.state.failed = false;
         mission.state.gunshots = 0;
         mission.state.lastNoiseAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
+      }
+
+      if (thresholdEnabled) {
+        const maxStrikes = Number(mission.state.maxStrikes) || 0; // 0 => unlimited
+        const strikesRaw = Math.max(0, Math.round(Number(mission.state.strikes) || 0));
+        const nextStrikes = maxStrikes > 0 ? Math.min(maxStrikes, strikesRaw + 1) : strikesRaw + 1;
+        mission.state.strikes = nextStrikes;
+        mission.state.lastStrikeAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
+
+        const lastToast = Number(mission.state.lastStrikeToastAtSec);
+        const toastReady = !Number.isFinite(lastToast) || ((Number.isFinite(nowSec) ? nowSec : this.elapsedSec) - lastToast >= 1.4);
+        if (toastReady) {
+          mission.state.lastStrikeToastAtSec = Number.isFinite(nowSec) ? nowSec : this.elapsedSec;
+          const limitPct = Math.round((Number(maxNoiseStrength) || 0) * 100);
+          const label = maxStrikes > 0 ? `${nextStrikes}/${maxStrikes}` : String(nextStrikes);
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Noise limit exceeded (${limitPct}%) — strikes ${label}.`, seconds: 1.4 });
+        }
       }
     }
 
@@ -4434,11 +6087,14 @@ export class MissionDirector {
             ? 'Keep distance and use bursts; reloading at safe moments helps.'
             : 'If overwhelmed, retreat down corridors to separate targets.';
       } else if (m.template === 'stealthNoise') {
+        const maxNoiseStrength = m?.state?.maxNoiseStrength;
+        const thresholdEnabled = Number.isFinite(maxNoiseStrength);
+        const limitPct = thresholdEnabled ? Math.round((Number(maxNoiseStrength) || 0) * 100) : null;
         hintText = tier === 1
-          ? 'Stay quiet until the timer completes.'
+          ? (thresholdEnabled ? `Stay under the noise limit (${limitPct}%) until the timer completes.` : 'Stay quiet until the timer completes.')
           : tier === 2
-            ? 'Do not shoot; footsteps also reset the timer.'
-            : 'Stop moving and wait—any noise will restart the countdown.';
+            ? (thresholdEnabled ? 'Sprinting and gunshots exceed the limit; slowing down can avoid penalties.' : 'Do not shoot; footsteps also reset the timer.')
+            : (thresholdEnabled ? 'Create distance, then stop moving and wait—strikes add time penalties.' : 'Stop moving and wait—any noise will restart the countdown.');
       } else if (m.template === 'unlockExit') {
         hintText = tier === 1
           ? 'Go to the exit and press E to unlock it.'
@@ -4493,6 +6149,12 @@ export class MissionDirector {
           : tier === 2
             ? 'Lead the survivor to the exit and wait for them to catch up.'
             : 'If they get stuck, move slowly and stay near corridors to keep a clear path.';
+      } else if (m.template === 'hiddenTerminal') {
+        hintText = tier === 1
+          ? 'Listen for a periodic beep and search new rooms.'
+          : tier === 2
+            ? 'Prioritize the hinted room type; sweep room centers and corners.'
+            : 'Use the hint button again to reveal a marker (if the mission allows it).';
       } else {
         hintText = tier === 1
           ? 'Follow the current objective.'
@@ -4531,14 +6193,147 @@ export class MissionDirector {
       }
     }
 
+    // Timed evacuation: starts after other objectives, opens exit, and increases monster pressure.
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'timedEvac') continue;
+
+      const seconds = clamp(Math.round(mission.state.seconds ?? mission.params?.seconds ?? 45), 5, 600);
+      mission.state.seconds = seconds;
+
+      if (!mission.state.started) {
+        const requires = this.missionsConfig?.exit?.requires || [];
+        const requiredIds = Array.isArray(requires) ? requires : [];
+        const unlockExitId = String(mission.state.unlockExitMissionId || 'unlockExit').trim() || 'unlockExit';
+
+        let triggerReady = true;
+        for (const rid of requiredIds) {
+          const id = String(rid || '').trim();
+          if (!id) continue;
+          if (id === mission.id) continue;
+          if (id === unlockExitId) continue;
+          const m = this.missions.get(id);
+          if (!m) continue;
+          if (m.template === 'unlockExit') continue;
+          if (!this.isMissionComplete(m)) {
+            triggerReady = false;
+            break;
+          }
+        }
+
+        if (triggerReady) {
+          mission.state.started = true;
+          mission.state.startedAtSec = this.elapsedSec;
+          mission.state.untilSec = this.elapsedSec + seconds;
+          mission.state.lastSpawnPulseAtSec = this.elapsedSec;
+
+          if (mission.state.autoUnlockExit !== false) {
+            const unlockMission = this.missions.get(unlockExitId)
+              || Array.from(this.missions.values()).find((m) => m?.template === 'unlockExit')
+              || null;
+            if (unlockMission?.state && !unlockMission.state.unlocked) {
+              unlockMission.state.unlocked = true;
+            }
+          }
+
+          if (mission.state.escalateMonsters !== false) {
+            const mm = this.monsterManager;
+            if (mm) {
+              const bonus = clamp(Math.round(mission.state.maxCountBonus ?? 2), 0, 12);
+              const nextDelay = clamp(toFinite(mission.state.respawnDelaySec, 0.35) ?? 0.35, 0, 10);
+              const burst = clamp(Math.round(mission.state.spawnBurstCount ?? 2), 0, 10);
+
+              if (mm.levelConfig?.monsters) {
+                const cur = mm.levelConfig.monsters.maxCount;
+                if (!mission.state._boostApplied) {
+                  mission.state._origMaxCount = Number.isFinite(cur) ? cur : null;
+                }
+                const base = Number.isFinite(cur) ? cur : (Number.isFinite(mission.state._origMaxCount) ? mission.state._origMaxCount : null);
+                if (Number.isFinite(base)) {
+                  mm.levelConfig.monsters.maxCount = Math.max(0, Math.round(base + bonus));
+                }
+              }
+
+              if (mm.spawner?.setRespawnDelay) {
+                if (!mission.state._boostApplied) {
+                  mission.state._origRespawnDelay = Number.isFinite(mm.spawner.respawnDelay) ? Number(mm.spawner.respawnDelay) : null;
+                }
+                mm.spawner.setRespawnDelay(nextDelay);
+              }
+
+              mission.state._boostApplied = true;
+
+              for (let i = 0; i < burst; i++) {
+                try {
+                  void mm.spawnReplacement?.(null);
+                } catch {
+                  // ignore
+                }
+              }
+            }
+          }
+
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Evacuation started (${seconds}s). Run to the exit!`, seconds: 2.3 });
+        }
+
+        continue;
+      }
+
+      const until = Number(mission.state.untilSec) || 0;
+      const remaining = until > 0 ? (until - this.elapsedSec) : 0;
+
+      if (until > 0 && remaining <= 0 && !this.gameState?.gameOver) {
+        this.gameState?.lose?.('Evacuation window expired.');
+        this.eventBus?.emit?.(EVENTS.MISSION_FAILED, { missionId: mission.id, template: mission.template, reason: 'timedEvac', nowSec: this.elapsedSec });
+        return;
+      }
+
+      const pulseSec = clamp(toFinite(mission.state.spawnPulseSec, 6) ?? 6, 0, 60);
+      const pulseCount = clamp(Math.round(mission.state.spawnPulseCount ?? 1), 0, 6);
+      if (pulseSec > 0 && pulseCount > 0 && mission.state.escalateMonsters !== false) {
+        const last = Number(mission.state.lastSpawnPulseAtSec) || -999;
+        if (this.elapsedSec - last >= pulseSec) {
+          mission.state.lastSpawnPulseAtSec = this.elapsedSec;
+          const mm = this.monsterManager;
+          if (mm) {
+            for (let i = 0; i < pulseCount; i++) {
+              try {
+                void mm.spawnReplacement?.(null);
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+      }
+    }
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'syncActivate') continue;
+      if (this.isMissionComplete(mission)) continue;
+      if (!mission.state.started) continue;
+      const until = Number(mission.state.activeUntilSec) || 0;
+      if (until > 0 && this.elapsedSec > until) {
+        this.resetSyncActivateSwitches(mission);
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Sync failed. Try again.', seconds: 1.4 });
+      }
+    }
+
     for (const mission of this.missions.values()) {
       if (!mission) continue;
       if (mission.template !== 'stealthNoise') continue;
       if (mission.state.completed) continue;
 
       const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
-      const seconds = mission.state.seconds || 0;
-      if (seconds <= 0) continue;
+      const baseSeconds = Number(mission.state.seconds) || 0;
+      if (baseSeconds <= 0) continue;
+
+      const strikes = Math.max(0, Math.round(Number(mission.state.strikes) || 0));
+      const perStrike = Math.max(0, Math.round(Number(mission.state.penaltySecondsPerStrike) || 0));
+      const cap = Math.max(0, Math.round(Number(mission.state.maxPenaltySeconds) || 0));
+      const penalty = perStrike > 0 ? Math.min(cap, strikes * perStrike) : 0;
+      const seconds = baseSeconds + penalty;
 
       const quietFor = this.elapsedSec - start;
       if (quietFor >= seconds) {
@@ -4559,6 +6354,138 @@ export class MissionDirector {
       if (safeFor >= seconds) {
         mission.state.completed = true;
       }
+    }
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'lowHealthForSeconds') continue;
+      if (mission.state.completed) continue;
+
+      const seconds = clamp(Math.round(mission.state.seconds ?? mission.params?.seconds ?? 12), 1, 3600);
+      const threshold = clamp(Math.round(mission.state.healthPct ?? mission.params?.healthPct ?? 35), 1, 99);
+      mission.state.seconds = seconds;
+      mission.state.healthPct = threshold;
+
+      const curPct = this.gameState?.getHealthPercentage
+        ? Number(this.gameState.getHealthPercentage())
+        : (() => {
+          const ch = Number(this.gameState?.currentHealth);
+          const mh = Number(this.gameState?.maxHealth);
+          if (!Number.isFinite(ch) || !Number.isFinite(mh) || mh <= 0) return NaN;
+          return (ch / mh) * 100;
+        })();
+
+      mission.state.currentHealthPct = Number.isFinite(curPct) ? clamp(curPct, 0, 100) : null;
+
+      if (Number.isFinite(curPct) && curPct <= threshold) {
+        mission.state.underForSec = Math.min(seconds, (Number(mission.state.underForSec) || 0) + 1);
+      } else {
+        mission.state.underForSec = 0;
+      }
+
+      if ((Number(mission.state.underForSec) || 0) >= seconds) {
+        mission.state.completed = true;
+        mission.state.underForSec = seconds;
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Low health objective complete.', seconds: 1.7 });
+      }
+    }
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'noHitRun') continue;
+      if (mission.state.completed) continue;
+      if (mission.state.failed) continue;
+
+      const requires = this.missionsConfig?.exit?.requires || [];
+      const requiredIds = Array.isArray(requires) ? requires : [];
+
+      let ready = true;
+      for (const idRaw of requiredIds) {
+        const id = String(idRaw || '').trim();
+        if (!id) continue;
+        if (id === mission.id) continue;
+
+        const m = this.missions.get(id);
+        if (!m) continue;
+        if (m.template === 'unlockExit') continue;
+        if (m.template === 'timedEvac') {
+          if (m.state?.started !== true) {
+            ready = false;
+            break;
+          }
+          continue;
+        }
+        if (!this.isMissionComplete(m)) {
+          ready = false;
+          break;
+        }
+      }
+
+      if (ready) {
+        mission.state.completed = true;
+        this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'No-hit objective complete.', seconds: 1.7 });
+      }
+    }
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'reclaimStolenItem') continue;
+      if (mission.state?.recovered) continue;
+      if (mission.state?.dropped) continue;
+
+      const mm = this.monsterManager;
+      const monsters = mm?.getMonsters ? mm.getMonsters() : [];
+      if (!Array.isArray(monsters) || monsters.length === 0) continue;
+
+      const thiefId = Number(mission.state?.thiefMonsterId);
+      if (Number.isFinite(thiefId) && thiefId > 0) {
+        const stillAlive = monsters.some((m) => Number(m?.id) === thiefId);
+        if (!stillAlive) {
+          mission.state.thiefMonsterId = null;
+          mission.state.thiefHits = 0;
+        } else {
+          continue;
+        }
+      }
+
+      const candidates = monsters.filter((m) => m && !m.isDead && !m.isDying && Number.isFinite(Number(m.id)));
+      if (candidates.length === 0) continue;
+      const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+      mission.state.thiefMonsterId = chosen.id;
+      mission.state.thiefHits = 0;
+
+      const label = String(mission.state.itemLabel || mission.params?.itemLabel || mission.params?.label || 'stolen item').trim() || 'stolen item';
+      this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `A monster stole ${label}. Track it down.`, seconds: 2.2 });
+    }
+
+    for (const mission of this.missions.values()) {
+      if (!mission) continue;
+      if (mission.template !== 'hiddenTerminal') continue;
+      if (mission.state?.completed) continue;
+      const gp = mission.state.terminalGridPos;
+      const id = String(mission.state.terminalId || '').trim();
+      if (!gp || !id) continue;
+
+      const intervalSec = clamp(Math.round(mission.state.pingIntervalSec ?? mission.params?.pingIntervalSec ?? 8), 0, 120);
+      mission.state.pingIntervalSec = intervalSec;
+      if (!(intervalSec > 0)) continue;
+
+      const last = Number(mission.state.lastPingAtSec) || -999;
+      if (this.elapsedSec - last < intervalSec) continue;
+      mission.state.lastPingAtSec = this.elapsedSec;
+
+      const entry = this.interactables?.get?.(id) || null;
+      const pos = entry?.object3d?.position || null;
+      if (!pos) continue;
+
+      this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+        source: 'mission',
+        kind: String(mission.params?.pingKind || 'beep'),
+        strength: clamp(Number(mission.params?.pingStrength ?? 0.18), 0.05, 2.0),
+        position: pos.clone(),
+        radius: clamp(Math.round(mission.params?.pingRadius ?? 7), 2, 40),
+        ttl: clamp(Number(mission.params?.pingTtl ?? 0.35), 0.1, 6.0)
+      });
     }
 
     for (const mission of this.missions.values()) {
@@ -4593,6 +6520,208 @@ export class MissionDirector {
       const camDir = new THREE.Vector3();
       const targetWorld = new THREE.Vector3();
       const toTarget = new THREE.Vector3();
+
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'uploadEvidence') continue;
+        if (mission.state.uploaded) continue;
+        if (!mission.state.uploading) continue;
+
+        const uploadSeconds = clamp(Math.round(mission.state.uploadSeconds ?? mission.params?.uploadSeconds ?? mission.params?.seconds ?? 0), 0, 600);
+        mission.state.uploadSeconds = uploadSeconds;
+        if (!(uploadSeconds > 0)) continue;
+
+        const terminalGridPos = mission.state.terminalGridPos || null;
+        if (!terminalGridPos || !Number.isFinite(terminalGridPos.x) || !Number.isFinite(terminalGridPos.y)) continue;
+
+        const uploadRadius = clamp(Math.round(mission.state.uploadRadius ?? mission.params?.uploadRadius ?? mission.params?.radius ?? 2), 1, 8);
+        mission.state.uploadRadius = uploadRadius;
+
+        const dist = manhattan(playerGridPos, terminalGridPos);
+        const inRange = dist <= uploadRadius;
+
+        const terminalId = String(mission.state.terminalId || '').trim();
+        const terminalEntry = terminalId ? (this.interactables?.get?.(terminalId) || null) : null;
+
+        if (!inRange) {
+          if (mission.state.uploadResetOnLeave !== false) {
+            mission.state.uploading = false;
+            mission.state.uploadProgressSec = 0;
+            if (terminalEntry?.meta) terminalEntry.meta.uploading = false;
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Upload interrupted.', seconds: 1.2 });
+          }
+          continue;
+        }
+
+        mission.state.uploadProgressSec = Math.min(uploadSeconds, (Number(mission.state.uploadProgressSec) || 0) + 1);
+
+        const scentRadius = clamp(Math.round(mission.params?.uploadScentRadius ?? 14), 2, 40);
+        const scentTtl = clamp(Number(mission.params?.uploadScentTtl ?? 3.0), 0.5, 10.0);
+        const scentStrength = clamp(Number(mission.params?.uploadScentStrength ?? 1.15), 0.1, 3.0);
+
+        const terminalWorld = terminalEntry?.object3d?.position
+          ? terminalEntry.object3d.position
+          : (() => {
+            const w = gridToWorldCenter(terminalGridPos);
+            return new THREE.Vector3(w.x, 0, w.z);
+          })();
+
+        this.monsterManager?.registerScent?.(terminalWorld, {
+          kind: 'upload',
+          radius: scentRadius,
+          ttl: scentTtl,
+          strength: scentStrength,
+          source: 'mission'
+        });
+
+        if ((Number(mission.state.uploadProgressSec) || 0) >= uploadSeconds) {
+          const itemId = String(mission.params?.itemId || 'evidence').trim() || 'evidence';
+          const required = Number(mission.state.required) || 0;
+          if (this.eventBus?.emit && required > 0) {
+            const consume = { actorKind: 'player', itemId, count: required, result: null };
+            this.eventBus.emit(EVENTS.INVENTORY_CONSUME_ITEM, consume);
+            if (!consume.result?.ok) {
+              mission.state.uploading = false;
+              mission.state.uploadProgressSec = 0;
+              if (terminalEntry?.meta) terminalEntry.meta.uploading = false;
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Upload failed (missing evidence).', seconds: 1.6 });
+              continue;
+            }
+          }
+
+          mission.state.uploading = false;
+          mission.state.uploaded = true;
+          mission.state.uploadProgressSec = uploadSeconds;
+
+          if (terminalEntry) {
+            terminalEntry.requiresItem = [];
+            terminalEntry.consumeItem = [];
+            if (terminalEntry.meta) {
+              terminalEntry.meta.uploading = false;
+              terminalEntry.meta.uploaded = true;
+            }
+            if (terminalEntry.object3d) setTerminalState(terminalEntry.object3d, { uploaded: true });
+          }
+
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Upload complete.', seconds: 1.8 });
+        }
+      }
+
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'surviveInZone') continue;
+        if (mission.state.completed) continue;
+        if (!mission.state.started) continue;
+        const gp = mission.state.beaconGridPos;
+        if (!gp || !Number.isFinite(gp.x) || !Number.isFinite(gp.y)) continue;
+
+        const seconds = clamp(Math.round(mission.state.seconds ?? mission.params?.seconds ?? 25), 5, 3600);
+        const radius = clamp(Math.round(mission.state.radius ?? mission.params?.radius ?? 2), 1, 8);
+        const grace = clamp(Math.round(mission.state.exitGraceSec ?? mission.params?.exitGraceSec ?? 2), 0, 20);
+        mission.state.seconds = seconds;
+        mission.state.radius = radius;
+        mission.state.exitGraceSec = grace;
+
+        const dist = manhattan(playerGridPos, gp);
+        const inside = dist <= radius;
+
+        if (inside) {
+          mission.state.outOfZoneSec = 0;
+          mission.state.heldForSec = Math.min(seconds, (Number(mission.state.heldForSec) || 0) + 1);
+        } else {
+          mission.state.outOfZoneSec = Math.min(9999, (Number(mission.state.outOfZoneSec) || 0) + 1);
+          if (grace >= 0 && (Number(mission.state.outOfZoneSec) || 0) > grace) {
+            mission.state.heldForSec = 0;
+          }
+        }
+
+        if ((Number(mission.state.heldForSec) || 0) >= seconds) {
+          mission.state.completed = true;
+          mission.state.heldForSec = seconds;
+          const entry = mission.state.beaconId ? (this.interactables?.get?.(mission.state.beaconId) || null) : null;
+          if (entry?.object3d) {
+            setSensorState(entry.object3d, { armed: true, active: false, success: true });
+          }
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Zone held.', seconds: 1.8 });
+        }
+      }
+
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'occupyPoint') continue;
+        if (mission.state.completed) continue;
+        if (!mission.state.started) continue;
+        const gp = mission.state.beaconGridPos;
+        if (!gp || !Number.isFinite(gp.x) || !Number.isFinite(gp.y)) continue;
+
+        const seconds = clamp(Math.round(mission.state.seconds ?? mission.params?.seconds ?? 30), 5, 3600);
+        const radius = clamp(Math.round(mission.state.radius ?? mission.params?.radius ?? 2), 1, 8);
+        const grace = clamp(Math.round(mission.state.exitGraceSec ?? mission.params?.exitGraceSec ?? 2), 0, 20);
+        mission.state.seconds = seconds;
+        mission.state.radius = radius;
+        mission.state.exitGraceSec = grace;
+
+        const intervalSec = clamp(Math.round(mission.state.hazardIntervalSec ?? mission.params?.hazardIntervalSec ?? mission.params?.pulseSec ?? 8), 2, 120);
+        const durationSec = clamp(Math.round(mission.state.hazardDurationSec ?? mission.params?.hazardDurationSec ?? mission.params?.pulseDurationSec ?? 2), 1, 30);
+        const damage = clamp(Math.round(mission.state.hazardDamage ?? mission.params?.hazardDamage ?? 3), 0, 50);
+        mission.state.hazardIntervalSec = intervalSec;
+        mission.state.hazardDurationSec = durationSec;
+        mission.state.hazardDamage = damage;
+
+        if (!(Number(mission.state.nextHazardAtSec) > 0)) {
+          mission.state.nextHazardAtSec = this.elapsedSec + intervalSec;
+        }
+
+        const dist = manhattan(playerGridPos, gp);
+        const inside = dist <= radius;
+
+        const activeUntil = Number(mission.state.hazardActiveUntilSec) || 0;
+        const hazardActive = activeUntil > 0 && this.elapsedSec < activeUntil;
+        const nextHazardAt = Number(mission.state.nextHazardAtSec) || 0;
+        const readyForPulse = !hazardActive && nextHazardAt > 0 && this.elapsedSec >= nextHazardAt;
+
+        if (readyForPulse) {
+          mission.state.hazardActiveUntilSec = this.elapsedSec + durationSec;
+          mission.state.nextHazardAtSec = this.elapsedSec + intervalSec;
+
+          const entry = mission.state.beaconId ? (this.interactables?.get?.(mission.state.beaconId) || null) : null;
+          const pos = entry?.object3d?.position || null;
+          if (pos) {
+            this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+              source: 'alarm',
+              kind: String(mission.params?.hazardNoiseKind || 'alarm'),
+              strength: clamp(Number(mission.params?.hazardNoiseStrength ?? 0.85), 0.1, 2.0),
+              position: pos.clone(),
+              radius: clamp(Math.round(mission.params?.hazardNoiseRadius ?? 20), 4, 80),
+              ttl: clamp(Number(mission.params?.hazardNoiseTtl ?? 1.2), 0.2, 6.0)
+            });
+          }
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Control point hazard activated!', seconds: 1.4 });
+        }
+
+        if (inside) {
+          mission.state.outOfZoneSec = 0;
+          mission.state.heldForSec = Math.min(seconds, (Number(mission.state.heldForSec) || 0) + 1);
+          if (hazardActive && damage > 0) {
+            this.gameState?.takeDamage?.(damage);
+          }
+        } else {
+          mission.state.outOfZoneSec = Math.min(9999, (Number(mission.state.outOfZoneSec) || 0) + 1);
+          if (grace >= 0 && (Number(mission.state.outOfZoneSec) || 0) > grace) {
+            mission.state.heldForSec = 0;
+          }
+        }
+
+        if ((Number(mission.state.heldForSec) || 0) >= seconds) {
+          mission.state.completed = true;
+          mission.state.heldForSec = seconds;
+          const entry = mission.state.beaconId ? (this.interactables?.get?.(mission.state.beaconId) || null) : null;
+          if (entry?.object3d) {
+            setSensorState(entry.object3d, { armed: true, active: false, success: true });
+          }
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Control point secured.', seconds: 1.8 });
+        }
+      }
 
       for (const mission of this.missions.values()) {
         if (!mission) continue;
@@ -4803,6 +6932,85 @@ export class MissionDirector {
         }
       }
 
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'codeLockScan') continue;
+        if (this.isMissionComplete(mission)) continue;
+        if (!mission.state.unlocked) continue;
+
+        const seconds = Number(mission.state.scanSeconds) || 0;
+        if (seconds <= 0) {
+          mission.state.scanRequired = 0;
+          mission.state.scanned = 0;
+          continue;
+        }
+
+        const targets = Array.isArray(mission.state.scanTargets) ? mission.state.scanTargets : [];
+        const required = Number(mission.state.scanRequired) || targets.length || 0;
+        mission.state.scanRequired = required;
+
+        const done = targets.filter((t) => t?.completed).length;
+        mission.state.scanned = Math.min(required, done);
+        if (required > 0 && done >= required) {
+          continue;
+        }
+
+        const next = targets.find((t) => t && !t.completed && t.gridPos) || null;
+        if (!next || !next.gridPos) continue;
+
+        const entry = next.id ? (this.interactables?.get?.(next.id) || null) : null;
+        const aimMinDotRaw = Number(entry?.meta?.aimMinDot ?? mission.params?.sampleAimMinDot ?? mission.params?.aimMinDot);
+        const aimAngleDeg = clamp(toFinite(mission.params?.sampleAimAngleDeg ?? mission.params?.aimAngleDeg, 14) ?? 14, 5, 60);
+        const aimMinDot = Number.isFinite(aimMinDotRaw)
+          ? clamp(aimMinDotRaw, 0.2, 0.9999)
+          : Math.cos((aimAngleDeg * Math.PI) / 180);
+        const aimOffsetY = clamp(toFinite(entry?.meta?.aimOffsetY ?? mission.params?.sampleAimOffsetY ?? mission.params?.aimOffsetY, 0.9) ?? 0.9, 0, 2.5);
+        const maxDistance = clamp(toFinite(entry?.meta?.maxDistance ?? mission.params?.sampleMaxDistance ?? mission.params?.maxDistance, 3.6) ?? 3.6, 1.5, 10);
+
+        const losOk = ws?.hasLineOfSight ? !!ws.hasLineOfSight(playerGridPos, next.gridPos) : true;
+        const distTiles = manhattan(playerGridPos, next.gridPos);
+        const distTilesOk = distTiles <= Math.ceil(maxDistance);
+
+        let aimedOk = false;
+        if (cam && typeof cam.getWorldDirection === 'function' && cam.position && losOk && distTilesOk) {
+          cam.getWorldDirection(camDir);
+          if (camDir.lengthSq() > 1e-8) camDir.normalize();
+
+          const targetWorldX = next.gridPos.x * tileSize + tileSize / 2;
+          const targetWorldZ = next.gridPos.y * tileSize + tileSize / 2;
+          targetWorld.set(targetWorldX, aimOffsetY, targetWorldZ);
+          toTarget.subVectors(targetWorld, cam.position);
+          if (toTarget.lengthSq() > 1e-8) toTarget.normalize();
+
+          const dot = camDir.dot(toTarget);
+          aimedOk = dot >= aimMinDot;
+        }
+
+        if (aimedOk) {
+          next.heldForSec = Math.min(seconds, (Number(next.heldForSec) || 0) + 1);
+        } else {
+          next.heldForSec = 0;
+        }
+
+        if ((Number(next.heldForSec) || 0) >= seconds) {
+          next.completed = true;
+          next.heldForSec = seconds;
+
+          if (entry) {
+            entry.enabled = false;
+            if (entry.object3d) entry.object3d.visible = false;
+          }
+
+          const nextDone = targets.filter((t) => t?.completed).length;
+          mission.state.scanned = Math.min(required, nextDone);
+          if (required > 0 && nextDone >= required) {
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Sample collected.', seconds: 1.8 });
+          } else {
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Sample progress (${nextDone}/${required})`, seconds: 1.4 });
+          }
+        }
+      }
+
       const monsterPositions = (() => {
         const mm = this.monsterManager;
         if (!mm) return [];
@@ -4870,10 +7078,32 @@ export class MissionDirector {
         if (mission.state.completed) continue;
 
         const sensorGridPos = mission.state.sensorGridPos || null;
+        if (!sensorGridPos || !Number.isFinite(sensorGridPos.x) || !Number.isFinite(sensorGridPos.y)) continue;
+
         const lureSeconds = clamp(Math.round(mission.state.lureSeconds ?? mission.params.lureSeconds ?? 10), 3, 120);
         const requireLure = mission.state.requireLure !== false;
         const until = Number(mission.state.lureUntilSec) || 0;
         const lureActive = !requireLure || (until > 0 && this.elapsedSec <= until);
+
+        const requiredTriggers = clamp(Math.round(mission.state.requiredTriggers ?? mission.params.requiredTriggers ?? 1), 1, 12);
+        mission.state.requiredTriggers = requiredTriggers;
+        mission.state.triggered = clamp(Math.round(mission.state.triggered ?? 0), 0, requiredTriggers);
+
+        const cooldownSec = clamp(Math.round(mission.state.cooldownSec ?? mission.params.cooldownSec ?? 3), 0, 60);
+        mission.state.cooldownSec = cooldownSec;
+        const cooldownUntil = Number(mission.state.cooldownUntilSec) || 0;
+        const cooldownRemaining = Math.max(0, cooldownUntil - this.elapsedSec);
+        const inCooldown = cooldownRemaining > 0;
+
+        const requireClear = mission.state.requireClear === undefined
+          ? (requiredTriggers > 1)
+          : (mission.state.requireClear !== false);
+        mission.state.requireClear = requireClear;
+
+        const successFlashSec = clamp(toFinite(mission.state.successFlashSec ?? mission.params.successFlashSec, 2) ?? 2, 0, 10);
+        mission.state.successFlashSec = successFlashSec;
+        const lastTriggerAt = Number.isFinite(mission.state.lastTriggerAtSec) ? Number(mission.state.lastTriggerAtSec) : -999;
+        const flashSuccess = this.elapsedSec - lastTriggerAt <= successFlashSec;
 
         if (requireLure && until > 0 && this.elapsedSec > until) {
           mission.state.lureUntilSec = 0;
@@ -4882,60 +7112,141 @@ export class MissionDirector {
           if (lureEntry?.object3d) setPowerSwitchState(lureEntry.object3d, false);
         }
 
-        if (sensorGridPos && Number.isFinite(sensorGridPos.x) && Number.isFinite(sensorGridPos.y)) {
-          const sensorEntry = mission.state.sensorId ? (this.interactables?.get?.(mission.state.sensorId) || null) : null;
-          const stage = !mission.state.armed
-            ? 'arm'
-            : (requireLure && !lureActive ? 'trigger' : 'wait');
+        if (requireClear && mission.state.awaitingClear) {
+          const triggerRadius = Number(mission.state.triggerRadius) || 1;
+          let anyNear = false;
+          for (const m of monsterPositions) {
+            const dist = Math.abs(m.x - sensorGridPos.x) + Math.abs(m.y - sensorGridPos.y);
+            if (dist <= triggerRadius) {
+              anyNear = true;
+              break;
+            }
+          }
+          if (!anyNear) {
+            mission.state.awaitingClear = false;
+          }
+        }
 
-          if (sensorEntry?.object3d) {
-            setSensorState(sensorEntry.object3d, { armed: !!mission.state.armed, active: stage === 'wait' && lureActive, success: false });
+        const sensorEntry = mission.state.sensorId ? (this.interactables?.get?.(mission.state.sensorId) || null) : null;
+        const stage = !mission.state.armed
+          ? 'arm'
+          : (inCooldown
+            ? 'cooldown'
+            : (requireClear && mission.state.awaitingClear
+              ? 'clear'
+              : (requireLure && !lureActive ? 'trigger' : 'wait')));
+
+        if (sensorEntry?.object3d) {
+          setSensorState(sensorEntry.object3d, {
+            armed: !!mission.state.armed,
+            active: stage === 'wait' && lureActive,
+            success: flashSuccess
+          });
+        }
+
+        if (stage === 'wait') {
+          const playerRadius = Number(mission.state.playerRadius) || 3;
+          const triggerRadius = Number(mission.state.triggerRadius) || 1;
+          const playerNear = manhattan(playerGridPos, sensorGridPos) <= playerRadius;
+
+          let monsterNear = false;
+          for (const m of monsterPositions) {
+            const dist = Math.abs(m.x - sensorGridPos.x) + Math.abs(m.y - sensorGridPos.y);
+            if (dist <= triggerRadius) {
+              monsterNear = true;
+              break;
+            }
           }
 
-          if (stage === 'wait') {
-            const playerRadius = Number(mission.state.playerRadius) || 3;
-            const triggerRadius = Number(mission.state.triggerRadius) || 1;
-            const playerNear = manhattan(playerGridPos, sensorGridPos) <= playerRadius;
+          if (playerNear && monsterNear) {
+            const next = Math.min(requiredTriggers, (Number(mission.state.triggered) || 0) + 1);
+            mission.state.triggered = next;
+            mission.state.lastTriggerAtSec = this.elapsedSec;
 
-            let monsterNear = false;
-            for (const m of monsterPositions) {
-              const dist = Math.abs(m.x - sensorGridPos.x) + Math.abs(m.y - sensorGridPos.y);
-              if (dist <= triggerRadius) {
-                monsterNear = true;
-                break;
-              }
-            }
-
-            if (playerNear && monsterNear) {
+            const completed = requiredTriggers > 0 && next >= requiredTriggers;
+            if (completed) {
               mission.state.completed = true;
-              if (sensorEntry?.object3d) {
-                setSensorState(sensorEntry.object3d, { armed: true, active: false, success: true });
-              }
-              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Sensor triggered.', seconds: 1.8 });
-
-              const lureEntry = mission.state.lureId ? (this.interactables?.get?.(mission.state.lureId) || null) : null;
-              if (lureEntry?.object3d) setPowerSwitchState(lureEntry.object3d, false);
-              mission.state.lureUntilSec = 0;
+            } else {
+              mission.state.cooldownUntilSec = cooldownSec > 0 ? (this.elapsedSec + cooldownSec) : 0;
+              mission.state.awaitingClear = requireClear;
             }
-          } else if (stage === 'trigger' && requireLure && until <= 0 && mission.state.armed) {
-            // Keep the lure device visually off until triggered.
+
+            if (sensorEntry?.object3d) {
+              setSensorState(sensorEntry.object3d, { armed: true, active: false, success: true });
+            }
+
+            if (completed) {
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Sensor triggered (${next}/${requiredTriggers}).`, seconds: 1.9 });
+            } else {
+              this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Lure success (${next}/${requiredTriggers}).`, seconds: 1.6 });
+            }
+
+            const rearmEachTrigger = mission.state.rearmEachTrigger === true;
+            if (rearmEachTrigger && !mission.state.completed) {
+              mission.state.armed = false;
+            }
+
             const lureEntry = mission.state.lureId ? (this.interactables?.get?.(mission.state.lureId) || null) : null;
             if (lureEntry?.object3d) setPowerSwitchState(lureEntry.object3d, false);
             if (lureEntry?.meta) lureEntry.meta.active = false;
-            mission.state.lureSeconds = lureSeconds;
+            mission.state.lureUntilSec = 0;
           }
+        } else if (stage === 'trigger' && requireLure && until <= 0 && mission.state.armed) {
+          const lureEntry = mission.state.lureId ? (this.interactables?.get?.(mission.state.lureId) || null) : null;
+          if (lureEntry?.object3d) setPowerSwitchState(lureEntry.object3d, false);
+          if (lureEntry?.meta) lureEntry.meta.active = false;
+          mission.state.lureSeconds = lureSeconds;
         }
       }
 
       for (const mission of this.missions.values()) {
         if (!mission) continue;
-        if (mission.template !== 'escort') continue;
+        if (mission.template !== 'escort' && mission.template !== 'escortRescue') continue;
         if (mission.state.completed) continue;
         if (!mission.state.started) continue;
 
         const goal = mission.state.goalGridPos || null;
         const escortGridPos = mission.state.escortGridPos || null;
         if (!goal || !escortGridPos) continue;
+
+        if (mission.template === 'escortRescue') {
+          const obj = mission.state.object3d || null;
+          const pos = obj?.position || null;
+          if (pos) {
+            const now = Number.isFinite(this.elapsedSec) ? this.elapsedSec : 0;
+
+            const scentInterval = Number(mission.state.aggroScentIntervalSec) || 0;
+            if (scentInterval > 0) {
+              const last = Number(mission.state.lastAggroScentAtSec) || -999;
+              if (now - last >= scentInterval) {
+                mission.state.lastAggroScentAtSec = now;
+                this.monsterManager?.registerScent?.(pos, {
+                  kind: 'escort',
+                  radius: Number(mission.state.aggroScentRadius) || 14,
+                  ttl: Number(mission.state.aggroScentTtl) || 4,
+                  strength: Number(mission.state.aggroScentStrength) || 1.15,
+                  source: 'escort'
+                });
+              }
+            }
+
+            const noiseInterval = Number(mission.state.aggroNoiseIntervalSec) || 0;
+            if (noiseInterval > 0) {
+              const last = Number(mission.state.lastAggroNoiseAtSec) || -999;
+              if (now - last >= noiseInterval) {
+                mission.state.lastAggroNoiseAtSec = now;
+                this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+                  source: 'escort',
+                  kind: String(mission.state.aggroNoiseKind || 'lure'),
+                  strength: Number(mission.state.aggroNoiseStrength) || 0.85,
+                  position: pos,
+                  radius: Number(mission.state.aggroNoiseRadius) || 16,
+                  ttl: Number(mission.state.aggroNoiseTtl) || 0.9
+                });
+              }
+            }
+          }
+        }
 
         const distToPlayer = manhattan(escortGridPos, playerGridPos);
         const followDistance = Number(mission.state.followDistance) || 1;
@@ -4957,7 +7268,8 @@ export class MissionDirector {
         const eg = mission.state.escortGridPos || null;
         if (eg && eg.x === goal.x && eg.y === goal.y) {
           mission.state.completed = true;
-          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'Escort complete.', seconds: 1.8 });
+          const msg = mission.template === 'escortRescue' ? 'Rescue complete.' : 'Escort complete.';
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: msg, seconds: 1.8 });
         }
       }
 
@@ -5067,6 +7379,63 @@ export class MissionDirector {
           }
         }
       }
+
+      for (const mission of this.missions.values()) {
+        if (!mission) continue;
+        if (mission.template !== 'scanWaypoints') continue;
+        if (mission.state.completed) continue;
+
+        const seconds = clamp(Math.round(mission.state.seconds ?? mission.params?.seconds ?? 4), 1, 120);
+        const radius = clamp(Math.round(mission.state.radius ?? mission.params?.radius ?? 2), 0, 10);
+        const requireLOS = mission.state.requireLOS === true;
+        mission.state.seconds = seconds;
+        mission.state.radius = radius;
+        mission.state.requireLOS = requireLOS;
+
+        const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+        const required = Number(mission.state.required) || targets.length || 0;
+        mission.state.required = required;
+
+        let scanned = 0;
+        for (let i = 0; i < targets.length; i++) {
+          const t = targets[i];
+          if (!t) continue;
+          if (t.completed) {
+            scanned += 1;
+            continue;
+          }
+          const gp = t.gridPos;
+          if (!gp || !Number.isFinite(gp.x) || !Number.isFinite(gp.y)) continue;
+
+          const dist = manhattan(playerGridPos, gp);
+          const inside = radius <= 0 ? (dist === 0) : (dist <= radius);
+          const losOk = !requireLOS || (ws?.hasLineOfSight ? !!ws.hasLineOfSight(playerGridPos, gp) : true);
+          const scanning = cameraToolActive && inside && losOk;
+
+          if (scanning) {
+            t.heldForSec = Math.min(seconds, (Number(t.heldForSec) || 0) + 1);
+          } else {
+            t.heldForSec = 0;
+          }
+
+          if ((Number(t.heldForSec) || 0) >= seconds) {
+            t.completed = true;
+            t.heldForSec = seconds;
+            scanned += 1;
+            const entry = t.id ? (this.interactables?.get?.(t.id) || null) : null;
+            if (entry?.object3d) {
+              setSensorState(entry.object3d, { armed: true, active: false, success: true });
+            }
+            this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: `Site scanned (${scanned}/${required}).`, seconds: 1.4 });
+          }
+        }
+
+        mission.state.scanned = Math.min(required, scanned);
+        if (required > 0 && scanned >= required) {
+          mission.state.completed = true;
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, { text: 'All sites scanned.', seconds: 1.8 });
+        }
+      }
     }
 
     this.syncStatus();
@@ -5083,6 +7452,11 @@ export class MissionDirector {
     if (mission.template === 'restorePower') {
       return (mission.state.activated?.size || 0) >= (mission.state.total || 0);
     }
+    if (mission.template === 'syncActivate') {
+      const total = Number(mission.state.total) || (Array.isArray(mission.state.switches) ? mission.state.switches.length : 0);
+      if (total <= 0) return true;
+      return (mission.state.activated?.size || 0) >= total;
+    }
     if (mission.template === 'reroutePower') {
       return !!mission.state.powered;
     }
@@ -5092,13 +7466,47 @@ export class MissionDirector {
     if (mission.template === 'restorePowerFuses') {
       return !!mission.state.powered;
     }
+    if (mission.template === 'powerGrid') {
+      const required = Number(mission.state.requiredPowered) || 0;
+      const branches = Array.isArray(mission.state.branches) ? mission.state.branches : [];
+      const powered = Number(mission.state.powered) || branches.filter((b) => b?.powered).length;
+      mission.state.powered = powered;
+      mission.state.requiredPowered = required > 0 ? required : branches.length;
+      return mission.state.requiredPowered <= 0 || powered >= mission.state.requiredPowered;
+    }
     if (mission.template === 'uploadEvidence') {
       return !!mission.state.uploaded;
+    }
+    if (mission.template === 'blackoutZone') {
+      const required = Number(mission.state.required) || 0;
+      const restored = Number(mission.state.restored) || 0;
+      return required <= 0 || restored >= required;
     }
     if (mission.template === 'surviveTimer') {
       return !!mission.state.completed;
     }
+    if (mission.template === 'surviveInZone') {
+      return !!mission.state.completed;
+    }
+    if (mission.template === 'occupyPoint') {
+      return !!mission.state.completed;
+    }
     if (mission.template === 'surviveNoDamage') {
+      return !!mission.state.completed;
+    }
+    if (mission.template === 'lowHealthForSeconds') {
+      return !!mission.state.completed;
+    }
+    if (mission.template === 'noHitRun') {
+      return !!mission.state.completed;
+    }
+    if (mission.template === 'reclaimStolenItem') {
+      return !!mission.state.recovered;
+    }
+    if (mission.template === 'hiddenTerminal') {
+      return !!mission.state.completed;
+    }
+    if (mission.template === 'scanWaypoints') {
       return !!mission.state.completed;
     }
     if (mission.template === 'enterRoomType') {
@@ -5115,8 +7523,20 @@ export class MissionDirector {
     if (mission.template === 'codeLock') {
       return !!mission.state.unlocked;
     }
+    if (mission.template === 'codeLockScan') {
+      if (!mission.state.unlocked) return false;
+      const targets = Array.isArray(mission.state.scanTargets) ? mission.state.scanTargets : [];
+      const required = Number(mission.state.scanRequired) || targets.length || 0;
+      const done = targets.filter((t) => t?.completed).length;
+      mission.state.scanRequired = required;
+      mission.state.scanned = Math.min(required, done);
+      return required <= 0 || done >= required;
+    }
     if (mission.template === 'unlockExit') {
       return !!mission.state.unlocked;
+    }
+    if (mission.template === 'bossFinale') {
+      return (Number(mission.state.phase) || 0) >= 3;
     }
     if (mission.template === 'lockedDoor') {
       return !!mission.state.unlocked;
@@ -5175,6 +7595,9 @@ export class MissionDirector {
     if (mission.template === 'escort') {
       return !!mission.state.completed;
     }
+    if (mission.template === 'escortRescue') {
+      return !!mission.state.completed;
+    }
     if (mission.template === 'escortToSafeRoom') {
       return !!mission.state.completed;
     }
@@ -5182,6 +7605,13 @@ export class MissionDirector {
       return !!mission.state.completed;
     }
     if (mission.template === 'lureToSensor') {
+      const required = clamp(Math.round(mission.state.requiredTriggers ?? mission.params?.requiredTriggers ?? 1), 1, 12);
+      const triggered = clamp(Math.round(mission.state.triggered ?? 0), 0, required);
+      mission.state.requiredTriggers = required;
+      mission.state.triggered = triggered;
+      if (required > 0 && triggered >= required) {
+        mission.state.completed = true;
+      }
       return !!mission.state.completed;
     }
     return false;
@@ -5194,6 +7624,10 @@ export class MissionDirector {
     for (const id of requires) {
       const mission = this.missions.get(id);
       if (!mission) continue;
+      if (mission.template === 'timedEvac') {
+        if (mission.state?.started !== true) return false;
+        continue;
+      }
       if (!this.isMissionComplete(mission)) return false;
     }
     return true;
@@ -5219,6 +7653,16 @@ export class MissionDirector {
     const requires = this.missionsConfig?.exit?.requires || [];
     const requiredIds = Array.isArray(requires) ? requires : [];
 
+    for (const mission of this.missions.values()) {
+      if (!mission || mission.template !== 'timedEvac') continue;
+      if (!mission.state.started) continue;
+      if (this.gameState?.gameOver) continue;
+      const until = Number(mission.state.untilSec) || 0;
+      if (!(until > 0)) continue;
+      const remaining = Math.max(0, until - this.elapsedSec);
+      return remaining > 0 ? `Evacuate! (${Math.ceil(remaining)}s)` : 'Evacuate!';
+    }
+
     const formatMission = (mission) => {
       if (!mission) return '';
       if (mission.template === 'findKeycard') {
@@ -5229,6 +7673,14 @@ export class MissionDirector {
       }
       if (mission.template === 'restorePower') {
         return `Restore power (${mission.state.activated?.size || 0}/${mission.state.total || 0})`;
+      }
+      if (mission.template === 'syncActivate') {
+        const total = Number(mission.state.total) || (Array.isArray(mission.state.switches) ? mission.state.switches.length : 0);
+        const activated = mission.state.activated?.size || 0;
+        const until = Number(mission.state.activeUntilSec) || 0;
+        const remaining = mission.state.started ? Math.max(0, until - this.elapsedSec) : 0;
+        const suffix = mission.state.started ? ` (${Math.ceil(remaining)}s)` : '';
+        return `Sync switches (${activated}/${total})${suffix}`;
       }
       if (mission.template === 'reroutePower') {
         if (mission.state.powered) return 'Power rerouted. Reach the exit.';
@@ -5255,6 +7707,21 @@ export class MissionDirector {
         }
         return 'Power restored. Reach the exit.';
       }
+      if (mission.template === 'powerGrid') {
+        const branches = Array.isArray(mission.state.branches) ? mission.state.branches : [];
+        const required = Number(mission.state.requiredPowered) || branches.length || 0;
+        const powered = Number(mission.state.powered) || branches.filter((b) => b?.powered).length;
+        mission.state.requiredPowered = required;
+        mission.state.powered = powered;
+
+        const fuses = Array.isArray(mission.state.fuses) ? mission.state.fuses : [];
+        const collected = Number(mission.state.fusesCollected) || fuses.filter((f) => f?.collected).length;
+        mission.state.fusesCollected = collected;
+
+        if (required <= 0 || powered >= required) return 'Power grid online. Reach the exit.';
+        if (collected < required) return `Collect fuses (${collected}/${required})`;
+        return `Restore power nodes (${powered}/${required})`;
+      }
       if (mission.template === 'uploadEvidence') {
         const required = Number(mission.state.required) || 0;
         const collected = Number(mission.state.collected) || 0;
@@ -5262,20 +7729,96 @@ export class MissionDirector {
           if (required > 0 && collected < required) {
             return `Collect evidence (${collected}/${required})`;
           }
+          const uploadSeconds = clamp(Math.round(mission.state.uploadSeconds ?? mission.params?.uploadSeconds ?? mission.params?.seconds ?? 0), 0, 600);
+          if (uploadSeconds > 0) {
+            if (mission.state.uploading) {
+              const progress = Math.max(0, Math.min(1, (Number(mission.state.uploadProgressSec) || 0) / uploadSeconds));
+              const pct = Math.round(progress * 100);
+              return `Upload evidence at the terminal (${pct}%)`;
+            }
+            return `Start upload at the terminal (${uploadSeconds}s)`;
+          }
           return 'Upload evidence at the terminal (E)';
         }
         return 'Evidence uploaded. Reach the exit.';
+      }
+      if (mission.template === 'blackoutZone') {
+        const required = Number(mission.state.required) || 0;
+        const restored = Number(mission.state.restored) || 0;
+        return `Restore lights in blackout zones (${restored}/${required})`;
       }
       if (mission.template === 'surviveTimer') {
         const remaining = Math.max(0, (mission.state.seconds || 0) - this.elapsedSec);
         const remainingSec = Math.ceil(remaining);
         return remaining > 0 ? `Survive (${remainingSec}s)` : 'Survive (done)';
       }
+      if (mission.template === 'surviveInZone') {
+        if (!mission.state.started) return 'Start the hold zone (E)';
+        const seconds = Number(mission.state.seconds) || 0;
+        const held = Number(mission.state.heldForSec) || 0;
+        const remaining = Math.max(0, seconds - held);
+        return remaining > 0 ? `Hold the zone (${Math.ceil(remaining)}s)` : 'Hold the zone (done)';
+      }
+      if (mission.template === 'occupyPoint') {
+        if (!mission.state.started) return 'Start the control point (E)';
+        if (mission.state.completed) return 'Control point secured. Reach the exit.';
+        const seconds = Number(mission.state.seconds) || 0;
+        const held = Number(mission.state.heldForSec) || 0;
+        const remaining = Math.max(0, seconds - held);
+        const activeUntil = Number(mission.state.hazardActiveUntilSec) || 0;
+        const hazardRemaining = activeUntil > 0 ? Math.max(0, activeUntil - this.elapsedSec) : 0;
+        const hazardLabel = hazardRemaining > 0 ? ` — hazard ${Math.ceil(hazardRemaining)}s` : '';
+        return remaining > 0 ? `Hold the point (${Math.ceil(remaining)}s)${hazardLabel}` : `Hold the point (done)${hazardLabel}`;
+      }
       if (mission.template === 'surviveNoDamage') {
         const start = Number.isFinite(mission.state.lastDamagedAtSec) ? mission.state.lastDamagedAtSec : 0;
         const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
         const remainingSec = Math.ceil(remaining);
         return remaining > 0 ? `Avoid damage (${remainingSec}s)` : 'Avoid damage (done)';
+      }
+      if (mission.template === 'lowHealthForSeconds') {
+        if (mission.state.completed) return 'Low health objective complete. Reach the exit.';
+        const seconds = Number(mission.state.seconds) || 0;
+        const underFor = Number(mission.state.underForSec) || 0;
+        const remaining = Math.max(0, seconds - underFor);
+        const threshold = clamp(Math.round(mission.state.healthPct ?? mission.params?.healthPct ?? 35), 1, 99);
+        const cur = Number(mission.state.currentHealthPct);
+        const hpLabel = Number.isFinite(cur) ? ` (HP ${Math.round(cur)}%)` : '';
+        return remaining > 0
+          ? `Stay under ${threshold}% HP (${Math.ceil(remaining)}s)${hpLabel}`
+          : `Stay under ${threshold}% HP (done)${hpLabel}`;
+      }
+      if (mission.template === 'noHitRun') {
+        if (mission.state.failed) return 'No-hit objective failed.';
+        if (mission.state.completed) return 'No-hit objective complete. Reach the exit.';
+        return 'Complete objectives without taking damage.';
+      }
+      if (mission.template === 'reclaimStolenItem') {
+        const label = String(mission.state.itemLabel || mission.params?.itemLabel || mission.params?.label || 'stolen item').trim() || 'stolen item';
+        if (mission.state.recovered) return `${label} recovered. Reach the exit.`;
+        if (mission.state.dropped) return `Recover ${label} (E)`;
+        const thiefId = Number(mission.state.thiefMonsterId);
+        if (Number.isFinite(thiefId) && thiefId > 0) return `Hunt the thief carrying ${label}`;
+        return `Locate the thief carrying ${label}`;
+      }
+      if (mission.template === 'hiddenTerminal') {
+        const label = String(mission.params?.label || 'Terminal').trim() || 'Terminal';
+        if (mission.state.completed) return `${label} accessed. Reach the exit.`;
+        const roomType = Number(mission.state.roomType);
+        const roomName = Number.isFinite(roomType) ? (ROOM_CONFIGS?.[roomType]?.name || 'target room') : 'target room';
+        return `Find the hidden ${label} (listen for the beep) — ${roomName}`;
+      }
+      if (mission.template === 'scanWaypoints') {
+        if (mission.state.completed) return 'Scans complete. Reach the exit.';
+        const required = Number(mission.state.required) || 0;
+        const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+        const done = targets.filter((t) => t?.completed).length;
+        mission.state.scanned = Math.min(required, done);
+        const seconds = Number(mission.state.seconds) || 0;
+        const radius = Number(mission.state.radius) || 0;
+        const suffix = seconds > 0 ? ` — hold ${seconds}s` : '';
+        const radiusLabel = radius > 0 ? ` within ${radius}` : '';
+        return `Scan sites (${done}/${required})${radiusLabel}${suffix}`;
       }
       if (mission.template === 'enterRoomType') {
         const roomLabel = formatRoomTypeList(mission.state.roomTypes);
@@ -5310,8 +7853,37 @@ export class MissionDirector {
         }
         return 'Keypad unlocked. Reach the exit.';
       }
+      if (mission.template === 'codeLockScan') {
+        const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+        const total = Number(mission.state.cluesTotal) || clues.length || 0;
+        const collected = Number(mission.state.cluesCollected) || clues.filter((c) => c?.collected).length;
+        const ordered = clues
+          .slice()
+          .sort((a, b) => String(a?.slot || '').localeCompare(String(b?.slot || '')))
+          .map((c) => `${String(c?.slot || '?')}=${c?.collected ? String(c?.digit ?? '?') : '?'}`)
+          .join(' ');
+
+        if (!mission.state.codeReady) {
+          return total > 0 ? `Find code notes (${collected}/${total}) — ${ordered}` : 'Find code notes';
+        }
+        if (!mission.state.unlocked) {
+          return `Use the keypad (E), enter code + Enter — ${ordered}`;
+        }
+
+        const required = Number(mission.state.scanRequired) || 0;
+        const scanned = Number(mission.state.scanned) || 0;
+        const seconds = Number(mission.state.scanSeconds) || 0;
+        const suffix = seconds > 0 ? ` — hold ${seconds}s` : '';
+        return required > 0 ? `Collect sample (${scanned}/${required})${suffix}` : 'Sample complete. Reach the exit.';
+      }
       if (mission.template === 'unlockExit') {
         return mission.state.unlocked ? 'Exit unlocked. Reach the exit.' : 'Unlock the exit (press E at the exit)';
+      }
+      if (mission.template === 'timedEvac') {
+        if (!mission.state.started) return 'Complete objectives to start evacuation.';
+        const until = Number(mission.state.untilSec) || 0;
+        const remaining = until > 0 ? Math.max(0, until - this.elapsedSec) : 0;
+        return remaining > 0 ? `Evacuate! (${Math.ceil(remaining)}s)` : 'Evacuate!';
       }
       if (mission.template === 'lockedDoor') {
         return mission.state.unlocked ? 'Door unlocked.' : 'Find a key and unlock the door';
@@ -5390,10 +7962,11 @@ export class MissionDirector {
         return 'Delivery complete. Reach the exit.';
       }
       if (mission.template === 'deliverFragile') {
-        if (mission.state.delivered) return 'Fragile delivery complete. Reach the exit.';
+        const pkgLabel = String(mission.params?.packageLabel || mission.params?.label || 'fragile package').trim() || 'fragile package';
+        if (mission.state.delivered) return `${pkgLabel} delivered. Reach the exit.`;
         return mission.state.carrying
-          ? 'Deliver the fragile package at the terminal (E)'
-          : 'Pick up the fragile package (E)';
+          ? `Deliver the ${pkgLabel} at the terminal (E)`
+          : `Pick up the ${pkgLabel} (E)`;
       }
       if (mission.template === 'switchSequenceWithClues') {
         const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
@@ -5446,6 +8019,11 @@ export class MissionDirector {
         if (mission.state.completed) return 'Escort complete. Reach the exit.';
         return mission.state.started ? 'Escort the survivor to the exit.' : 'Find the survivor and start the escort (E)';
       }
+      if (mission.template === 'escortRescue') {
+        if (mission.state.completed) return 'Rescue complete. Reach the exit.';
+        if (!mission.state.started) return 'Find the survivor and start the rescue (E)';
+        return 'Escort the survivor to the exit (monsters will track them).';
+      }
       if (mission.template === 'escortToSafeRoom') {
         if (mission.state.completed) return 'Escort complete. Reach the exit.';
         if (!mission.state.started) return 'Find the survivor and start the escort (E)';
@@ -5461,18 +8039,73 @@ export class MissionDirector {
       }
       if (mission.template === 'stealthNoise') {
         const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
-        const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
+        const baseSeconds = Number(mission.state.seconds) || 0;
+        const strikes = Math.max(0, Math.round(Number(mission.state.strikes) || 0));
+        const perStrike = Math.max(0, Math.round(Number(mission.state.penaltySecondsPerStrike) || 0));
+        const cap = Math.max(0, Math.round(Number(mission.state.maxPenaltySeconds) || 0));
+        const penalty = perStrike > 0 ? Math.min(cap, strikes * perStrike) : 0;
+        const seconds = baseSeconds + penalty;
+        const remaining = Math.max(0, seconds - (this.elapsedSec - start));
         const remainingSec = Math.ceil(remaining);
-        return remaining > 0 ? `Stay quiet (${remainingSec}s)` : 'Stay quiet (done)';
+        const maxNoiseStrength = mission.state.maxNoiseStrength;
+        const thresholdEnabled = Number.isFinite(maxNoiseStrength);
+        const limitPct = thresholdEnabled ? Math.round((Number(maxNoiseStrength) || 0) * 100) : null;
+        const maxStrikes = Number(mission.state.maxStrikes) || 0;
+        const strikesLabel = thresholdEnabled
+          ? (maxStrikes > 0 ? `, strikes ${strikes}/${maxStrikes}` : `, strikes ${strikes}`)
+          : '';
+        const limitLabel = thresholdEnabled ? `limit ${limitPct}%` : '';
+        const suffix = thresholdEnabled ? ` (${limitLabel}${strikesLabel})` : '';
+        return remaining > 0 ? `Stay quiet (${remainingSec}s)${suffix}` : `Stay quiet (done)${suffix}`;
       }
       if (mission.template === 'lureToSensor') {
-        if (mission.state.completed) return 'Sensor triggered. Reach the exit.';
-        if (!mission.state.armed) return 'Arm the sensor (E)';
+        const required = clamp(Math.round(mission.state.requiredTriggers ?? mission.params?.requiredTriggers ?? 1), 1, 12);
+        const triggered = clamp(Math.round(mission.state.triggered ?? 0), 0, required);
+        mission.state.requiredTriggers = required;
+        mission.state.triggered = triggered;
+
+        if (mission.state.completed) return `Sensor triggered (${triggered}/${required}). Reach the exit.`;
+
         const requireLure = mission.state.requireLure !== false;
         const until = Number(mission.state.lureUntilSec) || 0;
         const remaining = Math.max(0, until - this.elapsedSec);
-        if (requireLure && remaining <= 0) return 'Trigger the lure device (E)';
-        return remaining > 0 ? `Lure a monster to the sensor (${Math.ceil(remaining)}s)` : 'Lure a monster to the sensor';
+        const lureActive = !requireLure || (until > 0 && remaining > 0);
+
+        const cooldownUntil = Number(mission.state.cooldownUntilSec) || 0;
+        const cooldownRemaining = Math.max(0, cooldownUntil - this.elapsedSec);
+        if (cooldownRemaining > 0) {
+          return `Sensor cooling down (${Math.ceil(cooldownRemaining)}s) — lures (${triggered}/${required})`;
+        }
+
+        const requireClear = mission.state.requireClear !== false;
+        if (requireClear && mission.state.awaitingClear) {
+          return `Wait for the area to clear — lures (${triggered}/${required})`;
+        }
+
+        if (!mission.state.armed) return `Arm the sensor (E) — lures (${triggered}/${required})`;
+        if (requireLure && !lureActive) return `Trigger the lure device (E) — lures (${triggered}/${required})`;
+        return remaining > 0
+          ? `Lure a monster to the sensor (${Math.ceil(remaining)}s) — lures (${triggered}/${required})`
+          : `Lure a monster to the sensor — lures (${triggered}/${required})`;
+      }
+      if (mission.template === 'bossFinale') {
+        const phase = Math.max(0, Math.round(Number(mission.state.phase) || 0));
+        const nodesRemaining = Math.max(0, Math.round(Number(mission.state.nodesRemaining) || 0));
+        const nodesTotal = Math.max(0, Math.round(Number(mission.state.nodesTotal) || 0));
+        const hp = Math.max(0, Math.round(Number(mission.state.bossHealth) || 0));
+        const maxHp = Math.max(1, Math.round(Number(mission.state.bossMaxHealth) || 1));
+        const hpPct = clamp(Math.round((hp / maxHp) * 100), 0, 100);
+
+        if (phase <= 1) {
+          return `Destroy Shield Nodes (${nodesRemaining}/${nodesTotal})`;
+        }
+        if (phase === 2) {
+          return `Defeat the Core (HP ${hpPct}%)`;
+        }
+        const until = Number(mission.state.escapeUntilSec) || 0;
+        const remaining = until > 0 ? Math.max(0, until - (performance.now() / 1000)) : 0;
+        const remSec = Math.ceil(remaining);
+        return remaining > 0 ? `Escape! (${remSec}s)` : 'Escape!';
       }
       return mission.id;
     };
@@ -5505,6 +8138,19 @@ export class MissionDirector {
         total: mission.state.total || 0
       };
     }
+    if (mission.template === 'syncActivate') {
+      const total = Number(mission.state.total) || (Array.isArray(mission.state.switches) ? mission.state.switches.length : 0);
+      const activated = mission.state.activated?.size || 0;
+      const until = Number(mission.state.activeUntilSec) || 0;
+      const remaining = mission.state.started ? Math.max(0, until - this.elapsedSec) : 0;
+      return {
+        started: !!mission.state.started,
+        activated,
+        total,
+        windowSec: Number(mission.state.windowSec) || 0,
+        remaining
+      };
+    }
     if (mission.template === 'reroutePower') {
       const breakers = Array.isArray(mission.state.breakers) ? mission.state.breakers : [];
       const onCount = breakers.filter((b) => b?.on).length;
@@ -5533,24 +8179,167 @@ export class MissionDirector {
         panelGridPos: mission.state.panelGridPos || null
       };
     }
+    if (mission.template === 'powerGrid') {
+      const branches = Array.isArray(mission.state.branches) ? mission.state.branches : [];
+      const requiredPowered = Number(mission.state.requiredPowered) || branches.length || 0;
+      const powered = Number(mission.state.powered) || branches.filter((b) => b?.powered).length;
+      mission.state.requiredPowered = requiredPowered;
+      mission.state.powered = powered;
+
+      const fuses = Array.isArray(mission.state.fuses) ? mission.state.fuses : [];
+      const fusesCollected = Number(mission.state.fusesCollected) || fuses.filter((f) => f?.collected).length;
+      mission.state.fusesCollected = fusesCollected;
+
+      return {
+        total: branches.length,
+        requiredPowered,
+        powered,
+        fusesCollected,
+        fusesTotal: fuses.length,
+        itemId: mission.state.itemId || null
+      };
+    }
     if (mission.template === 'uploadEvidence') {
+      const uploadSeconds = clamp(Math.round(mission.state.uploadSeconds ?? mission.params?.uploadSeconds ?? mission.params?.seconds ?? 0), 0, 600);
       return {
         collected: mission.state.collected || 0,
         required: mission.state.required || 0,
         total: mission.state.total || 0,
         uploaded: !!mission.state.uploaded,
+        uploading: !!mission.state.uploading,
+        uploadSeconds,
+        uploadProgressSec: Number(mission.state.uploadProgressSec) || 0,
+        uploadRadius: Number(mission.state.uploadRadius) || 0,
         terminalId: mission.state.terminalId || null,
         terminalGridPos: mission.state.terminalGridPos || null
+      };
+    }
+    if (mission.template === 'blackoutZone') {
+      const zones = Array.isArray(mission.state.zones) ? mission.state.zones : [];
+      const required = Number(mission.state.required) || zones.length || 0;
+      const restored = Number(mission.state.restored) || zones.filter((z) => z?.restored).length;
+      mission.state.required = required;
+      mission.state.restored = restored;
+      return {
+        total: zones.length,
+        required,
+        restored,
+        radius: Number(mission.state.radius) || 0
       };
     }
     if (mission.template === 'surviveTimer') {
       const remaining = Math.max(0, (mission.state.seconds || 0) - this.elapsedSec);
       return { seconds: mission.state.seconds || 0, remaining, completed: !!mission.state.completed };
     }
+    if (mission.template === 'surviveInZone') {
+      const seconds = Number(mission.state.seconds) || 0;
+      const heldForSec = Number(mission.state.heldForSec) || 0;
+      const remaining = Math.max(0, seconds - heldForSec);
+      return {
+        started: !!mission.state.started,
+        seconds,
+        heldForSec,
+        remaining,
+        radius: Number(mission.state.radius) || 0,
+        exitGraceSec: Number(mission.state.exitGraceSec) || 0,
+        goalGridPos: mission.state.beaconGridPos || null,
+        beaconId: mission.state.beaconId || null,
+        beaconGridPos: mission.state.beaconGridPos || null,
+        completed: !!mission.state.completed
+      };
+    }
+    if (mission.template === 'occupyPoint') {
+      const seconds = Number(mission.state.seconds) || 0;
+      const heldForSec = Number(mission.state.heldForSec) || 0;
+      const remaining = Math.max(0, seconds - heldForSec);
+      const activeUntil = Number(mission.state.hazardActiveUntilSec) || 0;
+      const hazardRemaining = activeUntil > 0 ? Math.max(0, activeUntil - this.elapsedSec) : 0;
+      const nextAt = Number(mission.state.nextHazardAtSec) || 0;
+      const nextIn = nextAt > 0 ? Math.max(0, nextAt - this.elapsedSec) : null;
+      return {
+        started: !!mission.state.started,
+        seconds,
+        heldForSec,
+        remaining,
+        radius: Number(mission.state.radius) || 0,
+        exitGraceSec: Number(mission.state.exitGraceSec) || 0,
+        hazardIntervalSec: Number(mission.state.hazardIntervalSec) || 0,
+        hazardDurationSec: Number(mission.state.hazardDurationSec) || 0,
+        hazardDamage: Number(mission.state.hazardDamage) || 0,
+        hazardRemaining,
+        nextHazardIn: Number.isFinite(nextIn) ? nextIn : null,
+        beaconId: mission.state.beaconId || null,
+        beaconGridPos: mission.state.beaconGridPos || null,
+        completed: !!mission.state.completed
+      };
+    }
     if (mission.template === 'surviveNoDamage') {
       const start = Number.isFinite(mission.state.lastDamagedAtSec) ? mission.state.lastDamagedAtSec : 0;
       const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
       return { seconds: mission.state.seconds || 0, remaining, hits: mission.state.hits || 0, completed: !!mission.state.completed };
+    }
+    if (mission.template === 'lowHealthForSeconds') {
+      const seconds = Number(mission.state.seconds) || 0;
+      const underForSec = Number(mission.state.underForSec) || 0;
+      const remaining = Math.max(0, seconds - underForSec);
+      return {
+        seconds,
+        healthPct: Number(mission.state.healthPct) || 0,
+        currentHealthPct: Number.isFinite(Number(mission.state.currentHealthPct)) ? Number(mission.state.currentHealthPct) : null,
+        underForSec,
+        remaining,
+        completed: !!mission.state.completed
+      };
+    }
+    if (mission.template === 'noHitRun') {
+      return {
+        hits: Number(mission.state.hits) || 0,
+        failed: !!mission.state.failed,
+        loseOnHit: mission.state.loseOnHit !== false,
+        completed: !!mission.state.completed
+      };
+    }
+    if (mission.template === 'reclaimStolenItem') {
+      return {
+        itemId: String(mission.state.itemId || mission.params?.itemId || ''),
+        itemCount: Number(mission.state.itemCount) || 0,
+        itemLabel: String(mission.state.itemLabel || mission.params?.itemLabel || mission.params?.label || ''),
+        objectKind: String(mission.state.objectKind || mission.params?.objectKind || ''),
+        thiefMonsterId: Number(mission.state.thiefMonsterId) || null,
+        thiefHits: Number(mission.state.thiefHits) || 0,
+        dropOnHit: mission.state.dropOnHit === true,
+        hitsToDrop: Number(mission.state.hitsToDrop) || 0,
+        dropAtHealthPct: Number.isFinite(Number(mission.state.dropAtHealthPct)) ? Number(mission.state.dropAtHealthPct) : null,
+        dropped: !!mission.state.dropped,
+        recovered: !!mission.state.recovered,
+        dropId: mission.state.dropId || null,
+        dropGridPos: mission.state.dropGridPos || null
+      };
+    }
+    if (mission.template === 'hiddenTerminal') {
+      return {
+        completed: !!mission.state.completed,
+        terminalId: mission.state.terminalId || null,
+        terminalGridPos: mission.state.terminalGridPos || null,
+        roomType: Number.isFinite(Number(mission.state.roomType)) ? Number(mission.state.roomType) : null,
+        pingIntervalSec: Number(mission.state.pingIntervalSec) || 0,
+        revealMarkerAtHintTier: Number(mission.state.revealMarkerAtHintTier) || 0
+      };
+    }
+    if (mission.template === 'scanWaypoints') {
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      const required = Number(mission.state.required) || targets.length || 0;
+      const scanned = targets.filter((t) => t?.completed).length;
+      mission.state.required = required;
+      mission.state.scanned = Math.min(required, scanned);
+      return {
+        required,
+        scanned,
+        seconds: Number(mission.state.seconds) || 0,
+        radius: Number(mission.state.radius) || 0,
+        requireLOS: mission.state.requireLOS === true,
+        completed: !!mission.state.completed
+      };
     }
     if (mission.template === 'enterRoomType') {
       return {
@@ -5587,8 +8376,38 @@ export class MissionDirector {
         keypadGridPos: mission.state.keypadGridPos || null
       };
     }
+    if (mission.template === 'codeLockScan') {
+      const clues = Array.isArray(mission.state.clues) ? mission.state.clues : [];
+      const targets = Array.isArray(mission.state.scanTargets) ? mission.state.scanTargets : [];
+      const required = Number(mission.state.scanRequired) || targets.length || 0;
+      const scanned = Number(mission.state.scanned) || targets.filter((t) => t?.completed).length;
+      mission.state.scanRequired = required;
+      mission.state.scanned = Math.min(required, scanned);
+      return {
+        cluesCollected: Number(mission.state.cluesCollected) || clues.filter((c) => c?.collected).length,
+        cluesTotal: Number(mission.state.cluesTotal) || clues.length || 0,
+        codeReady: !!mission.state.codeReady,
+        unlocked: !!mission.state.unlocked,
+        keypadId: mission.state.keypadId || null,
+        keypadGridPos: mission.state.keypadGridPos || null,
+        scanSeconds: Number(mission.state.scanSeconds) || 0,
+        scanRequired: required,
+        scanned
+      };
+    }
     if (mission.template === 'unlockExit') {
       return { unlocked: !!mission.state.unlocked };
+    }
+    if (mission.template === 'timedEvac') {
+      const until = Number(mission.state.untilSec) || 0;
+      const remaining = until > 0 ? Math.max(0, until - this.elapsedSec) : null;
+      return {
+        started: !!mission.state.started,
+        seconds: Number(mission.state.seconds) || 0,
+        remaining: Number.isFinite(remaining) ? remaining : null,
+        untilSec: until > 0 ? until : null,
+        escalateMonsters: mission.state.escalateMonsters !== false
+      };
     }
     if (mission.template === 'lockedDoor') {
       return {
@@ -5711,6 +8530,26 @@ export class MissionDirector {
         breakOnDamage: mission.state.breakOnDamage !== false
       };
     }
+    if (mission.template === 'bossFinale') {
+      const phase = Math.max(0, Math.round(Number(mission.state.phase) || 0));
+      const nodesTotal = Math.max(0, Math.round(Number(mission.state.nodesTotal) || 0));
+      const nodesRemaining = Math.max(0, Math.round(Number(mission.state.nodesRemaining) || 0));
+      const bossMaxHealth = Math.max(1, Math.round(Number(mission.state.bossMaxHealth) || 1));
+      const bossHealth = Math.max(0, Math.round(Number(mission.state.bossHealth) || 0));
+      const shieldActive = mission.state.shieldActive === true;
+      const escapeUntilSec = Number(mission.state.escapeUntilSec) || 0;
+      const now = performance.now() / 1000;
+      const escapeRemaining = escapeUntilSec > 0 ? Math.max(0, escapeUntilSec - now) : 0;
+      return {
+        phase,
+        nodesTotal,
+        nodesRemaining,
+        bossHealth,
+        bossMaxHealth,
+        shieldActive,
+        escapeRemaining
+      };
+    }
     if (mission.template === 'switchSequence' || mission.template === 'switchSequenceWithClues') {
       const seq = Array.isArray(mission.state.sequence) ? mission.state.sequence : [];
       const idx = clamp(Math.round(mission.state.index ?? 0), 0, seq.length);
@@ -5769,6 +8608,17 @@ export class MissionDirector {
         followDistance: mission.state.followDistance || 1
       };
     }
+    if (mission.template === 'escortRescue') {
+      return {
+        started: !!mission.state.started,
+        completed: !!mission.state.completed,
+        escortGridPos: mission.state.escortGridPos || null,
+        goalGridPos: mission.state.goalGridPos || null,
+        followDistance: mission.state.followDistance || 1,
+        aggroNoiseIntervalSec: Number(mission.state.aggroNoiseIntervalSec) || 0,
+        aggroScentIntervalSec: Number(mission.state.aggroScentIntervalSec) || 0
+      };
+    }
     if (mission.template === 'escortToSafeRoom') {
       const waitSeconds = clamp(Math.round(mission.state.checkpointWaitSeconds ?? mission.params?.checkpointWaitSeconds ?? 3), 0, 120);
       const waitedSec = clamp(Math.round(mission.state.waitedSec ?? 0), 0, waitSeconds);
@@ -5788,11 +8638,23 @@ export class MissionDirector {
     }
     if (mission.template === 'stealthNoise') {
       const start = Number.isFinite(mission.state.lastNoiseAtSec) ? mission.state.lastNoiseAtSec : 0;
-      const remaining = Math.max(0, (mission.state.seconds || 0) - (this.elapsedSec - start));
+      const baseSeconds = Number(mission.state.seconds) || 0;
+      const strikes = Math.max(0, Math.round(Number(mission.state.strikes) || 0));
+      const perStrike = Math.max(0, Math.round(Number(mission.state.penaltySecondsPerStrike) || 0));
+      const cap = Math.max(0, Math.round(Number(mission.state.maxPenaltySeconds) || 0));
+      const penalty = perStrike > 0 ? Math.min(cap, strikes * perStrike) : 0;
+      const seconds = baseSeconds + penalty;
+      const remaining = Math.max(0, seconds - (this.elapsedSec - start));
       return {
-        seconds: mission.state.seconds || 0,
+        seconds: baseSeconds,
+        effectiveSeconds: seconds,
         remaining,
         gunshots: mission.state.gunshots || 0,
+        maxNoiseStrength: Number.isFinite(mission.state.maxNoiseStrength) ? Number(mission.state.maxNoiseStrength) : null,
+        strikes,
+        maxStrikes: Number(mission.state.maxStrikes) || 0,
+        penaltySecondsPerStrike: Number(mission.state.penaltySecondsPerStrike) || 0,
+        penaltySeconds: penalty,
         failed: !!mission.state.failed,
         completed: !!mission.state.completed
       };
@@ -5802,17 +8664,40 @@ export class MissionDirector {
       const until = Number(mission.state.lureUntilSec) || 0;
       const lureRemaining = Math.max(0, until - this.elapsedSec);
       const lureActive = !requireLure || (until > 0 && lureRemaining > 0);
+      const requiredTriggers = clamp(Math.round(mission.state.requiredTriggers ?? mission.params?.requiredTriggers ?? 1), 1, 12);
+      const triggered = clamp(Math.round(mission.state.triggered ?? 0), 0, requiredTriggers);
+      mission.state.requiredTriggers = requiredTriggers;
+      mission.state.triggered = triggered;
+
+      const cooldownUntil = Number(mission.state.cooldownUntilSec) || 0;
+      const cooldownRemaining = Math.max(0, cooldownUntil - this.elapsedSec);
+      const inCooldown = cooldownRemaining > 0;
+
+      const requireClear = mission.state.requireClear === undefined
+        ? (requiredTriggers > 1)
+        : (mission.state.requireClear !== false);
+      mission.state.requireClear = requireClear;
+
       const stage = mission.state.completed
         ? 'completed'
         : (!mission.state.armed
           ? 'arm'
-          : (requireLure && !lureActive ? 'trigger' : 'wait'));
+          : (inCooldown
+            ? 'cooldown'
+            : (requireClear && mission.state.awaitingClear
+              ? 'clear'
+              : (requireLure && !lureActive ? 'trigger' : 'wait'))));
       return {
         stage,
         armed: !!mission.state.armed,
         requireLure,
         lureRemaining,
         lureActive,
+        requiredTriggers,
+        triggered,
+        cooldownRemaining,
+        requireClear,
+        awaitingClear: !!mission.state.awaitingClear,
         sensorId: mission.state.sensorId || null,
         sensorGridPos: mission.state.sensorGridPos || null,
         lureId: mission.state.lureId || null,
@@ -5900,6 +8785,17 @@ export class MissionDirector {
             nowSec: this.elapsedSec
           });
         }
+      } else if (mission.template === 'noHitRun' && mission.state?.failed) {
+        if (!this.failedMissionIds.has(id)) {
+          this.failedMissionIds.add(id);
+          this.eventBus?.emit?.(EVENTS.MISSION_FAILED, {
+            missionId: id,
+            template: mission.template,
+            required: mission.required !== false,
+            reason: 'noHitRun',
+            nowSec: this.elapsedSec
+          });
+        }
       }
     }
   }
@@ -5930,6 +8826,12 @@ export class MissionDirector {
     }
 
     if (mission.template === 'restorePower') {
+      const switches = Array.isArray(mission.state.switches) ? mission.state.switches : [];
+      const next = switches.find((s) => s && !s.on && s.gridPos);
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+    }
+
+    if (mission.template === 'syncActivate') {
       const switches = Array.isArray(mission.state.switches) ? mission.state.switches : [];
       const next = switches.find((s) => s && !s.on && s.gridPos);
       return next ? { id: next.id || null, gridPos: next.gridPos } : null;
@@ -5981,6 +8883,28 @@ export class MissionDirector {
       return null;
     }
 
+    if (mission.template === 'powerGrid') {
+      const branches = Array.isArray(mission.state.branches) ? mission.state.branches : [];
+      const required = Number(mission.state.requiredPowered) || branches.length || 0;
+      const powered = Number(mission.state.powered) || branches.filter((b) => b?.powered).length;
+      mission.state.requiredPowered = required;
+      mission.state.powered = powered;
+      if (required <= 0 || powered >= required) return null;
+
+      const fuses = Array.isArray(mission.state.fuses) ? mission.state.fuses : [];
+      const collected = Number(mission.state.fusesCollected) || fuses.filter((f) => f?.collected).length;
+      mission.state.fusesCollected = collected;
+      if (collected < required) {
+        const pending = fuses.filter((f) => f && !f.collected && f.gridPos);
+        pending.sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
+        const next = pending[0] || null;
+        return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+      }
+
+      const nextBranch = branches.find((b) => b && !b.powered && b.panelId && b.panelGridPos) || null;
+      return nextBranch ? { id: nextBranch.panelId, gridPos: nextBranch.panelGridPos } : null;
+    }
+
     if (mission.template === 'uploadEvidence') {
       if (mission.state.uploaded) return null;
       const required = Number(mission.state.required) || 0;
@@ -5998,6 +8922,73 @@ export class MissionDirector {
         return { id: mission.state.terminalId, gridPos: mission.state.terminalGridPos };
       }
       return null;
+    }
+
+    if (mission.template === 'blackoutZone') {
+      const required = Number(mission.state.required) || 0;
+      const restored = Number(mission.state.restored) || 0;
+      if (required > 0 && restored >= required) return null;
+      const zones = Array.isArray(mission.state.zones) ? mission.state.zones : [];
+      const next = zones.find((z) => z && !z.restored && z.gridPos);
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
+    }
+
+    if (mission.template === 'surviveInZone') {
+      if (mission.state.completed) return null;
+      if (mission.state.beaconId && mission.state.beaconGridPos) {
+        return { id: mission.state.beaconId, gridPos: mission.state.beaconGridPos };
+      }
+      return null;
+    }
+
+    if (mission.template === 'occupyPoint') {
+      if (mission.state.completed) return null;
+      if (mission.state.beaconId && mission.state.beaconGridPos) {
+        return { id: mission.state.beaconId, gridPos: mission.state.beaconGridPos };
+      }
+      return null;
+    }
+
+    if (mission.template === 'reclaimStolenItem') {
+      if (mission.state.recovered) return null;
+
+      if (mission.state.dropped && mission.state.dropId && mission.state.dropGridPos) {
+        return { id: mission.state.dropId, gridPos: mission.state.dropGridPos };
+      }
+
+      const thiefId = Number(mission.state.thiefMonsterId);
+      if (Number.isFinite(thiefId) && thiefId > 0) {
+        const monsters = this.monsterManager?.getMonsters ? this.monsterManager.getMonsters() : [];
+        const monster = Array.isArray(monsters) ? monsters.find((m) => Number(m?.id) === thiefId) : null;
+        const gp = monster?.getGridPosition?.() || monster?.gridPos || null;
+        if (gp && Number.isFinite(gp.x) && Number.isFinite(gp.y)) {
+          return { id: `monster:${thiefId}`, gridPos: { x: gp.x, y: gp.y } };
+        }
+      }
+
+      return null;
+    }
+
+    if (mission.template === 'hiddenTerminal') {
+      if (mission.state.completed) return null;
+
+      const revealTier = clamp(Math.round(mission.state.revealMarkerAtHintTier ?? mission.params?.revealMarkerAtHintTier ?? 99), 0, 99);
+      const current = this.getCurrentRequiredMission();
+      const isCurrent = current?.id === mission.id && current?.template === mission.template;
+      const revealed = revealTier <= 0 || (isCurrent && (this.hintTier || 0) >= revealTier);
+      if (!revealed) return null;
+
+      if (mission.state.terminalId && mission.state.terminalGridPos) {
+        return { id: mission.state.terminalId, gridPos: mission.state.terminalGridPos };
+      }
+      return null;
+    }
+
+    if (mission.template === 'scanWaypoints') {
+      if (mission.state.completed) return null;
+      const targets = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+      const next = targets.find((t) => t && !t.completed && t.gridPos) || null;
+      return next ? { id: next.id || null, gridPos: next.gridPos } : null;
     }
 
     if (mission.template === 'codeLock') {
@@ -6118,6 +9109,26 @@ export class MissionDirector {
       const until = Number(mission.state.lureUntilSec) || 0;
       const lureActive = !requireLure || (until > 0 && this.elapsedSec <= until);
 
+      const requiredTriggers = clamp(Math.round(mission.state.requiredTriggers ?? mission.params?.requiredTriggers ?? 1), 1, 12);
+      const triggered = clamp(Math.round(mission.state.triggered ?? 0), 0, requiredTriggers);
+      mission.state.requiredTriggers = requiredTriggers;
+      mission.state.triggered = triggered;
+
+      if (requiredTriggers > 0 && triggered >= requiredTriggers) {
+        mission.state.completed = true;
+        return null;
+      }
+
+      const cooldownUntil = Number(mission.state.cooldownUntilSec) || 0;
+      const cooldownRemaining = Math.max(0, cooldownUntil - this.elapsedSec);
+      if (cooldownRemaining > 0) return null;
+
+      const requireClear = mission.state.requireClear === undefined
+        ? (requiredTriggers > 1)
+        : (mission.state.requireClear !== false);
+      mission.state.requireClear = requireClear;
+      if (requireClear && mission.state.awaitingClear) return null;
+
       if (!mission.state.armed && mission.state.sensorId && mission.state.sensorGridPos) {
         return { id: mission.state.sensorId, gridPos: mission.state.sensorGridPos };
       }
@@ -6206,6 +9217,14 @@ export class MissionDirector {
       return null;
     }
 
+    if (mission.template === 'escortRescue') {
+      if (mission.state.completed) return null;
+      if (!mission.state.started && mission.state.escortId && mission.state.escortGridPos) {
+        return { id: mission.state.escortId, gridPos: mission.state.escortGridPos };
+      }
+      return null;
+    }
+
     if (mission.template === 'escortToSafeRoom') {
       if (mission.state.completed) return null;
       if (!mission.state.started && mission.state.escortId && mission.state.escortGridPos) {
@@ -6215,6 +9234,12 @@ export class MissionDirector {
     }
 
     if (mission.template === 'unlockExit') {
+      const gp = this.exitPoint?.getGridPosition?.() || this.worldState?.getExitPoint?.() || null;
+      return { id: 'exit', gridPos: gp };
+    }
+
+    if (mission.template === 'timedEvac') {
+      if (!mission.state.started) return null;
       const gp = this.exitPoint?.getGridPosition?.() || this.worldState?.getExitPoint?.() || null;
       return { id: 'exit', gridPos: gp };
     }
@@ -6236,6 +9261,24 @@ export class MissionDirector {
         if (mission.state.found) continue;
         const gp = mission.state.gridPos;
         if (gp) targets.push({ collected: false, id: `keycard:${mission.id}`, gridPos: gp, missionId: mission.id, template: mission.template });
+      } else if (mission.template === 'bossFinale') {
+        const phase = Math.max(0, Math.round(Number(mission.state.phase) || 0));
+        if (phase <= 1) {
+          const boss = this.bossSystem?.getState ? this.bossSystem.getState() : null;
+          const tiles = Array.isArray(boss?.nodeTiles) ? boss.nodeTiles : [];
+          if (tiles.length > 0) {
+            for (const t of tiles) {
+              if (!t || !Number.isFinite(t.x) || !Number.isFinite(t.y)) continue;
+              targets.push({ collected: false, id: `bossNode:${t.x},${t.y}`, gridPos: { x: t.x, y: t.y }, missionId: mission.id, template: mission.template });
+            }
+          }
+        } else if (phase === 2) {
+          const boss = this.bossSystem?.getState ? this.bossSystem.getState() : null;
+          const gp = boss?.bossSpawnGrid || null;
+          if (gp && Number.isFinite(gp.x) && Number.isFinite(gp.y)) {
+            targets.push({ collected: false, id: 'bossCore', gridPos: { x: gp.x, y: gp.y }, missionId: mission.id, template: mission.template });
+          }
+        }
       } else if (mission.template === 'collectEvidence') {
         const need = (mission.state.required || 0) - (mission.state.collected || 0);
         if (need <= 0) continue;
@@ -6288,6 +9331,31 @@ export class MissionDirector {
         } else if (!mission.state.powered && mission.state.panelGridPos && mission.state.panelId) {
           targets.push({ collected: false, id: mission.state.panelId, gridPos: mission.state.panelGridPos, missionId: mission.id, template: mission.template });
         }
+      } else if (mission.template === 'powerGrid') {
+        const branches = Array.isArray(mission.state.branches) ? mission.state.branches : [];
+        const requiredPowered = Number(mission.state.requiredPowered) || branches.length || 0;
+        const powered = Number(mission.state.powered) || branches.filter((b) => b?.powered).length;
+        mission.state.requiredPowered = requiredPowered;
+        mission.state.powered = powered;
+        if (requiredPowered <= 0 || powered >= requiredPowered) continue;
+
+        const fuses = Array.isArray(mission.state.fuses) ? mission.state.fuses : [];
+        const fusesCollected = Number(mission.state.fusesCollected) || fuses.filter((f) => f?.collected).length;
+        mission.state.fusesCollected = fusesCollected;
+
+        if (fusesCollected < requiredPowered) {
+          for (const fuse of fuses) {
+            if (!fuse || fuse.collected) continue;
+            if (!fuse.gridPos) continue;
+            targets.push({ collected: false, id: fuse.id || null, gridPos: fuse.gridPos, missionId: mission.id, template: mission.template });
+          }
+        } else {
+          for (const br of branches) {
+            if (!br || br.powered) continue;
+            if (!br.panelGridPos) continue;
+            targets.push({ collected: false, id: br.panelId || null, gridPos: br.panelGridPos, missionId: mission.id, template: mission.template });
+          }
+        }
       } else if (mission.template === 'uploadEvidence') {
         if (mission.state.uploaded) continue;
         const required = Number(mission.state.required) || 0;
@@ -6302,6 +9370,21 @@ export class MissionDirector {
           }
         } else if (mission.state.terminalGridPos && mission.state.terminalId) {
           targets.push({ collected: false, id: mission.state.terminalId, gridPos: mission.state.terminalGridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'blackoutZone') {
+        const required = Number(mission.state.required) || 0;
+        const restored = Number(mission.state.restored) || 0;
+        if (required > 0 && restored >= required) continue;
+        const zones = Array.isArray(mission.state.zones) ? mission.state.zones : [];
+        for (const z of zones) {
+          if (!z || z.restored) continue;
+          if (!z.gridPos) continue;
+          targets.push({ collected: false, id: z.id || null, gridPos: z.gridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'surviveInZone' || mission.template === 'occupyPoint') {
+        if (mission.state.completed) continue;
+        if (mission.state.beaconGridPos && mission.state.beaconId) {
+          targets.push({ collected: false, id: mission.state.beaconId, gridPos: mission.state.beaconGridPos, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'codeLock') {
         if (mission.state.unlocked) continue;
@@ -6321,6 +9404,32 @@ export class MissionDirector {
         }
         if (mission.state.keyPicked && mission.state.doorId && mission.state.doorApproachGridPos) {
           targets.push({ collected: false, id: mission.state.doorId, gridPos: mission.state.doorApproachGridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'reclaimStolenItem') {
+        if (mission.state.recovered) continue;
+
+        if (mission.state.dropped && mission.state.dropId && mission.state.dropGridPos) {
+          targets.push({ collected: false, id: mission.state.dropId, gridPos: mission.state.dropGridPos, missionId: mission.id, template: mission.template });
+          continue;
+        }
+
+        const thiefId = Number(mission.state.thiefMonsterId);
+        if (!(Number.isFinite(thiefId) && thiefId > 0)) continue;
+
+        const monsters = this.monsterManager?.getMonsters ? this.monsterManager.getMonsters() : [];
+        const monster = Array.isArray(monsters) ? monsters.find((m) => Number(m?.id) === thiefId) : null;
+        const gp = monster?.getGridPosition?.() || monster?.gridPos || null;
+        if (!gp || !Number.isFinite(gp.x) || !Number.isFinite(gp.y)) continue;
+        targets.push({ collected: false, id: `monster:${thiefId}`, gridPos: { x: gp.x, y: gp.y }, missionId: mission.id, template: mission.template });
+      } else if (mission.template === 'hiddenTerminal') {
+        if (mission.state.completed) continue;
+        const revealTier = clamp(Math.round(mission.state.revealMarkerAtHintTier ?? mission.params?.revealMarkerAtHintTier ?? 99), 0, 99);
+        const current = this.getCurrentRequiredMission();
+        const isCurrent = current?.id === mission.id && current?.template === mission.template;
+        const revealed = revealTier <= 0 || (isCurrent && (this.hintTier || 0) >= revealTier);
+        if (!revealed) continue;
+        if (mission.state.terminalId && mission.state.terminalGridPos) {
+          targets.push({ collected: false, id: mission.state.terminalId, gridPos: mission.state.terminalGridPos, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'doorLockNetwork') {
         const doors = Array.isArray(mission.state.doors) ? mission.state.doors : [];
@@ -6408,6 +9517,14 @@ export class MissionDirector {
           if (!point?.gridPos) continue;
           targets.push({ collected: false, id: point.id || null, gridPos: point.gridPos, missionId: mission.id, template: mission.template });
         }
+      } else if (mission.template === 'scanWaypoints') {
+        if (mission.state.completed) continue;
+        const points = Array.isArray(mission.state.targets) ? mission.state.targets : [];
+        for (const point of points) {
+          if (point?.completed) continue;
+          if (!point?.gridPos) continue;
+          targets.push({ collected: false, id: point.id || null, gridPos: point.gridPos, missionId: mission.id, template: mission.template });
+        }
       } else if (mission.template === 'deliverItemToTerminal') {
         if (mission.state.delivered) continue;
         const required = Number(mission.state.required) || 0;
@@ -6468,12 +9585,30 @@ export class MissionDirector {
         const until = Number(mission.state.lureUntilSec) || 0;
         const lureActive = !requireLure || (until > 0 && this.elapsedSec <= until);
 
+        const requiredTriggers = clamp(Math.round(mission.state.requiredTriggers ?? mission.params?.requiredTriggers ?? 1), 1, 12);
+        const triggered = clamp(Math.round(mission.state.triggered ?? 0), 0, requiredTriggers);
+        mission.state.requiredTriggers = requiredTriggers;
+        mission.state.triggered = triggered;
+
+        if (requiredTriggers > 0 && triggered >= requiredTriggers) {
+          mission.state.completed = true;
+          continue;
+        }
+
+        const cooldownUntil = Number(mission.state.cooldownUntilSec) || 0;
+        const cooldownRemaining = Math.max(0, cooldownUntil - this.elapsedSec);
+        if (cooldownRemaining > 0) continue;
+
+        const requireClear = mission.state.requireClear === undefined
+          ? (requiredTriggers > 1)
+          : (mission.state.requireClear !== false);
+        mission.state.requireClear = requireClear;
+        if (requireClear && mission.state.awaitingClear) continue;
+
         if (!mission.state.armed && mission.state.sensorId && mission.state.sensorGridPos) {
           targets.push({ collected: false, id: mission.state.sensorId, gridPos: mission.state.sensorGridPos, missionId: mission.id, template: mission.template });
         } else if (requireLure && !lureActive && mission.state.lureId && mission.state.lureGridPos) {
           targets.push({ collected: false, id: mission.state.lureId, gridPos: mission.state.lureGridPos, missionId: mission.id, template: mission.template });
-        } else if (mission.state.sensorId && mission.state.sensorGridPos) {
-          targets.push({ collected: false, id: mission.state.sensorId, gridPos: mission.state.sensorGridPos, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'hideForSeconds') {
         if (mission.state.completed) continue;
@@ -6496,6 +9631,12 @@ export class MissionDirector {
           targets.push({ collected: false, id: entry.id || null, gridPos: entry.gridPos, missionId: mission.id, template: mission.template });
         }
       } else if (mission.template === 'escort') {
+        if (mission.state.completed) continue;
+        if (mission.state.started) continue;
+        if (mission.state.escortId && mission.state.escortGridPos) {
+          targets.push({ collected: false, id: mission.state.escortId, gridPos: mission.state.escortGridPos, missionId: mission.id, template: mission.template });
+        }
+      } else if (mission.template === 'escortRescue') {
         if (mission.state.completed) continue;
         if (mission.state.started) continue;
         if (mission.state.escortId && mission.state.escortGridPos) {

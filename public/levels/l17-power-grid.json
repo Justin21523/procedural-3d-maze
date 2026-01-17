@@ -1,0 +1,81 @@
+{
+  "id": 17,
+  "name": "L17 - Power Grid Lockdown",
+  "maze": { "width": 29, "height": 29, "roomDensity": 2.9, "extraConnectionChance": 0.11 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.4,
+      "CLASSROOMS_BLOCK": 1.5,
+      "OFFICE": 1.5,
+      "LAB": 1.35,
+      "STORAGE": 1.2,
+      "CAFETERIA": 0.7,
+      "BATHROOM": 0.65,
+      "LIBRARY": 0.6,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 6,
+    "maxCount": 8,
+    "speedMultiplier": 1.06,
+    "visionMultiplier": 0.98,
+    "memoryMultiplier": 1.0,
+    "typeWeights": { "WANDERER": 0.24, "HUNTER": 0.46, "SENTINEL": 0.2, "STALKER": 0.08, "GREETER": 0.02 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 70
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "grid",
+        "template": "powerGrid",
+        "required": true,
+        "params": {
+          "branches": 3,
+          "requiredPowered": 3,
+          "itemId": "fuse",
+          "roomTypesPanels": ["LAB", "STORAGE", "OFFICE"],
+          "roomTypesFuses": ["STORAGE", "LAB", "OFFICE"],
+          "minDistFromSpawn": 7,
+          "minDoorDist": 7,
+          "zoneRadius": 11,
+          "hints": [
+            "Collect fuses to power up the grid nodes.",
+            "Install a fuse at a node (E), then press E again to turn it on.",
+            "Each node restores a dark zone and can unlock a powered door."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["grid", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.46,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+

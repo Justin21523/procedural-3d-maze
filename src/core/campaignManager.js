@@ -21,7 +21,7 @@ function formatSeconds(sec) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function computeLevelScore(stats = null, weights = null) {
+export function computeLevelScore(stats = null, weights = null) {
   const w = {
     time: 14,
     steps: 1.6,
@@ -60,6 +60,9 @@ export class CampaignManager {
 
     const state = {
       ...base,
+      permanent: raw.permanent && typeof raw.permanent === 'object'
+        ? { ...base.permanent, ...raw.permanent }
+        : base.permanent,
       run: {
         ...base.run,
         ...(raw.run && typeof raw.run === 'object' ? raw.run : {}),
@@ -73,6 +76,8 @@ export class CampaignManager {
     state.run.failures = clampInt(state.run.failures ?? 0, 0, this.failureLimit);
     if (!Array.isArray(state.run.levelResults)) state.run.levelResults = [];
     if (!Array.isArray(state.run.levelAttempts)) state.run.levelAttempts = [];
+    if (!Array.isArray(state.run.levelMutators)) state.run.levelMutators = [];
+    if (!Array.isArray(state.permanent?.mutatorsUnlocked)) state.permanent.mutatorsUnlocked = [];
 
     return state;
   }
@@ -89,7 +94,11 @@ export class CampaignManager {
     return {
       version: 1,
       run: this.defaultRun(),
-      lastRunSummary: null
+      lastRunSummary: null,
+      permanent: {
+        version: 1,
+        mutatorsUnlocked: []
+      }
     };
   }
 
@@ -102,7 +111,8 @@ export class CampaignManager {
       currentLevelIndex: 0,
       failures: 0,
       levelAttempts: [],
-      levelResults: [] // index -> { name, stats, score }
+      levelResults: [], // index -> { name, stats, score }
+      levelMutators: [] // index -> string[] mutator ids (stable within run)
     };
   }
 

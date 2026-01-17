@@ -1,0 +1,82 @@
+{
+  "id": 15,
+  "name": "L15 - Heavy Courier",
+  "maze": { "width": 31, "height": 31, "roomDensity": 3.0, "extraConnectionChance": 0.12 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.4,
+      "CLASSROOMS_BLOCK": 1.7,
+      "OFFICE": 1.8,
+      "LAB": 1.4,
+      "STORAGE": 1.2,
+      "BATHROOM": 0.7,
+      "CAFETERIA": 0.7,
+      "LIBRARY": 0.6,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 6,
+    "maxCount": 9,
+    "speedMultiplier": 1.08,
+    "visionMultiplier": 1.02,
+    "memoryMultiplier": 1.02,
+    "typeWeights": { "WANDERER": 0.2, "HUNTER": 0.45, "SENTINEL": 0.2, "STALKER": 0.15 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 75
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "heavy",
+        "template": "deliverFragile",
+        "required": true,
+        "params": {
+          "itemId": "heavy_crate",
+          "packageLabel": "heavy crate",
+          "terminalLabel": "Cargo Terminal",
+          "breakOnGunfire": false,
+          "breakOnDamage": false,
+          "carrySpeedMult": 0.7,
+          "carryDisableSprint": true,
+          "roomTypesItems": ["STORAGE", "LAB", "OFFICE"],
+          "roomTypesTerminal": ["OFFICE", "LAB"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Pick up the heavy crate and deliver it to the cargo terminal.",
+            "While carrying, you move slower and cannot sprint—plan a safer route.",
+            "Use lure/jammer/smoke to create space before you commit to corridors."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["heavy", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["MISSION_HINT", "EXTRA_HEART", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 6,
+    "replanInterval": 0.45,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.65
+  }
+}

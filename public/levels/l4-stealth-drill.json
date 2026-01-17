@@ -17,6 +17,27 @@
       "BEDROOM": 0.38
     }
   },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "medical": {
+        "enabled": true,
+        "count": 1,
+        "healAmount": 24,
+        "charges": 1,
+        "minDistFromSpawn": 8,
+        "makeNoise": true
+      },
+      "control": {
+        "enabled": true,
+        "count": 1,
+        "revealSeconds": 8,
+        "charges": 1,
+        "minDistFromSpawn": 9,
+        "makeNoise": true
+      }
+    }
+  },
   "monsters": {
     "count": 4,
     "maxCount": 6,
@@ -33,45 +54,16 @@
     "timeLimitSec": 0,
     "list": [
       {
-        "id": "sequence",
-        "template": "enterRoomSequence",
-        "required": true,
-        "params": {
-          "sequence": ["BATHROOM", "OFFICE", "LAB"],
-          "resetOnWrong": true,
-          "ignoreCorridor": true,
-          "hints": [
-            "Enter the required room types in order.",
-            "Corridors won't reset the sequence.",
-            "If you step into the wrong sequence room type, it resets."
-          ]
-        }
-      },
-      {
         "id": "quiet",
         "template": "stealthNoise",
         "required": true,
         "params": {
-          "seconds": 18,
+          "seconds": 14,
           "resetOnGunshot": true,
           "maxGunshotsTotal": 4,
           "hints": [
             "Stay quiet until the timer completes.",
-            "Gunshots reset the timer, so avoid firing unless you must."
-          ]
-        }
-      },
-      {
-        "id": "keycard",
-        "template": "findKeycard",
-        "required": true,
-        "params": {
-          "roomTypes": ["LIBRARY", "OFFICE"],
-          "minDistFromSpawn": 6,
-          "label": "Pick up Keycard",
-          "hints": [
-            "Search Libraries/Offices for the keycard.",
-            "Use cover and break line of sight to keep noise low."
+            "Avoid sprinting and gunfire unless you must."
           ]
         }
       },
@@ -87,7 +79,7 @@
         }
       }
     ],
-    "exit": { "requires": ["sequence", "quiet", "keycard", "unlockExit"] }
+    "exit": { "requires": ["quiet", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,

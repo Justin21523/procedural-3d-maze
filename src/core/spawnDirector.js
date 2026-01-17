@@ -3,6 +3,59 @@ import { MonsterTypes } from '../ai/monsterTypes.js';
 import { EVENTS } from './events.js';
 import { gridToWorldCenter, pickDistinctTiles } from './missions/missionUtils.js';
 
+const ATTACHMENT_DROP_KINDS = Object.freeze([
+  'weaponmod_silencer',
+  'weaponmod_extendedMag',
+  'weaponmod_quickReload',
+  'weaponmod_armorPiercing',
+  'weaponmod_stabilizer',
+]);
+
+function pickAttachmentKind(gun) {
+  const fallback = ATTACHMENT_DROP_KINDS[Math.floor(Math.random() * ATTACHMENT_DROP_KINDS.length)];
+  if (!gun?.weaponOrder || !gun?.weaponDefs) return fallback;
+
+  const activeId = gun.activeWeaponId || null;
+  const order = Array.isArray(gun.weaponOrder) ? gun.weaponOrder : [];
+  const defs = gun.weaponDefs || {};
+  const weapons = order.map((id) => ({ id, def: defs[id] || null })).filter((w) => w.id && w.def);
+  if (weapons.length === 0) return fallback;
+
+  const scoreForMod = (weaponId, modId) => {
+    const mods = typeof gun.getWeaponMods === 'function' ? gun.getWeaponMods(weaponId) : [];
+    if (mods.includes(modId)) return -100;
+    const slots = typeof gun.getWeaponModSlots === 'function' ? gun.getWeaponModSlots(defs[weaponId]) : 2;
+    const hasSpace = slots <= 0 ? true : mods.length < slots;
+    return hasSpace ? 10 : 3;
+  };
+
+  // Prefer mods that the active weapon doesn't have (and can still meaningfully use).
+  const activeCandidates = activeId
+    ? ATTACHMENT_DROP_KINDS
+      .map((m) => ({ id: m, score: scoreForMod(activeId, m) + 8 }))
+      .filter((e) => e.score > -50)
+    : [];
+  if (activeCandidates.length > 0) {
+    activeCandidates.sort((a, b) => b.score - a.score);
+    const top = activeCandidates.filter((e) => e.score >= activeCandidates[0].score - 2);
+    return top[Math.floor(Math.random() * top.length)].id;
+  }
+
+  // Otherwise, pick a mod that helps at least one weapon.
+  const scored = ATTACHMENT_DROP_KINDS.map((m) => {
+    let best = -Infinity;
+    for (const w of weapons) {
+      best = Math.max(best, scoreForMod(w.id, m));
+    }
+    return { id: m, score: best };
+  }).filter((e) => e.score > -50);
+
+  if (scored.length === 0) return fallback;
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored.filter((e) => e.score >= scored[0].score - 2);
+  return top[Math.floor(Math.random() * top.length)].id;
+}
+
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
@@ -228,9 +281,19 @@ export class SpawnDirector {
     const startJammer = toCount(start?.jammer, CONFIG.SPAWN_DIRECTOR_START_TOOL_JAMMER ?? 1);
     const startDecoy = toCount(start?.decoy, CONFIG.SPAWN_DIRECTOR_START_TOOL_DECOY ?? 0);
     const startSmoke = toCount(start?.smoke, CONFIG.SPAWN_DIRECTOR_START_TOOL_SMOKE ?? 0);
+    const startSmokeWeak = toCount(start?.smoke_weak, 0);
+    const startSmokeStrong = toCount(start?.smoke_strong, 0);
     const startFlash = toCount(start?.flash, CONFIG.SPAWN_DIRECTOR_START_TOOL_FLASH ?? 0);
     const startSensor = toCount(start?.sensor, CONFIG.SPAWN_DIRECTOR_START_TOOL_SENSOR ?? 0);
     const startMine = toCount(start?.mine, CONFIG.SPAWN_DIRECTOR_START_TOOL_MINE ?? 0);
+    const startScentSpray = toCount(start?.scent_spray, 0);
+    const startLureSticky = toCount(start?.lure_sticky, 0);
+    const startDoorWedge = toCount(start?.door_wedge, 0);
+    const startGlowstick = toCount(start?.glowstick, 0);
+    const startSonar = toCount(start?.sonar_pulse, 0);
+    const startDecoyDelay = toCount(start?.decoy_delay, 0);
+    const startEmpCharge = toCount(start?.emp_charge, 0);
+    const startFakeHack = toCount(start?.fake_hack, 0);
 
     const enabled = drop?.enabled === false ? false : true;
     const chance = enabled
@@ -245,13 +308,65 @@ export class SpawnDirector {
     const wJammer = normalizeWeight(weightsRaw?.jammer, 0);
     const wDecoy = normalizeWeight(weightsRaw?.decoy, 0);
     const wSmoke = normalizeWeight(weightsRaw?.smoke, 0);
+    const wSmokeWeak = normalizeWeight(weightsRaw?.smoke_weak, 0);
+    const wSmokeStrong = normalizeWeight(weightsRaw?.smoke_strong, 0);
     const wFlash = normalizeWeight(weightsRaw?.flash, 0);
     const wSensor = normalizeWeight(weightsRaw?.sensor, 0);
     const wMine = normalizeWeight(weightsRaw?.mine, 0);
-    const wSum = wLure + wTrap + wJammer + wDecoy + wSmoke + wFlash + wSensor + wMine;
-    const defaultWeights = { lure: 0.35, trap: 0.25, jammer: 0.15, decoy: 0.1, smoke: 0.08, flash: 0.06, sensor: 0.06, mine: 0.05 };
+    const wScentSpray = normalizeWeight(weightsRaw?.scent_spray, 0);
+    const wLureSticky = normalizeWeight(weightsRaw?.lure_sticky, 0);
+    const wDoorWedge = normalizeWeight(weightsRaw?.door_wedge, 0);
+    const wGlowstick = normalizeWeight(weightsRaw?.glowstick, 0);
+    const wSonar = normalizeWeight(weightsRaw?.sonar_pulse, 0);
+    const wDecoyDelay = normalizeWeight(weightsRaw?.decoy_delay, 0);
+    const wEmpCharge = normalizeWeight(weightsRaw?.emp_charge, 0);
+    const wFakeHack = normalizeWeight(weightsRaw?.fake_hack, 0);
+
+    const wSum =
+      wLure + wTrap + wJammer + wDecoy + wSmoke + wSmokeWeak + wSmokeStrong + wFlash + wSensor + wMine +
+      wScentSpray + wLureSticky + wDoorWedge + wGlowstick + wSonar + wDecoyDelay + wEmpCharge + wFakeHack;
+
+    const defaultWeights = {
+      lure: 0.28,
+      trap: 0.2,
+      jammer: 0.12,
+      decoy: 0.08,
+      smoke: 0.06,
+      smoke_weak: 0.03,
+      smoke_strong: 0.02,
+      flash: 0.05,
+      sensor: 0.05,
+      mine: 0.04,
+      scent_spray: 0.03,
+      lure_sticky: 0.03,
+      door_wedge: 0.03,
+      glowstick: 0.03,
+      sonar_pulse: 0.02,
+      decoy_delay: 0.02,
+      emp_charge: 0.02,
+      fake_hack: 0.02
+    };
     const weights = wSum > 0
-      ? { lure: wLure, trap: wTrap, jammer: wJammer, decoy: wDecoy, smoke: wSmoke, flash: wFlash, sensor: wSensor, mine: wMine }
+      ? {
+        lure: wLure,
+        trap: wTrap,
+        jammer: wJammer,
+        decoy: wDecoy,
+        smoke: wSmoke,
+        smoke_weak: wSmokeWeak,
+        smoke_strong: wSmokeStrong,
+        flash: wFlash,
+        sensor: wSensor,
+        mine: wMine,
+        scent_spray: wScentSpray,
+        lure_sticky: wLureSticky,
+        door_wedge: wDoorWedge,
+        glowstick: wGlowstick,
+        sonar_pulse: wSonar,
+        decoy_delay: wDecoyDelay,
+        emp_charge: wEmpCharge,
+        fake_hack: wFakeHack
+      }
       : defaultWeights;
 
     // Back-compat / human-error guard: if a level specifies tool weights but forgets the newer tools,
@@ -262,6 +377,8 @@ export class SpawnDirector {
       if (!mentionsNewToolKey) {
         weights.decoy = Math.max(weights.decoy || 0, defaultWeights.decoy);
         weights.smoke = Math.max(weights.smoke || 0, defaultWeights.smoke);
+        weights.smoke_weak = Math.max(weights.smoke_weak || 0, defaultWeights.smoke_weak);
+        weights.smoke_strong = Math.max(weights.smoke_strong || 0, defaultWeights.smoke_strong);
         weights.flash = Math.max(weights.flash || 0, defaultWeights.flash);
         weights.sensor = Math.max(weights.sensor || 0, defaultWeights.sensor);
         weights.mine = Math.max(weights.mine || 0, defaultWeights.mine);
@@ -275,9 +392,19 @@ export class SpawnDirector {
         jammer: startJammer,
         decoy: startDecoy,
         smoke: startSmoke,
+        smoke_weak: startSmokeWeak,
+        smoke_strong: startSmokeStrong,
         flash: startFlash,
         sensor: startSensor,
-        mine: startMine
+        mine: startMine,
+        scent_spray: startScentSpray,
+        lure_sticky: startLureSticky,
+        door_wedge: startDoorWedge,
+        glowstick: startGlowstick,
+        sonar_pulse: startSonar,
+        decoy_delay: startDecoyDelay,
+        emp_charge: startEmpCharge,
+        fake_hack: startFakeHack
       },
       drop: { chance, ttl, weights }
     };
@@ -291,9 +418,19 @@ export class SpawnDirector {
       { kind: 'jammer', weight: normalizeWeight(w.jammer, 0) },
       { kind: 'decoy', weight: normalizeWeight(w.decoy, 0) },
       { kind: 'smoke', weight: normalizeWeight(w.smoke, 0) },
+      { kind: 'smoke_weak', weight: normalizeWeight(w.smoke_weak, 0) },
+      { kind: 'smoke_strong', weight: normalizeWeight(w.smoke_strong, 0) },
       { kind: 'flash', weight: normalizeWeight(w.flash, 0) },
       { kind: 'sensor', weight: normalizeWeight(w.sensor, 0) },
       { kind: 'mine', weight: normalizeWeight(w.mine, 0) },
+      { kind: 'scent_spray', weight: normalizeWeight(w.scent_spray, 0) },
+      { kind: 'lure_sticky', weight: normalizeWeight(w.lure_sticky, 0) },
+      { kind: 'door_wedge', weight: normalizeWeight(w.door_wedge, 0) },
+      { kind: 'glowstick', weight: normalizeWeight(w.glowstick, 0) },
+      { kind: 'sonar_pulse', weight: normalizeWeight(w.sonar_pulse, 0) },
+      { kind: 'decoy_delay', weight: normalizeWeight(w.decoy_delay, 0) },
+      { kind: 'emp_charge', weight: normalizeWeight(w.emp_charge, 0) },
+      { kind: 'fake_hack', weight: normalizeWeight(w.fake_hack, 0) },
     ].filter((e) => e.weight > 0);
     if (entries.length === 0) return 'lure';
     return (pickWeighted(entries) || entries[0]).kind || 'lure';
@@ -312,9 +449,19 @@ export class SpawnDirector {
     const jammerCount = toCount(settings?.start?.jammer, 0);
     const decoyCount = toCount(settings?.start?.decoy, 0);
     const smokeCount = toCount(settings?.start?.smoke, 0);
+    const smokeWeakCount = toCount(settings?.start?.smoke_weak, 0);
+    const smokeStrongCount = toCount(settings?.start?.smoke_strong, 0);
     const flashCount = toCount(settings?.start?.flash, 0);
     const sensorCount = toCount(settings?.start?.sensor, 0);
     const mineCount = toCount(settings?.start?.mine, 0);
+    const scentSprayCount = toCount(settings?.start?.scent_spray, 0);
+    const lureStickyCount = toCount(settings?.start?.lure_sticky, 0);
+    const doorWedgeCount = toCount(settings?.start?.door_wedge, 0);
+    const glowstickCount = toCount(settings?.start?.glowstick, 0);
+    const sonarCount = toCount(settings?.start?.sonar_pulse, 0);
+    const decoyDelayCount = toCount(settings?.start?.decoy_delay, 0);
+    const empChargeCount = toCount(settings?.start?.emp_charge, 0);
+    const fakeHackCount = toCount(settings?.start?.fake_hack, 0);
 
     const kinds = [];
     for (let i = 0; i < lureCount; i++) kinds.push('lure');
@@ -322,9 +469,19 @@ export class SpawnDirector {
     for (let i = 0; i < jammerCount; i++) kinds.push('jammer');
     for (let i = 0; i < decoyCount; i++) kinds.push('decoy');
     for (let i = 0; i < smokeCount; i++) kinds.push('smoke');
+    for (let i = 0; i < smokeWeakCount; i++) kinds.push('smoke_weak');
+    for (let i = 0; i < smokeStrongCount; i++) kinds.push('smoke_strong');
     for (let i = 0; i < flashCount; i++) kinds.push('flash');
     for (let i = 0; i < sensorCount; i++) kinds.push('sensor');
     for (let i = 0; i < mineCount; i++) kinds.push('mine');
+    for (let i = 0; i < scentSprayCount; i++) kinds.push('scent_spray');
+    for (let i = 0; i < lureStickyCount; i++) kinds.push('lure_sticky');
+    for (let i = 0; i < doorWedgeCount; i++) kinds.push('door_wedge');
+    for (let i = 0; i < glowstickCount; i++) kinds.push('glowstick');
+    for (let i = 0; i < sonarCount; i++) kinds.push('sonar_pulse');
+    for (let i = 0; i < decoyDelayCount; i++) kinds.push('decoy_delay');
+    for (let i = 0; i < empChargeCount; i++) kinds.push('emp_charge');
+    for (let i = 0; i < fakeHackCount; i++) kinds.push('fake_hack');
     if (kinds.length === 0) return;
     shuffleInPlace(kinds);
 
@@ -432,6 +589,19 @@ export class SpawnDirector {
       return;
     }
 
+    const attachmentChance = toChance(CONFIG.SPAWN_DIRECTOR_ATTACHMENT_DROP_CHANCE, 0.05);
+    if (attachmentChance > 0 && Math.random() < attachmentChance) {
+      const kind = pickAttachmentKind(this.gun);
+      const attachmentTtl = toPositiveNumber(CONFIG.SPAWN_DIRECTOR_ATTACHMENT_PICKUP_TTL, 38);
+      this.eventBus?.emit?.(EVENTS.PICKUP_SPAWN_REQUESTED, {
+        kind,
+        position: pos,
+        amount: 1,
+        ttl: attachmentTtl
+      });
+      return;
+    }
+
     // Small universal drop chance
     if (baseRoll < 0.07) {
       const kind = Math.random() < 0.5 ? 'ammo' : 'health';
@@ -457,7 +627,8 @@ export class SpawnDirector {
 
     this.waveCooldown = Math.max(0, this.waveCooldown - dt);
 
-    const alive = this.monsterManager.getMonsters?.().length || 0;
+    const allMonsters = this.monsterManager.getMonsters?.() || [];
+    const alive = allMonsters.filter((m) => m && !m.isDead && !m.isBoss).length;
     if (alive >= this.targetAlive) return;
 
     const budgetRate = CONFIG.SPAWN_DIRECTOR_BUDGET_RATE ?? 2.4;
@@ -637,7 +808,8 @@ export class SpawnDirector {
     const roles = ['leader', 'flanker', 'cover'].slice(0, desired);
 
     const candidates = this.getTypeCandidates();
-    const aliveCounts = countByTypeId(this.monsterManager?.getMonsters?.() || []);
+    const allMonsters = this.monsterManager?.getMonsters?.() || [];
+    const aliveCounts = countByTypeId(allMonsters.filter((m) => m && !m.isDead && !m.isBoss));
     const waveCounts = new Map();
     const avoidIds = new Set();
 

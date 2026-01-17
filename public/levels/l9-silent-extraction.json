@@ -17,6 +17,35 @@
       "BEDROOM": 0.35
     }
   },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "medical": {
+        "enabled": true,
+        "count": 1,
+        "healAmount": 32,
+        "charges": 2,
+        "minDistFromSpawn": 10,
+        "makeNoise": true
+      },
+      "armory": {
+        "enabled": true,
+        "count": 1,
+        "ammoAmount": 60,
+        "toolCount": 2,
+        "charges": 1,
+        "minDistFromSpawn": 10
+      },
+      "control": {
+        "enabled": true,
+        "count": 1,
+        "revealSeconds": 12,
+        "charges": 1,
+        "minDistFromSpawn": 11,
+        "makeNoise": true
+      }
+    }
+  },
   "monsters": {
     "count": 7,
     "maxCount": 9,
@@ -30,48 +59,18 @@
     "missionObjectsMax": 75
   },
   "missions": {
-    "timeLimitSec": 720,
+    "timeLimitSec": 0,
     "list": [
       {
-        "id": "power",
-        "template": "restorePowerFuses",
-        "required": true,
-        "params": {
-          "fuses": 4,
-          "itemId": "fuse",
-          "roomTypesFuses": ["STORAGE", "LAB", "OFFICE"],
-          "roomTypesPanel": ["LAB", "OFFICE"],
-          "minDistFromSpawn": 7,
-          "hints": [
-            "Collect the fuses and restore power at the panel.",
-            "Keep moving: late-game monsters punish hesitation."
-          ]
-        }
-      },
-      {
-        "id": "doorCode",
-        "template": "codeLock",
-        "required": true,
-        "params": {
-          "clues": 4,
-          "roomTypesClues": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
-          "roomTypesKeypad": ["OFFICE", "LAB"],
-          "minDistFromSpawn": 7,
-          "hints": [
-            "Find the note clues (A/B/C/D).",
-            "Enter the code in order A→B→C→D."
-          ]
-        }
-      },
       {
         "id": "kills",
         "template": "killCount",
         "required": true,
         "params": {
-          "count": 9,
+          "count": 6,
           "hints": [
-            "Defeat monsters to unlock the exit route.",
-            "Use weapon switching to match distance and crowd size."
+            "Defeat monsters to reduce pressure.",
+            "If you get chased, break line of sight, then reload."
           ]
         }
       },
@@ -80,7 +79,7 @@
         "template": "surviveTimer",
         "required": true,
         "params": {
-          "seconds": 40,
+          "seconds": 30,
           "hints": [
             "Survive until the timer completes.",
             "Break line of sight and keep moving between rooms."
@@ -99,7 +98,7 @@
         }
       }
     ],
-    "exit": { "requires": ["power", "doorCode", "kills", "survive", "unlockExit"] }
+    "exit": { "requires": ["kills", "survive", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,

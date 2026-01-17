@@ -17,6 +17,19 @@
       "BEDROOM": 0.45
     }
   },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "medical": {
+        "enabled": true,
+        "count": 1,
+        "healAmount": 22,
+        "charges": 1,
+        "minDistFromSpawn": 7,
+        "makeNoise": true
+      }
+    }
+  },
   "monsters": {
     "count": 3,
     "maxCount": 4,
@@ -42,37 +55,7 @@
           "label": "Pick up Keycard",
           "hints": [
             "Search Offices and Labs for the keycard.",
-            "Once you have it, move on to the upload task."
-          ]
-        }
-      },
-      {
-        "id": "upload",
-        "template": "uploadEvidence",
-        "required": true,
-        "params": {
-          "count": 4,
-          "required": 3,
-          "itemId": "evidence",
-          "roomTypesEvidence": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
-          "roomTypesTerminal": ["OFFICE", "LAB"],
-          "minDistFromSpawn": 7,
-          "hints": [
-            "Collect the evidence pickups.",
-            "Find the upload terminal and press E to upload (it consumes evidence)."
-          ]
-        }
-      },
-      {
-        "id": "route",
-        "template": "enterRoomType",
-        "required": false,
-        "params": {
-          "count": 1,
-          "roomTypes": ["CAFETERIA"],
-          "hints": [
-            "Visit the Cafeteria to confirm your route through the map.",
-            "Stay moving: standing still draws attention."
+            "Once you have it, head to the exit."
           ]
         }
       },
@@ -88,7 +71,7 @@
         }
       }
     ],
-    "exit": { "requires": ["keycard", "upload", "unlockExit"] }
+    "exit": { "requires": ["keycard", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,

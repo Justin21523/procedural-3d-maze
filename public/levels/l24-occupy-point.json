@@ -1,0 +1,81 @@
+{
+  "id": 24,
+  "name": "L24 - Hold The Point",
+  "maze": { "width": 27, "height": 27, "roomDensity": 2.9, "extraConnectionChance": 0.11 },
+  "rooms": {
+    "typeWeights": {
+      "OFFICE": 1.6,
+      "LAB": 1.4,
+      "CLASSROOM": 1.2,
+      "STORAGE": 1.1,
+      "LIBRARY": 0.6,
+      "CAFETERIA": 0.6,
+      "BATHROOM": 0.65,
+      "GYM": 0.2,
+      "POOL": 0.15,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 7,
+    "maxCount": 9,
+    "speedMultiplier": 1.03,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.02,
+    "typeWeights": { "WANDERER": 0.2, "HUNTER": 0.52, "SENTINEL": 0.18, "STALKER": 0.08, "GREETER": 0.02 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 45
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "point",
+        "template": "occupyPoint",
+        "required": true,
+        "params": {
+          "label": "Control Point",
+          "seconds": 25,
+          "radius": 2,
+          "exitGraceSec": 2,
+          "hazardIntervalSec": 7,
+          "hazardDurationSec": 2,
+          "hazardDamage": 2,
+          "hazardNoiseRadius": 18,
+          "hazardNoiseStrength": 0.9,
+          "hazardNoiseTtl": 1.1,
+          "hints": [
+            "Start the control point (E), then stay within range until it completes.",
+            "Hazards periodically trigger: expect noise and chip damage while holding the point."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["point", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.46,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+

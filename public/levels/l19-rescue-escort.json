@@ -1,0 +1,85 @@
+{
+  "id": 19,
+  "name": "L19 - Rescue Escort (High Aggro)",
+  "maze": { "width": 29, "height": 29, "roomDensity": 2.95, "extraConnectionChance": 0.11 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.3,
+      "CLASSROOMS_BLOCK": 1.4,
+      "OFFICE": 1.5,
+      "LAB": 1.35,
+      "STORAGE": 1.2,
+      "CAFETERIA": 0.7,
+      "BATHROOM": 0.65,
+      "LIBRARY": 0.6,
+      "POOL": 0.2,
+      "GYM": 0.25,
+      "BEDROOM": 0.35
+    }
+  },
+  "monsters": {
+    "count": 7,
+    "maxCount": 10,
+    "speedMultiplier": 1.05,
+    "visionMultiplier": 0.98,
+    "memoryMultiplier": 1.02,
+    "typeWeights": { "WANDERER": 0.2, "HUNTER": 0.52, "SENTINEL": 0.18, "STALKER": 0.08, "GREETER": 0.02 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 45
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "rescue",
+        "template": "escortRescue",
+        "required": true,
+        "params": {
+          "minDistFromSpawn": 9,
+          "roomTypesEscort": ["CLASSROOM", "OFFICE", "LIBRARY"],
+          "followDistance": 1,
+          "aggroNoiseIntervalSec": 2,
+          "aggroNoiseKind": "lure",
+          "aggroNoiseRadius": 18,
+          "aggroNoiseStrength": 0.9,
+          "aggroNoiseTtl": 1.0,
+          "aggroScentIntervalSec": 1,
+          "aggroScentRadius": 14,
+          "aggroScentStrength": 1.2,
+          "aggroScentTtl": 4,
+          "hints": [
+            "Find the survivor and press E to start the rescue.",
+            "Lead them to the exit; monsters will strongly track the survivor.",
+            "Use tools to break pursuit and keep moving."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["rescue", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.46,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.7
+  }
+}
+

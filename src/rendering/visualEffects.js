@@ -7,6 +7,7 @@ export class VisualEffects {
   constructor() {
     // Create overlay element for flashes
     this.overlay = document.getElementById('damage-overlay') || this.createOverlay();
+    this.darkOverlay = document.getElementById('dark-overlay') || this.createDarkOverlay();
 
     // Screen shake state
     this.shakeIntensity = 0;
@@ -18,6 +19,8 @@ export class VisualEffects {
     this.flashColor = 'rgba(255, 0, 0, 0.5)'; // Red by default
     this.flashDuration = 0;
     this.flashTimer = 0;
+
+    this.darkness = 0;
 
     console.log('🎨 VisualEffects initialized');
   }
@@ -41,6 +44,34 @@ export class VisualEffects {
     `;
     document.body.appendChild(overlay);
     return overlay;
+  }
+
+  createDarkOverlay() {
+    const overlay = document.createElement('div');
+    overlay.id = 'dark-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.08s linear;
+      z-index: 90;
+      background: radial-gradient(circle at center, rgba(0,0,0,0) 0%, rgba(0,0,0,0.25) 55%, rgba(0,0,0,1) 100%);
+    `;
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  setDarkness(level = 0) {
+    const n = Number(level);
+    const v = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+    this.darkness = v;
+    if (this.darkOverlay) {
+      this.darkOverlay.style.opacity = String(v);
+    }
   }
 
   /**
@@ -126,6 +157,12 @@ export class VisualEffects {
       if (this.flashTimer <= 0) {
         this.overlay.style.opacity = 0;
       }
+    }
+
+    // Keep darkness overlay live even when flashes are inactive.
+    if (this.darkOverlay) {
+      const v = Number(this.darkness) || 0;
+      this.darkOverlay.style.opacity = String(Math.max(0, Math.min(1, v)));
     }
 
     // Update screen shake

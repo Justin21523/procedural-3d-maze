@@ -2,16 +2,47 @@ import * as THREE from 'three';
 import { CONFIG } from '../core/config.js';
 import { EVENTS } from '../core/events.js';
 
-const TOOL_PICKUP_KINDS = new Set(['lure', 'trap', 'jammer', 'decoy', 'smoke', 'flash', 'sensor', 'mine']);
+const TOOL_PICKUP_KINDS = new Set([
+  'lure',
+  'trap',
+  'jammer',
+  'decoy',
+  'smoke',
+  'flash',
+  'sensor',
+  'mine',
+  // Variants / extra tools
+  'smoke_weak',
+  'smoke_strong',
+  'scent_spray',
+  'lure_sticky',
+  'door_wedge',
+  'glowstick',
+  'sonar_pulse',
+  'decoy_delay',
+  'emp_charge',
+  'fake_hack'
+]);
+const WEAPONMOD_PICKUP_KINDS = new Set(['weaponmod_silencer', 'weaponmod_extendedMag', 'weaponmod_quickReload', 'weaponmod_armorPiercing', 'weaponmod_stabilizer']);
 const TOOL_PICKUP_HINTS = {
   lure: { label: 'Lure', key: '4' },
   trap: { label: 'Trap', key: '5' },
   jammer: { label: 'Jammer', key: '6' },
   decoy: { label: 'Decoy', key: '7' },
   smoke: { label: 'Smoke', key: '8' },
+  smoke_weak: { label: 'Smoke (Weak)', key: '8' },
+  smoke_strong: { label: 'Smoke (Strong)', key: '8' },
   flash: { label: 'Flash', key: '9' },
   sensor: { label: 'Sensor', key: '0' },
   mine: { label: 'Mine', key: 'V' },
+  scent_spray: { label: 'Scent Spray', key: 'H' },
+  lure_sticky: { label: 'Wall Lure', key: '4' },
+  door_wedge: { label: 'Door Wedge', key: 'G' },
+  glowstick: { label: 'Glowstick', key: 'T' },
+  sonar_pulse: { label: 'Sonar', key: 'Z' },
+  decoy_delay: { label: 'Delayed Decoy', key: '7' },
+  emp_charge: { label: 'EMP Charge', key: 'X' },
+  fake_hack: { label: 'Fake Hack', key: 'Y' },
 };
 
 export class PickupManager {
@@ -145,12 +176,50 @@ export class PickupManager {
         return this.createDecoyMesh();
       case 'smoke':
         return this.createSmokeMesh();
+      case 'smoke_weak': {
+        const g = this.createSmokeMesh();
+        g.scale.setScalar(0.82);
+        return g;
+      }
+      case 'smoke_strong': {
+        const g = this.createSmokeMesh();
+        g.scale.setScalar(1.15);
+        return g;
+      }
       case 'flash':
         return this.createFlashMesh();
       case 'sensor':
         return this.createSensorMesh();
       case 'mine':
         return this.createMineMesh();
+      case 'scent_spray':
+        return this.createJammerMesh();
+      case 'lure_sticky':
+        return this.createLureMesh();
+      case 'door_wedge':
+        return this.createTrapMesh();
+      case 'glowstick': {
+        const g = this.createSensorMesh();
+        g.scale.setScalar(0.9);
+        return g;
+      }
+      case 'sonar_pulse': {
+        const g = this.createSensorMesh();
+        g.scale.setScalar(0.95);
+        return g;
+      }
+      case 'decoy_delay':
+        return this.createDecoyMesh();
+      case 'emp_charge':
+        return this.createAmmoMesh();
+      case 'fake_hack':
+        return this.createSensorMesh();
+      case 'weaponmod_silencer':
+      case 'weaponmod_extendedMag':
+      case 'weaponmod_quickReload':
+      case 'weaponmod_armorPiercing':
+      case 'weaponmod_stabilizer':
+        return this.createWeaponModMesh(kind);
       default:
         return this.createAmmoMesh();
     }
@@ -432,6 +501,47 @@ export class PickupManager {
     return group;
   }
 
+  createWeaponModMesh(kind) {
+    const group = new THREE.Group();
+    const colorMap = {
+      weaponmod_silencer: { core: 0x263238, glow: 0x80cbc4 },
+      weaponmod_extendedMag: { core: 0x1e88e5, glow: 0x90caf9 },
+      weaponmod_quickReload: { core: 0xfdd835, glow: 0xfff59d },
+      weaponmod_armorPiercing: { core: 0x8e24aa, glow: 0xce93d8 },
+      weaponmod_stabilizer: { core: 0x43a047, glow: 0xa5d6a7 },
+    };
+    const meta = colorMap[kind] || { core: 0x607d8b, glow: 0xb0bec5 };
+
+    const coreMat = new THREE.MeshStandardMaterial({
+      color: meta.core,
+      emissive: meta.glow,
+      emissiveIntensity: 0.75,
+      roughness: 0.35,
+      metalness: 0.15
+    });
+
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.22), coreMat);
+    body.position.y = 0.14;
+    group.add(body);
+
+    const ringMat = new THREE.MeshStandardMaterial({
+      color: meta.glow,
+      emissive: meta.glow,
+      emissiveIntensity: 1.1,
+      roughness: 0.2,
+      metalness: 0.0,
+      transparent: true,
+      opacity: 0.88
+    });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.03, 10, 18), ringMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.14;
+    group.add(ring);
+
+    group.scale.setScalar(1.0);
+    return group;
+  }
+
   getPickupMarkers(tileSize = null) {
     const ts = tileSize ?? CONFIG.TILE_SIZE ?? 1;
     const out = [];
@@ -503,6 +613,20 @@ export class PickupManager {
         this.audioManager?.playPickupHeal?.();
       } else if (p.kind === 'ammo') {
         this.gun?.addAmmo?.(p.amount);
+      } else if (WEAPONMOD_PICKUP_KINDS.has(p.kind)) {
+        const res = this.gun?.addWeaponMod?.(p.kind) || { ok: false };
+        if (res.ok) {
+          this.audioManager?.playPickupAttachment?.();
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, {
+            text: `${res.text || 'Weapon upgraded'}`,
+            seconds: 1.6
+          });
+        } else {
+          this.eventBus?.emit?.(EVENTS.UI_TOAST, {
+            text: `No effect: ${String(p.kind || 'weapon mod')}`,
+            seconds: 1.2
+          });
+        }
       } else if (TOOL_PICKUP_KINDS.has(p.kind)) {
         this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, {
           actorKind: 'player',

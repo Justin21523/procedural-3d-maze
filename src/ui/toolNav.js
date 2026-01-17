@@ -23,11 +23,7 @@ function isActiveHref(href) {
 }
 
 function computeTopOffset() {
-  const uiOverlay = document.getElementById('ui-overlay');
-  if (!uiOverlay) return 12;
-  const rect = uiOverlay.getBoundingClientRect();
-  const next = rect.top + rect.height + 10;
-  return Number.isFinite(next) ? Math.max(12, Math.round(next)) : 12;
+  return 12;
 }
 
 function installStyles() {

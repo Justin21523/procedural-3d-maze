@@ -53,8 +53,9 @@ export class SpeedJitterBrain extends BaseMonsterBrain {
 
   pickTarget(monsterGrid) {
     const playerGrid = this.getPlayerGridPosition();
+    const suppressed = this.monster?.aiChaseSuppressed === true;
 
-    if (this.followPlayer && playerGrid) {
+    if (!suppressed && this.followPlayer && playerGrid) {
       const yaw = this.monster?.getYaw?.() ?? this.monster?.yaw;
       const visionFOV = this.monster?.visionFOV ?? this.monster?.typeConfig?.stats?.visionFOV;
       const canSee = canSeePlayerGrid(this.worldState, monsterGrid, playerGrid, this.visionRange, {

@@ -102,8 +102,12 @@ export class CorridorGuardianBrain extends BaseMonsterBrain {
     if (playerGrid) {
       const playerIndex = this.indexOfCorridorTile(playerGrid);
       if (playerIndex !== -1) {
-        this.state = 'chase';
-        targetIndex = playerIndex;
+        if (this.monster?.aiChaseSuppressed === true) {
+          this.state = 'patrol';
+        } else {
+          this.state = 'chase';
+          targetIndex = playerIndex;
+        }
       } else if (this.state === 'chase') {
         this.state = 'patrol';
       }
@@ -146,4 +150,3 @@ export class CorridorGuardianBrain extends BaseMonsterBrain {
     return { move, lookYaw, sprint: false };
   }
 }
-

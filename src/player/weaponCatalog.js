@@ -52,9 +52,18 @@ export function createWeaponCatalog() {
         piercing: {
           label: 'Piercing',
           projectile: { pierce: 2, damage: Math.max(1, Math.round(baseDamage * 0.9)), color: 0x88ffcc, stunSeconds: 0.18 }
+        },
+        shock: {
+          label: 'Shock',
+          projectile: { pierce: 0, damage: Math.max(1, Math.round(baseDamage * 0.8)), color: 0x66aaff, element: 'electric', jamSeconds: 1.35, stunSeconds: 0.1 }
+        },
+        incendiary: {
+          label: 'Incendiary',
+          projectile: { pierce: 0, damage: Math.max(1, Math.round(baseDamage * 0.75)), color: 0xff7744, element: 'fire', burnSeconds: 4.2, burnDps: 1.25, stunSeconds: 0.08 }
         }
       },
-      defaultMode: 'standard'
+      defaultMode: 'standard',
+      modSlots: 3
     },
     pistol: {
       id: 'pistol',
@@ -85,7 +94,8 @@ export function createWeaponCatalog() {
         burstRestMinSeconds: 0.18,
         burstRestMaxSeconds: 0.35,
         crowdBias: 0.4
-      }
+      },
+      modSlots: 2
     },
     flare: {
       id: 'flare',
@@ -119,7 +129,8 @@ export function createWeaponCatalog() {
         burstRestMinSeconds: 0.35,
         burstRestMaxSeconds: 0.7,
         crowdBias: 1.0
-      }
+      },
+      modSlots: 1
     }
   };
 }

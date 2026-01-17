@@ -87,6 +87,7 @@ export class WorldMarkerSystem {
     this.missionDirector = options.missionDirector || null;
     this.exitPoint = options.exitPoint || null;
     this.eventBus = options.eventBus || null;
+    this.monsterManager = options.monsterManager || null;
 
     this.enabled = options.enabled !== false;
     this.maxDistance = Number.isFinite(options.maxDistance) ? options.maxDistance : 32;
@@ -102,9 +103,13 @@ export class WorldMarkerSystem {
 
     this._time = 0;
     this._tmpCamPos = new THREE.Vector3();
+
+    this.revealMonstersTimer = 0;
+    this.unsubs = [];
+    this.bindEvents();
   }
 
-  setRefs({ scene, camera, player, worldState, pickupManager, toolSystem, missionDirector, exitPoint, eventBus } = {}) {
+  setRefs({ scene, camera, player, worldState, pickupManager, toolSystem, missionDirector, exitPoint, eventBus, monsterManager } = {}) {
     if (scene && scene !== this.scene) {
       try {
         this.scene?.remove?.(this.group);
@@ -122,6 +127,21 @@ export class WorldMarkerSystem {
     if (missionDirector) this.missionDirector = missionDirector;
     if (exitPoint) this.exitPoint = exitPoint;
     if (eventBus) this.eventBus = eventBus;
+    if (monsterManager) this.monsterManager = monsterManager;
+    this.bindEvents();
+  }
+
+  bindEvents() {
+    this.unsubs.forEach((fn) => fn?.());
+    this.unsubs = [];
+    if (!this.eventBus?.on) return;
+    this.unsubs.push(
+      this.eventBus.on(EVENTS.WORLD_REVEAL_MONSTERS, (payload) => {
+        const seconds = Math.max(0, Number(payload?.seconds) || 0);
+        if (seconds <= 0) return;
+        this.revealMonstersTimer = Math.max(this.revealMonstersTimer || 0, seconds);
+      })
+    );
   }
 
   dispose() {
@@ -130,6 +150,8 @@ export class WorldMarkerSystem {
     } catch {
       // ignore
     }
+    this.unsubs.forEach((fn) => fn?.());
+    this.unsubs = [];
     for (const sprite of this.sprites) {
       try {
         this.group.remove(sprite);
@@ -167,6 +189,9 @@ export class WorldMarkerSystem {
     if (type === 'objective') {
       return { color: 0xffa726, label: '!' };
     }
+    if (type === 'monster') {
+      return { color: 0xff1493, label: '!' };
+    }
 
     if (k === 'ammo') return { color: 0x66aaff, label: 'A' };
     if (k === 'health') return { color: 0x66ff99, label: 'H' };
@@ -174,12 +199,34 @@ export class WorldMarkerSystem {
     if (k === 'trap') return { color: 0x42a5f5, label: 'T' };
     if (k === 'jammer') return { color: 0xba68c8, label: 'J' };
     if (k === 'decoy') return { color: 0xff5252, label: 'D' };
+    if (k === 'decoy_delay') return { color: 0xff5252, label: 'D' };
     if (k === 'smoke') return { color: 0xb0bec5, label: 'S' };
+    if (k === 'smoke_weak') return { color: 0x90a4ae, label: 'S' };
+    if (k === 'smoke_strong') return { color: 0xcfd8dc, label: 'S' };
     if (k === 'flash') return { color: 0xfff59d, label: 'F' };
     if (k === 'sensor') return { color: 0x4dd0e1, label: 'R' };
     if (k === 'mine') return { color: 0xff1744, label: 'M' };
+    if (k === 'lure_sticky') return { color: 0xff7043, label: 'L' };
+    if (k === 'scent_spray') return { color: 0x66ff99, label: 'C' };
+    if (k === 'door_wedge') return { color: 0xff1744, label: 'W' };
+    if (k === 'glowstick') return { color: 0x66ff99, label: 'G' };
+    if (k === 'sonar_pulse') return { color: 0x4dd0e1, label: 'O' };
+    if (k === 'emp_charge') return { color: 0x66aaff, label: 'X' };
+    if (k === 'fake_hack') return { color: 0x1e88e5, label: 'Y' };
+    if (k.startsWith('weaponmod_')) return { color: 0xfff59d, label: 'W' };
 
-    if (type === 'device') return { color: 0xffffff, label: '●' };
+    if (type === 'device') {
+      if (k === 'alarmbox') return { color: 0xff5252, label: 'A' };
+      if (k === 'powerbox') return { color: 0x66aaff, label: 'P' };
+      if (k === 'doorlock') return { color: 0xff1744, label: 'D' };
+      if (k === 'light') return { color: 0xfff59d, label: 'L' };
+      if (k === 'siren') return { color: 0xff5252, label: 'S' };
+      if (k === 'bossshieldnode') return { color: 0x40c4ff, label: 'B' };
+      if (k === 'doorwedge') return { color: 0xff1744, label: 'W' };
+      if (k === 'glowstick') return { color: 0x66ff99, label: 'G' };
+      if (k === 'faketerminal') return { color: 0x1e88e5, label: 'Y' };
+      return { color: 0xffffff, label: '●' };
+    }
     return { color: 0xffffff, label: '?' };
   }
 
@@ -215,6 +262,7 @@ export class WorldMarkerSystem {
   update(dt, ctx = null) {
     const delta = Number.isFinite(dt) ? dt : 0;
     this._time += Math.max(0, delta);
+    this.revealMonstersTimer = Math.max(0, (this.revealMonstersTimer || 0) - Math.max(0, delta));
 
     const input = this.player?.input || null;
     if (input?.consumeKeyPress?.('KeyM')) {
@@ -281,6 +329,24 @@ export class WorldMarkerSystem {
       });
     }
 
+    if ((this.revealMonstersTimer || 0) > 0 && this.monsterManager?.getMonsters) {
+      const monsters = this.monsterManager.getMonsters() || [];
+      for (const m of monsters) {
+        if (!m || m.isDead || m.isDying) continue;
+        const obj = m.mesh || m.model || null;
+        const p = obj?.position || null;
+        if (!p) continue;
+        markers.push({
+          type: 'monster',
+          kind: 'monster',
+          position: new THREE.Vector3(p.x, p.y + 2.0, p.z),
+          y: 2.0,
+          baseScale: 0.78,
+          maxDistance: this.maxObjectiveDistance
+        });
+      }
+    }
+
     this.ensureSprites(markers.length);
 
     for (let i = 0; i < this.sprites.length; i++) {
@@ -317,4 +383,3 @@ export class WorldMarkerSystem {
     void ctx;
   }
 }
-

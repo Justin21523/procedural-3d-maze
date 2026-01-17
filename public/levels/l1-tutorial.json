@@ -33,42 +33,18 @@
     "timeLimitSec": 0,
     "list": [
       {
-        "id": "orientation",
-        "template": "enterRoomType",
-        "required": true,
-        "params": {
-          "count": 1,
-          "roomTypes": ["OFFICE", "LAB"],
-          "hints": [
-            "Enter an Office or Lab to get oriented.",
-            "Use the minimap to find room blocks quickly."
-          ]
-        }
-      },
-      {
         "id": "evidence",
         "template": "collectEvidence",
         "required": true,
         "params": {
-          "count": 3,
+          "count": 2,
           "required": 2,
           "roomTypes": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
           "minDistFromSpawn": 6,
           "hints": [
-            "Collect the evidence pickups.",
-            "Stick to Classrooms/Offices for the fastest route."
-          ]
-        }
-      },
-      {
-        "id": "kills",
-        "template": "killCount",
-        "required": true,
-        "params": {
-          "count": 1,
-          "hints": [
-            "Defeat a monster to learn combat.",
-            "Try switching weapons with 1/2/3 and reloading with R."
+            "Collect 2 evidence pickups to learn the core loop.",
+            "Use WASD to move, Mouse to look, and E to interact.",
+            "Check the minimap: Classrooms/Offices are common evidence hubs."
           ]
         }
       },
@@ -84,7 +60,7 @@
         }
       }
     ],
-    "exit": { "requires": ["orientation", "evidence", "kills", "unlockExit"] }
+    "exit": { "requires": ["evidence", "unlockExit"] }
   },
   "player": {
     "maxHealthMultiplier": 1.0,

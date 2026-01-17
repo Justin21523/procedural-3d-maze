@@ -46,6 +46,10 @@ export class RangedCombatModule {
     // Cover suppression rhythm (role-based cadence).
     this.coverSuppressFiring = Math.random() < 0.7;
     this.coverSuppressTimer = Math.random() * 0.8;
+
+    // Last known player position for "blind-fire" when flashed.
+    this.lastSeenPlayerPos = null; // { x, y, z }
+    this.lastSeenAt = 0;
   }
 
   updatePlayerVelocity(dt) {
@@ -97,6 +101,8 @@ export class RangedCombatModule {
 
     if (!CONFIG.AI_RANGED_GLOBAL_ENABLED) return base;
 
+    const blinded = (this.monster?.perceptionBlindedTimer || 0) > 0;
+
     // Focus-fire: when in a squad, only fire while the squad is actively engaged with the player.
     const nowSec = performance.now() / 1000;
     const role = normalizeRole(this.options?.role || this.monster?.typeConfig?.squad?.role);
@@ -135,7 +141,17 @@ export class RangedCombatModule {
       y: Math.floor(playerPos.z / tileSize)
     };
     const hasLOS = this.worldState?.hasLineOfSight ? this.worldState.hasLineOfSight(mg, pg) : true;
-    if (!hasLOS) return base;
+    if (!blinded && hasLOS) {
+      this.lastSeenPlayerPos = { x: playerPos.x, y: playerPos.y, z: playerPos.z };
+      this.lastSeenAt = nowSec;
+    }
+
+    const blindMemory = Number(CONFIG.AI_BLIND_FIRE_MEMORY_SECONDS) || 2.5;
+    const canBlindFire = blinded && this.lastSeenPlayerPos && (nowSec - (this.lastSeenAt || 0)) <= Math.max(0.2, blindMemory);
+    const blindFireChance = Number.isFinite(CONFIG.AI_BLIND_FIRE_CHANCE) ? clamp(CONFIG.AI_BLIND_FIRE_CHANCE, 0, 1) : 0.35;
+    const blindFire = canBlindFire && Math.random() < blindFireChance;
+
+    if (!hasLOS && !blindFire) return base;
 
     const difficulty = CONFIG.AI_DIFFICULTY ?? 1.0;
     const diff = clamp(difficulty, 0.6, 2.0);
@@ -166,9 +182,16 @@ export class RangedCombatModule {
     const speed = ranged.speed ?? CONFIG.MONSTER_PROJECTILE_SPEED ?? 22;
     const timeToHit = dist / Math.max(6, speed);
     const lead = 0.55 + 0.35 * diff;
-    const aimX = playerPos.x + (this.playerVelocity?.x || 0) * timeToHit * lead;
-    const aimZ = playerPos.z + (this.playerVelocity?.z || 0) * timeToHit * lead;
-    const aimY = playerPos.y - (CONFIG.PLAYER_HEIGHT ?? 1.7) * 0.35;
+    let aimX = playerPos.x + (this.playerVelocity?.x || 0) * timeToHit * lead;
+    let aimZ = playerPos.z + (this.playerVelocity?.z || 0) * timeToHit * lead;
+    let aimY = playerPos.y - (CONFIG.PLAYER_HEIGHT ?? 1.7) * 0.35;
+    if (blindFire) {
+      const last = this.lastSeenPlayerPos;
+      const jitter = 1.6;
+      aimX = last.x + (Math.random() * 2 - 1) * jitter;
+      aimZ = last.z + (Math.random() * 2 - 1) * jitter;
+      aimY = (last.y || playerPos.y) - (CONFIG.PLAYER_HEIGHT ?? 1.7) * 0.35;
+    }
 
     const currentYaw = getMonsterYaw(this.monster);
     const desiredYaw = Math.atan2(aimX - monsterPos.x, aimZ - monsterPos.z);
@@ -201,7 +224,7 @@ export class RangedCombatModule {
     }
 
     const alignedYaw = Math.abs(yawDelta) <= aimYawAlignRad;
-    if (!alignedYaw) return base;
+    if (!alignedYaw && !blindFire) return base;
 
     if (this.burstRestTimer > 0) return base;
     if (this.shotCooldown > 0) return base;
@@ -253,14 +276,18 @@ export class RangedCombatModule {
       return base;
     }
 
+    const blindSpreadMult = Number(CONFIG.AI_BLIND_FIRE_SPREAD_MULT) || 4.0;
+    const blindDamageMult = Number(CONFIG.AI_BLIND_FIRE_DAMAGE_MULT) || 0.55;
+
     base.fire = {
       kind: ranged.kind ?? 'bolt',
       aimAt: { x: aimX, y: aimY, z: aimZ },
       speed: ranged.speed,
       lifetime: ranged.lifetime,
-      damage: ranged.damage,
-      spread: ranged.spread ?? 0.035,
-      color: ranged.color
+      damage: blindFire ? (Number(ranged.damage) || 0) * blindDamageMult : ranged.damage,
+      spread: blindFire ? (Number(ranged.spread ?? 0.035) * blindSpreadMult) : (ranged.spread ?? 0.035),
+      color: ranged.color,
+      blindFire
     };
 
     this.ammoInMag = Math.max(0, (this.ammoInMag || 0) - 1);

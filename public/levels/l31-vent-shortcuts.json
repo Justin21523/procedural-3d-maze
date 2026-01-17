@@ -1,0 +1,39 @@
+{
+  "id": 31,
+  "name": "L31 - Vent Shortcuts",
+  "maze": { "width": 33, "height": 33, "roomDensity": 3.1, "extraConnectionChance": 0.12 },
+  "features": {
+    "vents": {
+      "enabled": true,
+      "pairs": 2,
+      "minDistFromSpawn": 9,
+      "minSeparationTiles": 18,
+      "crawlSeconds": 6
+    }
+  },
+  "monsters": {
+    "count": 6,
+    "maxCount": 8,
+    "speedMultiplier": 1.04,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.0
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Use vents as safe-but-slow shortcuts.",
+            "Entering a vent disables movement for a few seconds."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["unlockExit"] }
+  }
+}
+

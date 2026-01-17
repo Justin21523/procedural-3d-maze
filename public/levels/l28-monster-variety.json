@@ -1,0 +1,43 @@
+{
+  "id": 28,
+  "name": "L28 - Monster Variety",
+  "maze": { "width": 29, "height": 29, "roomDensity": 2.8, "extraConnectionChance": 0.12 },
+  "monsters": {
+    "count": 7,
+    "maxCount": 9,
+    "speedMultiplier": 1.02,
+    "visionMultiplier": 1.0,
+    "memoryMultiplier": 1.0,
+    "typeWeights": {
+      "SCENT_HOUND": 0.12,
+      "HEARING_HUNTER": 0.12,
+      "SECURITY_GUARD": 0.1,
+      "SPLITTER": 0.12,
+      "SHADOW": 0.08,
+      "AMBUSHER": 0.12,
+      "COMMANDER": 0.08,
+      "DREAD": 0.1,
+      "NEST_GUARDIAN": 0.08,
+      "HUNTER": 0.08
+    },
+    "allowSprintTypes": ["HUNTER", "SCENT_HOUND", "AMBUSHER"]
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "This level is a monster sandbox: expect aura + splitting.",
+            "Press E at the exit to finish."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["unlockExit"] }
+  }
+}
+

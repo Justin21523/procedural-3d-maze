@@ -39,6 +39,46 @@ export class Gun {
       grenade: { cooldown: 0, maxCooldown: 7.5 },
       emp: { cooldown: 0, maxCooldown: 12.0 }
     };
+
+    this.runModifiers = {
+      weaponDamageMult: 1.0,
+      weaponRecoilMult: 1.0,
+      weaponSpreadMult: 1.0,
+      weaponPierceBonus: 0,
+      gunshotNoiseRadiusMult: 1.0,
+      ammoReserveMult: 1.0
+    };
+
+    this.weaponMods = new Map(); // weaponId -> Array<modId> (ordered)
+  }
+
+  setRunModifiers(modifiers = null) {
+    const m = modifiers && typeof modifiers === 'object' ? modifiers : {};
+    const prevAmmoMult = Number(this.runModifiers?.ammoReserveMult) || 1.0;
+    this.runModifiers = {
+      weaponDamageMult: Number.isFinite(m.weaponDamageMult) ? m.weaponDamageMult : 1.0,
+      weaponRecoilMult: Number.isFinite(m.weaponRecoilMult) ? m.weaponRecoilMult : 1.0,
+      weaponSpreadMult: Number.isFinite(m.weaponSpreadMult) ? m.weaponSpreadMult : 1.0,
+      weaponPierceBonus: Number.isFinite(m.weaponPierceBonus) ? Math.round(m.weaponPierceBonus) : 0,
+      gunshotNoiseRadiusMult: Number.isFinite(m.gunshotNoiseRadiusMult) ? m.gunshotNoiseRadiusMult : 1.0,
+      ammoReserveMult: Number.isFinite(m.ammoReserveMult) ? Math.max(0.1, Math.min(3.0, m.ammoReserveMult)) : 1.0
+    };
+
+    const nextAmmoMult = Number(this.runModifiers.ammoReserveMult) || 1.0;
+    if (Math.abs(nextAmmoMult - prevAmmoMult) > 1e-6) {
+      // Re-scale current reserves so mutators apply immediately (keeps gameplay consistent).
+      const ratio = prevAmmoMult > 0 ? (nextAmmoMult / prevAmmoMult) : nextAmmoMult;
+      for (const id of this.weaponOrder) {
+        const def = this.weaponDefs[id];
+        const state = this.weaponStates.get(id);
+        if (!def || !state) continue;
+        const before = Number(state.ammoReserve) || 0;
+        const scaled = Math.max(0, Math.round(before * ratio));
+        const maxBase = Number.isFinite(def.reserveMax) ? def.reserveMax : Infinity;
+        const max = Number.isFinite(maxBase) ? Math.max(0, Math.round(maxBase * nextAmmoMult)) : Infinity;
+        state.ammoReserve = Math.max(0, Math.min(max, scaled));
+      }
+    }
   }
 
   async loadWeaponMetaOverrides() {
@@ -89,6 +129,97 @@ export class Gun {
       if (!skill) continue;
       skill.cooldown = 0;
     }
+    this.weaponMods.clear();
+  }
+
+  getWeaponMods(weaponId = null) {
+    const id = weaponId || this.activeWeaponId;
+    if (!id) return [];
+    const list = this.weaponMods.get(id);
+    return Array.isArray(list) ? Array.from(list) : [];
+  }
+
+  getWeaponModSlots(def) {
+    const raw = def?.modSlots ?? CONFIG.WEAPON_MOD_SLOTS_DEFAULT ?? 2;
+    const n = Math.round(Number(raw));
+    return Number.isFinite(n) ? Math.max(0, n) : 2;
+  }
+
+  addWeaponMod(modId, weaponId = null) {
+    const mod = String(modId || '').trim();
+    const id = weaponId || this.activeWeaponId;
+    if (!mod || !id || !this.weaponDefs?.[id]) return { ok: false };
+
+    const normalized = mod.startsWith('weaponmod_') ? mod : `weaponmod_${mod}`;
+    const known = new Set(['weaponmod_silencer', 'weaponmod_extendedMag', 'weaponmod_quickReload', 'weaponmod_armorPiercing', 'weaponmod_stabilizer']);
+    if (!known.has(normalized)) return { ok: false };
+
+    const def = this.weaponDefs?.[id] || null;
+    const slots = this.getWeaponModSlots(def);
+
+    const list = Array.isArray(this.weaponMods.get(id)) ? Array.from(this.weaponMods.get(id)) : [];
+    if (list.includes(normalized)) return { ok: false };
+
+    let replacedModId = null;
+    if (slots > 0 && list.length >= slots) {
+      replacedModId = list.shift() || null;
+    }
+    list.push(normalized);
+    this.weaponMods.set(id, list);
+
+    const weaponName = this.weaponDefs?.[id]?.name || id;
+    const label = normalized.replace('weaponmod_', '');
+    const replacedLabel = replacedModId ? ` (replaced ${String(replacedModId).replace('weaponmod_', '')})` : '';
+    return { ok: true, weaponId: id, modId: normalized, replacedModId, text: `Attached ${label} to ${weaponName}${replacedLabel}` };
+  }
+
+  getWeaponModEffects(weaponId = null) {
+    const id = weaponId || this.activeWeaponId;
+    const mods = this.weaponMods.get(id) || null;
+    const effects = {
+      magBonus: 0,
+      reloadMult: 1.0,
+      damageMult: 1.0,
+      recoilMult: 1.0,
+      spreadMult: 1.0,
+      pierceBonus: 0,
+      noiseRadiusMult: 1.0,
+      muzzleIntensityMult: 1.0
+    };
+    if (!Array.isArray(mods) || mods.length === 0) return effects;
+
+    for (const m of mods) {
+      if (m === 'weaponmod_silencer') {
+        effects.noiseRadiusMult *= 0.55;
+        effects.damageMult *= 0.92;
+        effects.muzzleIntensityMult *= 0.65;
+      } else if (m === 'weaponmod_extendedMag') {
+        effects.magBonus += 6;
+      } else if (m === 'weaponmod_quickReload') {
+        effects.reloadMult *= 0.78;
+      } else if (m === 'weaponmod_armorPiercing') {
+        effects.pierceBonus += 1;
+        effects.damageMult *= 0.95;
+      } else if (m === 'weaponmod_stabilizer') {
+        effects.recoilMult *= 0.78;
+        effects.spreadMult *= 0.8;
+      }
+    }
+
+    const def = this.weaponDefs?.[id] || null;
+    if (def?.id === 'pistol') {
+      effects.magBonus = Math.max(0, Math.round(effects.magBonus * 0.6));
+    } else if (def?.id === 'flare') {
+      effects.magBonus = Math.max(0, Math.round(effects.magBonus * 0.25));
+    }
+
+    return effects;
+  }
+
+  getEffectiveMagSize(def) {
+    const base = def?.magSize ?? 0;
+    const bonus = this.getWeaponModEffects(def?.id).magBonus || 0;
+    return Math.max(0, Math.round(base + bonus));
   }
 
   createPooledMuzzleFlash() {
@@ -149,7 +280,9 @@ export class Gun {
       const def = this.weaponDefs[id];
       if (!def) continue;
       const magSize = def.magSize ?? 0;
-      const reserve = Number.isFinite(def.reserveStart) ? def.reserveStart : 0;
+      const mult = Number(this.runModifiers?.ammoReserveMult) || 1.0;
+      const reserveBase = Number.isFinite(def.reserveStart) ? def.reserveStart : 0;
+      const reserve = Math.max(0, Math.round(reserveBase * mult));
 
       this.weaponStates.set(id, {
         ammoInMag: magSize,
@@ -180,10 +313,26 @@ export class Gun {
     const state = this.weaponStates.get(id);
     if (!def || !state) return 0;
 
-    const max = Number.isFinite(def.reserveMax) ? def.reserveMax : Infinity;
+    const mult = Number(this.runModifiers?.ammoReserveMult) || 1.0;
+    const maxBase = Number.isFinite(def.reserveMax) ? def.reserveMax : Infinity;
+    const max = Number.isFinite(maxBase) ? Math.max(0, Math.round(maxBase * mult)) : Infinity;
     const before = state.ammoReserve || 0;
     state.ammoReserve = Math.max(0, Math.min(max, before + add));
     return state.ammoReserve - before;
+  }
+
+  consumeAmmo(amount, weaponId = null) {
+    const take = Math.max(0, Math.round(Number(amount) || 0));
+    if (take <= 0) return true;
+
+    const id = weaponId || this.activeWeaponId;
+    const state = this.weaponStates.get(id);
+    if (!state) return false;
+
+    const have = Math.max(0, Math.round(Number(state.ammoReserve) || 0));
+    if (have < take) return false;
+    state.ammoReserve = have - take;
+    return true;
   }
 
   updateWeaponTimers(dt) {
@@ -215,6 +364,7 @@ export class Gun {
   }
 
   handleWeaponInput(externalCommand = null, autopilotActive = false) {
+    if (CONFIG.PLAYER_GUN_ENABLED === false) return;
     const canConsume = !!this.input?.consumeKeyPress;
 
     if (canConsume) {
@@ -267,6 +417,7 @@ export class Gun {
   }
 
   handleFireInput(externalCommand = null, autopilotActive = false) {
+    if (CONFIG.PLAYER_GUN_ENABLED === false) return;
     const def = this.getActiveWeaponDef();
     const state = this.getWeaponState();
     if (!def || !state) return;
@@ -287,7 +438,9 @@ export class Gun {
       return;
     }
 
-    const damageMult = externalFire ? (CONFIG.AUTOPILOT_COMBAT_DAMAGE_MULT ?? 1.0) : 1.0;
+    const autopilotMult = externalFire ? (CONFIG.AUTOPILOT_COMBAT_DAMAGE_MULT ?? 1.0) : 1.0;
+    const runDamageMult = Number.isFinite(this.runModifiers?.weaponDamageMult) ? this.runModifiers.weaponDamageMult : 1.0;
+    const damageMult = autopilotMult * runDamageMult;
     const fired = this.fireWeapon(def, state, { damageMult });
     if (!fired) {
       // Avoid spamming CPU/audio when we're capped (e.g., too many projectiles).
@@ -358,12 +511,14 @@ export class Gun {
     if (!def || !state) return;
 
     if (state.reloadTimer > 0) return;
-    const magSize = def.magSize ?? 0;
+    const magSize = this.getEffectiveMagSize(def);
     if (magSize <= 0) return;
     if ((state.ammoInMag || 0) >= magSize) return;
     if ((state.ammoReserve || 0) <= 0) return;
 
-    state.reloadTotal = Math.max(0.1, def.reloadSeconds ?? 1.6);
+    const modReloadMult = this.getWeaponModEffects(def.id).reloadMult || 1.0;
+    const reloadSeconds = (def.reloadSeconds ?? 1.6) * (Number.isFinite(modReloadMult) ? modReloadMult : 1.0);
+    state.reloadTotal = Math.max(0.1, reloadSeconds);
     state.reloadTimer = state.reloadTotal;
     state.cooldown = Math.max(state.cooldown || 0, 0.15);
     this.weaponView?.onReloadStart?.(state.reloadTotal);
@@ -375,7 +530,7 @@ export class Gun {
   }
 
   finishReload(def, state) {
-    const magSize = def.magSize ?? 0;
+    const magSize = this.getEffectiveMagSize(def);
     const need = Math.max(0, magSize - (state.ammoInMag || 0));
     if (need <= 0) return;
     const take = Math.max(0, Math.min(need, state.ammoReserve || 0));
@@ -444,14 +599,39 @@ export class Gun {
     if (!playerPos) return;
 
     // A short-range stun pulse around the player.
-    const radius = 4.2;
+    let radius = 4.2;
     const stunSeconds = 1.6;
     const damage = 0;
+    let jamSeconds = Number.isFinite(CONFIG.SKILL_EMP_JAM_SECONDS) ? CONFIG.SKILL_EMP_JAM_SECONDS : 4.5;
+
+    // Consumable EMP charge: boosts the next EMP pulse.
+    try {
+      const bus = this.eventBus;
+      if (bus?.emit) {
+        const query = { itemId: 'emp_charge', result: null };
+        bus.emit(EVENTS.INVENTORY_QUERY_ITEM, query);
+        const have = Math.max(0, Math.round(Number(query.result?.count) || 0));
+        if (have > 0) {
+          const consume = { actorKind: 'player', itemId: 'emp_charge', count: 1, result: null };
+          bus.emit(EVENTS.INVENTORY_CONSUME_ITEM, consume);
+          if (consume.result?.ok) {
+            const rBonus = Number.isFinite(CONFIG.SKILL_EMP_CHARGE_RADIUS_BONUS) ? CONFIG.SKILL_EMP_CHARGE_RADIUS_BONUS : 1.4;
+            const jBonus = Number.isFinite(CONFIG.SKILL_EMP_CHARGE_JAM_SECONDS_BONUS) ? CONFIG.SKILL_EMP_CHARGE_JAM_SECONDS_BONUS : 2.0;
+            radius = Math.max(2.5, radius + Math.max(0, rBonus));
+            jamSeconds = Math.max(0.1, jamSeconds + Math.max(0, jBonus));
+            bus.emit(EVENTS.UI_TOAST, { text: 'EMP Charge consumed (+range/+jam)', seconds: 1.3 });
+          }
+        }
+      }
+    } catch (err) {
+      void err;
+    }
     this.eventBus?.emit?.(EVENTS.PLAYER_USED_SKILL, {
       kind: 'emp',
       position: playerPos.clone(),
       radius,
       stunSeconds,
+      jamSeconds,
       damage,
       color: 0x66aaff
     });
@@ -482,6 +662,24 @@ export class Gun {
       ...projMode
     };
 
+    const modFx = this.getWeaponModEffects(def.id);
+    if (Number.isFinite(options.damage)) {
+      options.damage = options.damage * (Number.isFinite(modFx.damageMult) ? modFx.damageMult : 1.0);
+    }
+    if (Number.isFinite(options.explosionDamage)) {
+      options.explosionDamage = options.explosionDamage * (Number.isFinite(modFx.damageMult) ? modFx.damageMult : 1.0);
+    }
+    if (Number.isFinite(modFx.pierceBonus) && modFx.pierceBonus !== 0) {
+      const basePierce = Number.isFinite(options.pierce) ? Math.round(options.pierce) : 0;
+      options.pierce = Math.max(0, basePierce + Math.round(modFx.pierceBonus));
+    }
+
+    const pierceBonus = Number.isFinite(this.runModifiers?.weaponPierceBonus) ? Math.round(this.runModifiers.weaponPierceBonus) : 0;
+    if (pierceBonus !== 0) {
+      const basePierce = Number.isFinite(options.pierce) ? Math.round(options.pierce) : 0;
+      options.pierce = Math.max(0, basePierce + pierceBonus);
+    }
+
     const multRaw = fireContext?.damageMult;
     const damageMult = Number.isFinite(multRaw) ? Math.max(0.1, Math.min(5, multRaw)) : 1.0;
     if (damageMult !== 1.0) {
@@ -496,7 +694,9 @@ export class Gun {
     let spawnedAny = false;
     if (def.pellets && def.pellets > 1) {
       const pellets = Math.max(1, Math.round(def.pellets));
-      const spread = def.spread ?? 0.1;
+      const baseSpread = def.spread ?? 0.1;
+      const spreadMult = Number.isFinite(this.runModifiers?.weaponSpreadMult) ? this.runModifiers.weaponSpreadMult : 1.0;
+      const spread = baseSpread * spreadMult * (Number.isFinite(modFx.spreadMult) ? modFx.spreadMult : 1.0);
       for (let i = 0; i < pellets; i++) {
         const d = this.applySpread(dir, spread);
         spawnedAny = this.spawnPlayerProjectile(origin, d, options) || spawnedAny;
@@ -507,8 +707,11 @@ export class Gun {
 
     if (!spawnedAny) return false;
 
-    this.weaponView?.kick?.(def.recoilKick ?? 1.0);
-    this.spawnMuzzleFlash(origin, dir, def.muzzleColor ?? 0xffdd88, 2.0);
+    const recoilMult = Number.isFinite(this.runModifiers?.weaponRecoilMult) ? this.runModifiers.weaponRecoilMult : 1.0;
+    const modRecoil = Number.isFinite(modFx.recoilMult) ? modFx.recoilMult : 1.0;
+    this.weaponView?.kick?.((def.recoilKick ?? 1.0) * recoilMult * modRecoil);
+    const modMuzzle = Number.isFinite(modFx.muzzleIntensityMult) ? modFx.muzzleIntensityMult : 1.0;
+    this.spawnMuzzleFlash(origin, dir, def.muzzleColor ?? 0xffdd88, 2.0 * modMuzzle);
 
     this.eventBus?.emit?.(EVENTS.WEAPON_FIRED, {
       weaponId: def.id,
@@ -518,7 +721,7 @@ export class Gun {
       direction: dir.clone()
     });
 
-    this.registerPlayerNoise(origin, 1.0);
+    this.registerPlayerNoise(origin, 1.0, { weaponId: def.id });
     this.audioManager?.playGunshot?.();
     return true;
   }
@@ -532,15 +735,54 @@ export class Gun {
     return false;
   }
 
-  registerPlayerNoise(origin, strength = 1.0) {
-    if (!this.projectileManager?.registerNoise) return;
-    this.projectileManager.registerNoise(origin, {
+  registerPlayerNoise(origin, strength = 1.0, options = {}) {
+    const radiusMult = Number.isFinite(this.runModifiers?.gunshotNoiseRadiusMult) ? this.runModifiers.gunshotNoiseRadiusMult : 1.0;
+    const weaponId = typeof options?.weaponId === 'string' ? options.weaponId : null;
+    const modFx = this.getWeaponModEffects(weaponId);
+    const modNoise = Number.isFinite(modFx.noiseRadiusMult) ? modFx.noiseRadiusMult : 1.0;
+    const smokeMult = (() => {
+      const ws = this.projectileManager?.worldState || null;
+      const clouds = typeof ws?.getSmokeClouds === 'function'
+        ? ws.getSmokeClouds()
+        : (Array.isArray(ws?.smokeClouds) ? ws.smokeClouds : []);
+      if (!Array.isArray(clouds) || clouds.length === 0) return 1.0;
+      const x = Number(origin?.x) || 0;
+      const z = Number(origin?.z) || 0;
+      for (const cloud of clouds) {
+        if (!cloud) continue;
+        const life = Number(cloud.life) || 0;
+        if (!(life > 0)) continue;
+        const radius = Number(cloud.radius) || 0;
+        if (!(radius > 0)) continue;
+        const cx = Number.isFinite(cloud.x) ? cloud.x : (Number.isFinite(cloud.position?.x) ? cloud.position.x : 0);
+        const cz = Number.isFinite(cloud.z) ? cloud.z : (Number.isFinite(cloud.position?.z) ? cloud.position.z : 0);
+        const dx = x - cx;
+        const dz = z - cz;
+        if (dx * dx + dz * dz <= radius * radius) {
+          const m = Number(CONFIG.AI_SMOKE_GUNSHOT_NOISE_MULT);
+          return Number.isFinite(m) ? Math.max(0.1, Math.min(1.0, m)) : 0.75;
+        }
+      }
+      return 1.0;
+    })();
+
+    const payload = {
       kind: 'gunshot',
-      radius: CONFIG.AI_NOISE_GUNSHOT_RADIUS ?? 18,
+      radius: (CONFIG.AI_NOISE_GUNSHOT_RADIUS ?? 18) * radiusMult * modNoise * smokeMult,
       ttl: CONFIG.AI_NOISE_TTL_GUNSHOT ?? 1.2,
       strength,
       source: 'player'
-    });
+    };
+
+    if (this.eventBus?.emit) {
+      this.eventBus.emit(EVENTS.NOISE_REQUESTED, { position: origin, ...payload });
+      return;
+    }
+
+    // Fallback: direct registration (legacy path when no event bus is wired).
+    if (this.projectileManager?.registerNoise) {
+      this.projectileManager.registerNoise(origin, payload);
+    }
   }
 
   getCameraObject() {
@@ -605,11 +847,13 @@ export class Gun {
       weaponName: def.name || def.id,
       weaponId: def.id,
       ammoInMag: state.ammoInMag || 0,
-      magSize: def.magSize || 0,
+      magSize: this.getEffectiveMagSize(def),
       ammoReserve: state.ammoReserve || 0,
       isReloading,
       reloadProgress,
       modeLabel,
+      weaponMods: this.getWeaponMods(def.id),
+      weaponModSlots: this.getWeaponModSlots(def),
       skills: this.getSkillHud()
     };
   }
@@ -697,6 +941,15 @@ export class Gun {
       activeWeaponId: this.activeWeaponId,
       weaponSwapCooldown: Math.max(0, Number(this.weaponSwapCooldown) || 0),
       weaponStates,
+      weaponMods: (() => {
+        const out = {};
+        for (const id of this.weaponOrder) {
+          const list = this.weaponMods.get(id);
+          if (!Array.isArray(list) || list.length === 0) continue;
+          out[id] = Array.from(list);
+        }
+        return out;
+      })(),
       skills: {
         grenade: { cooldown: Math.max(0, Number(this.skills?.grenade?.cooldown) || 0) },
         emp: { cooldown: Math.max(0, Number(this.skills?.emp?.cooldown) || 0) }
@@ -735,6 +988,21 @@ export class Gun {
     if (skills) {
       if (this.skills?.grenade) this.skills.grenade.cooldown = Math.max(0, Number(skills?.grenade?.cooldown) || 0);
       if (this.skills?.emp) this.skills.emp.cooldown = Math.max(0, Number(skills?.emp?.cooldown) || 0);
+    }
+
+    this.weaponMods.clear();
+    const mods = d.weaponMods && typeof d.weaponMods === 'object' ? d.weaponMods : null;
+    if (mods) {
+      for (const [weaponId, list] of Object.entries(mods)) {
+        if (!this.weaponDefs?.[weaponId] || !Array.isArray(list)) continue;
+        const next = [];
+        for (const m of list) {
+          const id = String(m || '').trim();
+          if (!id) continue;
+          next.push(id);
+        }
+        if (next.length > 0) this.weaponMods.set(weaponId, next);
+      }
     }
 
     this.syncWeaponViewModel();

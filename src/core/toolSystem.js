@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { EVENTS } from './events.js';
+import { TILE_TYPES } from '../world/tileTypes.js';
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -40,6 +41,9 @@ export class ToolSystem {
 
     this.devices = [];
     this.smokeClouds = [];
+    this.decoyGhosts = [];
+    this.delayedNoises = [];
+    this.tempObstacles = [];
     this.maxDevices = Math.max(0, Math.round(CONFIG.TOOL_MAX_ACTIVE_DEVICES ?? 6));
     this.levelConfig = null;
 
@@ -80,6 +84,15 @@ export class ToolSystem {
   }
 
   clear() {
+    // Restore temporary obstacles (e.g. door wedges).
+    if (this.worldState?.setObstacle && Array.isArray(this.tempObstacles)) {
+      for (const o of this.tempObstacles) {
+        if (!o) continue;
+        this.worldState.setObstacle(o.x, o.y, false);
+      }
+    }
+    this.tempObstacles = [];
+
     for (const d of this.devices) {
       if (d?.mesh) {
         try {
@@ -101,6 +114,8 @@ export class ToolSystem {
       }
     }
     this.smokeClouds = [];
+    this.decoyGhosts = [];
+    this.delayedNoises = [];
     if (this.worldState) {
       this.worldState.smokeClouds = this.smokeClouds;
     }
@@ -155,11 +170,36 @@ export class ToolSystem {
 
     if (kind === 'decoy_grenade') {
       this.triggerDecoy(vec3From(hitPos));
+    } else if (kind === 'decoy_grenade_delay') {
+      const pos = vec3From(hitPos);
+      this.triggerDecoy(pos);
+      const delay = Math.max(0.15, Number(CONFIG.TOOL_DECOY_DELAY_SECONDS) || 2.75);
+      const boomRadius = Math.max(8, Math.round(Number(CONFIG.TOOL_DECOY_DELAY_BOOM_RADIUS) || 28));
+      this.delayedNoises.push({
+        kind: 'delayedBoom',
+        position: pos.clone(),
+        timer: delay,
+        radius: boomRadius
+      });
     } else if (kind === 'smoke_grenade') {
       this.triggerSmoke(vec3From(hitPos));
+    } else if (kind === 'smoke_grenade_weak') {
+      this.triggerSmoke(vec3From(hitPos), { variant: 'weak' });
+    } else if (kind === 'smoke_grenade_strong') {
+      this.triggerSmoke(vec3From(hitPos), { variant: 'strong' });
     } else if (kind === 'flash_grenade') {
       this.triggerFlash(vec3From(hitPos));
     }
+  }
+
+  queryInventoryCount(itemId) {
+    const id = normalizeItemId(itemId);
+    if (!id) return 0;
+    const bus = this.eventBus;
+    if (!bus?.emit) return 0;
+    const query = { itemId: id, result: null };
+    bus.emit(EVENTS.INVENTORY_QUERY_ITEM, query);
+    return Math.max(0, Math.round(Number(query.result?.count) || 0));
   }
 
   getThrowRay() {
@@ -230,7 +270,11 @@ export class ToolSystem {
   }
 
   throwDecoy() {
-    const ok = this.throwTool('decoy', 'decoy_grenade', {
+    const wantsAlt = !!(this.player?.input?.isKeyPressed?.('ShiftLeft') || this.player?.input?.isKeyPressed?.('ShiftRight'));
+    const hasDelay = this.queryInventoryCount('decoy_delay') > 0;
+    const itemId = wantsAlt && hasDelay ? 'decoy_delay' : 'decoy';
+    const kind = wantsAlt && hasDelay ? 'decoy_grenade_delay' : 'decoy_grenade';
+    const ok = this.throwTool(itemId, kind, {
       speed: Number(CONFIG.TOOL_DECOY_SPEED) || 18,
       lifetime: Number(CONFIG.TOOL_DECOY_LIFETIME) || 3.2,
       color: 0xff7043,
@@ -238,13 +282,52 @@ export class ToolSystem {
     });
     if (ok) {
       this.audioManager?.playToolThrow?.('decoy');
-      this.emitToast('Decoy thrown [7]', 1.1);
+      this.emitToast(itemId === 'decoy_delay' ? 'Delayed decoy thrown [7]' : 'Decoy thrown [7]', 1.1);
+    }
+    return ok;
+  }
+
+  throwDecoyDelay() {
+    if (this.queryInventoryCount('decoy_delay') <= 0) {
+      this.emitToast('Need Delayed Decoy (pickup to use)', 1.4);
+      return false;
+    }
+    const ok = this.throwTool('decoy_delay', 'decoy_grenade_delay', {
+      speed: Number(CONFIG.TOOL_DECOY_SPEED) || 18,
+      lifetime: Number(CONFIG.TOOL_DECOY_LIFETIME) || 3.2,
+      color: 0xff7043,
+      canHitMonsters: true
+    });
+    if (ok) {
+      this.audioManager?.playToolThrow?.('decoy');
+      this.emitToast('Delayed decoy thrown [7]', 1.1);
     }
     return ok;
   }
 
   throwSmoke() {
-    const ok = this.throwTool('smoke', 'smoke_grenade', {
+    const wantsAlt = !!(this.player?.input?.isKeyPressed?.('ShiftLeft') || this.player?.input?.isKeyPressed?.('ShiftRight'));
+    const haveStrong = this.queryInventoryCount('smoke_strong') > 0;
+    const haveNormal = this.queryInventoryCount('smoke') > 0;
+    const haveWeak = this.queryInventoryCount('smoke_weak') > 0;
+
+    let itemId = null;
+    let projKind = null;
+    if (wantsAlt) {
+      if (haveStrong) { itemId = 'smoke_strong'; projKind = 'smoke_grenade_strong'; }
+      else if (haveNormal) { itemId = 'smoke'; projKind = 'smoke_grenade'; }
+      else if (haveWeak) { itemId = 'smoke_weak'; projKind = 'smoke_grenade_weak'; }
+    } else {
+      if (haveNormal) { itemId = 'smoke'; projKind = 'smoke_grenade'; }
+      else if (haveWeak) { itemId = 'smoke_weak'; projKind = 'smoke_grenade_weak'; }
+      else if (haveStrong) { itemId = 'smoke_strong'; projKind = 'smoke_grenade_strong'; }
+    }
+    if (!itemId || !projKind) {
+      this.emitToast('Need Smoke (pickup to use)', 1.4);
+      return false;
+    }
+
+    const ok = this.throwTool(itemId, projKind, {
       speed: Number(CONFIG.TOOL_SMOKE_SPEED) || 16.5,
       lifetime: Number(CONFIG.TOOL_SMOKE_LIFETIME) || 2.8,
       color: 0xb0bec5,
@@ -252,7 +335,44 @@ export class ToolSystem {
     });
     if (ok) {
       this.audioManager?.playToolThrow?.('smoke');
-      this.emitToast('Smoke thrown [8]', 1.1);
+      const label = itemId === 'smoke_strong' ? 'Strong smoke' : (itemId === 'smoke_weak' ? 'Weak smoke' : 'Smoke');
+      this.emitToast(`${label} thrown [8]`, 1.1);
+    }
+    return ok;
+  }
+
+  throwSmokeStrong() {
+    if (this.queryInventoryCount('smoke_strong') <= 0) {
+      this.emitToast('Need Strong Smoke (pickup to use)', 1.4);
+      return false;
+    }
+    const ok = this.throwTool('smoke_strong', 'smoke_grenade_strong', {
+      speed: Number(CONFIG.TOOL_SMOKE_SPEED) || 16.5,
+      lifetime: Number(CONFIG.TOOL_SMOKE_LIFETIME) || 2.8,
+      color: 0xb0bec5,
+      canHitMonsters: true
+    });
+    if (ok) {
+      this.audioManager?.playToolThrow?.('smoke');
+      this.emitToast('Strong smoke thrown [8]', 1.1);
+    }
+    return ok;
+  }
+
+  throwSmokeWeak() {
+    if (this.queryInventoryCount('smoke_weak') <= 0) {
+      this.emitToast('Need Weak Smoke (pickup to use)', 1.4);
+      return false;
+    }
+    const ok = this.throwTool('smoke_weak', 'smoke_grenade_weak', {
+      speed: Number(CONFIG.TOOL_SMOKE_SPEED) || 16.5,
+      lifetime: Number(CONFIG.TOOL_SMOKE_LIFETIME) || 2.8,
+      color: 0xb0bec5,
+      canHitMonsters: true
+    });
+    if (ok) {
+      this.audioManager?.playToolThrow?.('smoke');
+      this.emitToast('Weak smoke thrown [8]', 1.1);
     }
     return ok;
   }
@@ -303,6 +423,22 @@ export class ToolSystem {
       strength: 1.0,
       source: 'player'
     });
+
+    // Decoy footsteps sequence: emit a few "fake footsteps" around the impact point.
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const duration = 8.0;
+    const pulseInterval = 0.35;
+    const roamRadius = Math.max(2.5, tileSize * 2.2);
+    this.decoyGhosts.push({
+      kind: 'decoyGhost',
+      position: pos.clone(),
+      life: duration,
+      maxLife: duration,
+      pulseTimer: 0,
+      pulseInterval,
+      roamRadius,
+      target: null
+    });
   }
 
   createSmokeCloudMesh(radius = 3.8) {
@@ -340,12 +476,26 @@ export class ToolSystem {
     }
   }
 
-  triggerSmoke(position) {
+  triggerSmoke(position, options = {}) {
     const pos = vec3From(position);
     pos.y = 0;
     this.audioManager?.playToolTrigger?.('smoke');
-    const radius = Math.max(0.5, Number(CONFIG.TOOL_SMOKE_RADIUS) || 3.8);
-    const duration = Math.max(0.5, Number(CONFIG.TOOL_SMOKE_DURATION) || 12.0);
+    const baseRadius = Math.max(0.5, Number(CONFIG.TOOL_SMOKE_RADIUS) || 3.8);
+    const baseDuration = Math.max(0.5, Number(CONFIG.TOOL_SMOKE_DURATION) || 12.0);
+    const variant = String(options?.variant || '').toLowerCase();
+    const rMult = variant === 'weak'
+      ? (Number.isFinite(CONFIG.TOOL_SMOKE_WEAK_RADIUS_MULT) ? CONFIG.TOOL_SMOKE_WEAK_RADIUS_MULT : 0.75)
+      : (variant === 'strong'
+        ? (Number.isFinite(CONFIG.TOOL_SMOKE_STRONG_RADIUS_MULT) ? CONFIG.TOOL_SMOKE_STRONG_RADIUS_MULT : 1.35)
+        : 1.0);
+    const dMult = variant === 'weak'
+      ? (Number.isFinite(CONFIG.TOOL_SMOKE_WEAK_DURATION_MULT) ? CONFIG.TOOL_SMOKE_WEAK_DURATION_MULT : 0.65)
+      : (variant === 'strong'
+        ? (Number.isFinite(CONFIG.TOOL_SMOKE_STRONG_DURATION_MULT) ? CONFIG.TOOL_SMOKE_STRONG_DURATION_MULT : 1.35)
+        : 1.0);
+
+    const radius = Math.max(0.5, baseRadius * rMult);
+    const duration = Math.max(0.5, baseDuration * dMult);
 
     const mesh = this.createSmokeCloudMesh(radius);
     mesh.position.set(pos.x, 0.65, pos.z);
@@ -365,6 +515,230 @@ export class ToolSystem {
       this.worldState.smokeClouds = this.smokeClouds;
     }
     this.ensureSmokeCapacity(8);
+  }
+
+  deployGlowstick() {
+    const res = this.consumeInventory('glowstick', 1);
+    if (!res.ok) {
+      this.emitToast('Need Glowstick (pickup to use)', 1.4);
+      return false;
+    }
+
+    const pos = this.getPlayerPlacementPosition(0.75);
+    if (!pos) return false;
+    const mesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, 0.5, 10),
+      new THREE.MeshStandardMaterial({
+        color: 0x66ff99,
+        emissive: 0x33ff88,
+        emissiveIntensity: 0.9,
+        roughness: 0.35,
+        metalness: 0.05
+      })
+    );
+    mesh.rotation.z = Math.PI / 2;
+    mesh.position.set(pos.x, 0.18, pos.z);
+    this.scene?.add?.(mesh);
+
+    const duration = Math.max(3, Number(CONFIG.TOOL_GLOWSTICK_DURATION) || 150);
+    this.devices.push({
+      kind: 'glowstick',
+      mesh,
+      position: pos.clone(),
+      life: duration,
+      maxLife: duration,
+      anim: Math.random() * 10
+    });
+    this.ensureDeviceCapacity();
+    this.emitToast('Glowstick placed [T]', 1.2);
+    return true;
+  }
+
+  useScentSpray() {
+    const res = this.consumeInventory('scent_spray', 1);
+    if (!res.ok) {
+      this.emitToast('Need Scent Spray (pickup to use)', 1.4);
+      return false;
+    }
+    const seconds = Math.max(1, Number(CONFIG.TOOL_SCENT_SPRAY_SECONDS) || 14);
+    const radiusMult = Number.isFinite(CONFIG.TOOL_SCENT_SPRAY_SCENT_RADIUS_MULT) ? CONFIG.TOOL_SCENT_SPRAY_SCENT_RADIUS_MULT : 0.65;
+    const strengthMult = Number.isFinite(CONFIG.TOOL_SCENT_SPRAY_SCENT_STRENGTH_MULT) ? CONFIG.TOOL_SCENT_SPRAY_SCENT_STRENGTH_MULT : 0.45;
+    const now = this.gameState?.getElapsedTime?.() ?? 0;
+    const untilSec = Math.max(0, Math.round(now + seconds));
+    this.player?.setPerceptionModifiers?.({
+      scentRadiusMult: radiusMult,
+      scentStrengthMult: strengthMult,
+      untilSec
+    });
+    const playerPos = this.player?.getPosition?.() || null;
+    if (playerPos) {
+      this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+        source: 'player',
+        kind: 'scent_spray',
+        strength: 0.3,
+        position: playerPos.clone(),
+        radius: 6,
+        ttl: 0.6
+      });
+    }
+    this.audioManager?.playToolTrigger?.('jammer');
+    this.emitToast('Scent masked [H]', 1.4);
+    return true;
+  }
+
+  useSonarPulse() {
+    const res = this.consumeInventory('sonar_pulse', 1);
+    if (!res.ok) {
+      this.emitToast('Need Sonar (pickup to use)', 1.4);
+      return false;
+    }
+    const playerGrid = this.player?.getGridPosition?.() || null;
+    if (!playerGrid || !Number.isFinite(playerGrid.x) || !Number.isFinite(playerGrid.y)) {
+      this.emitToast('Sonar: no contact nearby [Z]', 1.4);
+      return true;
+    }
+    const monsters = this.monsterManager?.getMonsterPositions?.() || [];
+    let best = null;
+    let bestD = Infinity;
+    for (const m of monsters) {
+      if (!m || !Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
+      const d = Math.abs(m.x - playerGrid.x) + Math.abs(m.y - playerGrid.y);
+      if (d < bestD) {
+        bestD = d;
+        best = m;
+      }
+    }
+    const maxTiles = Math.max(1, Math.round(Number(CONFIG.TOOL_SONAR_RADIUS) || 10));
+    if (best && bestD <= maxTiles) {
+      const dx = best.x - playerGrid.x;
+      const dy = best.y - playerGrid.y;
+      const horiz = dx === 0 ? '' : (dx > 0 ? 'E' : 'W');
+      const vert = dy === 0 ? '' : (dy > 0 ? 'S' : 'N');
+      const dir = `${vert}${horiz}` || 'nearby';
+      this.emitToast(`Sonar: contact ${dir} (${bestD} tiles) [Z]`, 1.6);
+    } else {
+      this.emitToast('Sonar: no contact nearby [Z]', 1.4);
+    }
+    const playerPos = this.player?.getPosition?.() || null;
+    if (playerPos) {
+      this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+        source: 'player',
+        kind: 'sonar',
+        strength: 0.75,
+        position: playerPos.clone(),
+        radius: Math.max(6, Math.round(Number(CONFIG.TOOL_SONAR_NOISE_RADIUS) || 14)),
+        ttl: 0.9
+      });
+    }
+    this.audioManager?.playToolTrigger?.('sensor');
+    return true;
+  }
+
+  deployFakeHack() {
+    const res = this.consumeInventory('fake_hack', 1);
+    if (!res.ok) {
+      this.emitToast('Need Fake Hack (pickup to use)', 1.4);
+      return false;
+    }
+    const pos = this.getPlayerPlacementPosition(1.05);
+    if (!pos) return false;
+
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.42, 0.62, 0.3),
+      new THREE.MeshStandardMaterial({
+        color: 0x1e88e5,
+        emissive: 0x64b5f6,
+        emissiveIntensity: 0.7,
+        roughness: 0.45,
+        metalness: 0.08
+      })
+    );
+    mesh.position.set(pos.x, 0.32, pos.z);
+    this.scene?.add?.(mesh);
+
+    const duration = Math.max(2, Number(CONFIG.TOOL_FAKE_TERMINAL_DURATION) || 16);
+    const interval = Math.max(0.2, Number(CONFIG.TOOL_FAKE_TERMINAL_PULSE_INTERVAL) || 0.9);
+    const noiseRadius = Math.max(6, Math.round(Number(CONFIG.TOOL_FAKE_TERMINAL_NOISE_RADIUS) || 24));
+    this.devices.push({
+      kind: 'fakeTerminal',
+      mesh,
+      position: pos.clone(),
+      life: duration,
+      maxLife: duration,
+      pulseTimer: 0,
+      pulseInterval: interval,
+      noiseRadius,
+      anim: 0
+    });
+    this.ensureDeviceCapacity();
+    this.audioManager?.playToolDeploy?.('sensor');
+    this.emitToast('Fake upload beacon deployed [Y]', 1.4);
+    return true;
+  }
+
+  deployDoorWedge() {
+    const res = this.consumeInventory('door_wedge', 1);
+    if (!res.ok) {
+      this.emitToast('Need Door Wedge (pickup to use)', 1.4);
+      return false;
+    }
+    const ws = this.worldState;
+    const playerGrid = this.player?.getGridPosition?.() || null;
+    if (!ws || !playerGrid || !ws.getTile || !ws.setObstacle) return false;
+
+    const dirs = [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 }
+    ];
+    let door = null;
+    for (const d of dirs) {
+      const x = playerGrid.x + d.dx;
+      const y = playerGrid.y + d.dy;
+      if (ws.getTile(x, y) === TILE_TYPES.DOOR) {
+        door = { x, y };
+        break;
+      }
+    }
+    if (!door) {
+      this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: 'player', itemId: 'door_wedge', count: 1 });
+      this.emitToast('No door nearby to wedge', 1.3);
+      return false;
+    }
+
+    ws.setObstacle(door.x, door.y, true);
+    this.tempObstacles.push({ x: door.x, y: door.y });
+
+    const ts = CONFIG.TILE_SIZE || 1;
+    const pos = new THREE.Vector3((door.x + 0.5) * ts, 0, (door.y + 0.5) * ts);
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.32, 0.12, 0.32),
+      new THREE.MeshStandardMaterial({
+        color: 0xff1744,
+        emissive: 0xff5252,
+        emissiveIntensity: 0.55,
+        roughness: 0.55,
+        metalness: 0.05
+      })
+    );
+    mesh.position.set(pos.x, 0.08, pos.z);
+    this.scene?.add?.(mesh);
+
+    const duration = Math.max(1, Number(CONFIG.TOOL_DOOR_WEDGE_DURATION) || 12);
+    this.devices.push({
+      kind: 'doorWedge',
+      mesh,
+      position: pos.clone(),
+      gridPos: { x: door.x, y: door.y },
+      life: duration,
+      maxLife: duration,
+      anim: 0
+    });
+    this.ensureDeviceCapacity();
+    this.audioManager?.playToolDeploy?.('trap');
+    this.emitToast('Door wedged [G]', 1.3);
+    return true;
   }
 
   triggerFlash(position) {
@@ -413,6 +787,12 @@ export class ToolSystem {
     if (this.maxDevices <= 0) return;
     while (this.devices.length > this.maxDevices) {
       const oldest = this.devices.shift();
+      if (oldest?.kind === 'doorWedge' && oldest?.gridPos && this.worldState?.setObstacle) {
+        this.worldState.setObstacle(oldest.gridPos.x, oldest.gridPos.y, false);
+        if (Array.isArray(this.tempObstacles)) {
+          this.tempObstacles = this.tempObstacles.filter((o) => !(o && o.x === oldest.gridPos.x && o.y === oldest.gridPos.y));
+        }
+      }
       if (oldest?.mesh) {
         try {
           this.scene?.remove?.(oldest.mesh);
@@ -566,27 +946,54 @@ export class ToolSystem {
   }
 
   deployLure() {
-    const res = this.consumeInventory('lure', 1);
+    const wantsAlt = !!(this.player?.input?.isKeyPressed?.('ShiftLeft') || this.player?.input?.isKeyPressed?.('ShiftRight'));
+    const hasSticky = this.queryInventoryCount('lure_sticky') > 0;
+    const itemId = wantsAlt && hasSticky ? 'lure_sticky' : 'lure';
+
+    const res = this.consumeInventory(itemId, 1);
     if (!res.ok) {
       this.emitToast('Need Lure (pickup to use)', 1.4);
       return false;
     }
 
-    const pos = this.getPlayerPlacementPosition(1.2);
+    const ws = this.worldState;
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    let pos = this.getPlayerPlacementPosition(1.2);
     if (!pos) return false;
+
+    // Sticky lure: bias placement toward the nearest wall in front of the player (if any).
+    if (itemId === 'lure_sticky' && ws?.getTile && this.player?.getGridPosition) {
+      const grid = this.player.getGridPosition();
+      const forward = this.player?.camera?.getForwardVector ? this.player.camera.getForwardVector() : null;
+      let dx = 0;
+      let dy = 0;
+      if (forward && forward.isVector3) {
+        const ax = Math.abs(forward.x);
+        const az = Math.abs(forward.z);
+        if (ax >= az) dx = forward.x >= 0 ? 1 : -1;
+        else dy = forward.z >= 0 ? 1 : -1;
+      }
+      const wx = grid.x + dx;
+      const wy = grid.y + dy;
+      if (ws.getTile(wx, wy) === TILE_TYPES.WALL) {
+        const center = new THREE.Vector3((grid.x + 0.5) * tileSize, 0, (grid.y + 0.5) * tileSize);
+        const off = new THREE.Vector3(dx, 0, dy).multiplyScalar(tileSize * 0.35);
+        pos = center.add(off);
+      }
+    }
 
     const mesh = this.createLureDeviceMesh();
     mesh.position.copy(pos);
     this.scene?.add?.(mesh);
 
-    const duration = Math.max(0.5, Number(CONFIG.TOOL_LURE_DURATION) || 10);
+    const duration = Math.max(0.5, Number(CONFIG.TOOL_LURE_DURATION) || 10) * (itemId === 'lure_sticky' ? 1.4 : 1.0);
     const pulseInterval = Math.max(0.15, Number(CONFIG.TOOL_LURE_PULSE_INTERVAL) || 0.45);
-    const noiseRadius = Math.max(1, Math.round(CONFIG.TOOL_LURE_NOISE_RADIUS ?? 14));
+    const noiseRadius = Math.max(1, Math.round((CONFIG.TOOL_LURE_NOISE_RADIUS ?? 14) * (itemId === 'lure_sticky' ? 1.15 : 1.0)));
     const noiseTtl = Math.max(0.2, Number(CONFIG.TOOL_LURE_NOISE_TTL) || 0.9);
     const strength = clamp(Number(CONFIG.TOOL_LURE_NOISE_STRENGTH) || 0.8, 0, 1);
 
     const scentRadius = Math.max(1, Math.round(CONFIG.TOOL_LURE_SCENT_RADIUS ?? 12));
-    const scentTtl = Math.max(0.5, Number(CONFIG.TOOL_LURE_SCENT_TTL) || 14);
+    const scentTtl = Math.max(0.5, Number(CONFIG.TOOL_LURE_SCENT_TTL) || 14) * (itemId === 'lure_sticky' ? 1.35 : 1.0);
     this.monsterManager?.registerScent?.(pos, {
       kind: 'lure',
       radius: scentRadius,
@@ -596,7 +1003,7 @@ export class ToolSystem {
     });
 
     this.devices.push({
-      kind: 'lure',
+      kind: itemId,
       mesh,
       position: pos.clone(),
       life: duration,
@@ -606,11 +1013,89 @@ export class ToolSystem {
       noiseRadius,
       noiseTtl,
       strength,
+      scentRadius,
+      scentTtl,
       anim: 0
     });
     this.ensureDeviceCapacity();
     this.audioManager?.playToolDeploy?.('lure');
-    this.emitToast('Lure deployed [4]', 1.2);
+    this.emitToast(itemId === 'lure_sticky' ? 'Wall lure deployed [4]' : 'Lure deployed [4]', 1.2);
+    return true;
+  }
+
+  deployLureSticky() {
+    const res = this.consumeInventory('lure_sticky', 1);
+    if (!res.ok) {
+      return this.deployLure();
+    }
+
+    const ws = this.worldState;
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    let pos = this.getPlayerPlacementPosition(1.2);
+    if (!pos) {
+      this.eventBus?.emit?.(EVENTS.INVENTORY_GIVE_ITEM, { actorKind: 'player', itemId: 'lure_sticky', count: 1 });
+      return false;
+    }
+
+    // Sticky lure: bias placement toward the nearest wall in front of the player (if any).
+    if (ws?.getTile && this.player?.getGridPosition) {
+      const grid = this.player.getGridPosition();
+      const forward = this.player?.camera?.getForwardVector ? this.player.camera.getForwardVector() : null;
+      let dx = 0;
+      let dy = 0;
+      if (forward && forward.isVector3) {
+        const ax = Math.abs(forward.x);
+        const az = Math.abs(forward.z);
+        if (ax >= az) dx = forward.x >= 0 ? 1 : -1;
+        else dy = forward.z >= 0 ? 1 : -1;
+      }
+      const wx = grid.x + dx;
+      const wy = grid.y + dy;
+      if (ws.getTile(wx, wy) === TILE_TYPES.WALL) {
+        const center = new THREE.Vector3((grid.x + 0.5) * tileSize, 0, (grid.y + 0.5) * tileSize);
+        const off = new THREE.Vector3(dx, 0, dy).multiplyScalar(tileSize * 0.35);
+        pos = center.add(off);
+      }
+    }
+
+    const mesh = this.createLureDeviceMesh();
+    mesh.position.copy(pos);
+    this.scene?.add?.(mesh);
+
+    const duration = Math.max(0.5, Number(CONFIG.TOOL_LURE_DURATION) || 10) * 1.4;
+    const pulseInterval = Math.max(0.15, Number(CONFIG.TOOL_LURE_PULSE_INTERVAL) || 0.45);
+    const noiseRadius = Math.max(1, Math.round((CONFIG.TOOL_LURE_NOISE_RADIUS ?? 14) * 1.15));
+    const noiseTtl = Math.max(0.2, Number(CONFIG.TOOL_LURE_NOISE_TTL) || 0.9);
+    const strength = clamp(Number(CONFIG.TOOL_LURE_NOISE_STRENGTH) || 0.8, 0, 1);
+
+    const scentRadius = Math.max(1, Math.round(CONFIG.TOOL_LURE_SCENT_RADIUS ?? 12));
+    const scentTtl = Math.max(0.5, Number(CONFIG.TOOL_LURE_SCENT_TTL) || 14) * 1.35;
+    this.monsterManager?.registerScent?.(pos, {
+      kind: 'lure',
+      radius: scentRadius,
+      ttl: scentTtl,
+      strength: 1.0,
+      source: 'player'
+    });
+
+    this.devices.push({
+      kind: 'lure_sticky',
+      mesh,
+      position: pos.clone(),
+      life: duration,
+      maxLife: duration,
+      pulseTimer: 0,
+      pulseInterval,
+      noiseRadius,
+      noiseTtl,
+      strength,
+      scentRadius,
+      scentTtl,
+      anim: 0
+    });
+    this.ensureDeviceCapacity();
+    this.audioManager?.playToolDeploy?.('lure');
+    this.emitToast('Wall lure deployed [4]', 1.2);
     return true;
   }
 
@@ -765,6 +1250,11 @@ export class ToolSystem {
     if (input.consumeKeyPress('Digit9')) this.throwFlash();
     if (input.consumeKeyPress('Digit0')) this.deploySensor();
     if (input.consumeKeyPress('KeyV')) this.deployMine();
+    if (input.consumeKeyPress('KeyH')) this.useScentSpray();
+    if (input.consumeKeyPress('KeyT')) this.deployGlowstick();
+    if (input.consumeKeyPress('KeyZ')) this.useSonarPulse();
+    if (input.consumeKeyPress('KeyY')) this.deployFakeHack();
+    if (input.consumeKeyPress('KeyG')) this.deployDoorWedge();
   }
 
   updateDevices(dt) {
@@ -779,29 +1269,67 @@ export class ToolSystem {
       d.life -= dt;
       if (d.life <= 0) {
         this.scene?.remove?.(d.mesh);
+        if (d.kind === 'doorWedge' && d.gridPos && this.worldState?.setObstacle) {
+          this.worldState.setObstacle(d.gridPos.x, d.gridPos.y, false);
+          if (Array.isArray(this.tempObstacles)) {
+            this.tempObstacles = this.tempObstacles.filter((o) => !(o && o.x === d.gridPos.x && o.y === d.gridPos.y));
+          }
+        }
         this.devices.splice(i, 1);
         continue;
       }
 
       d.anim = (d.anim || 0) + dt;
 
-      if (d.kind === 'lure') {
+      if (d.kind === 'lure' || d.kind === 'lure_sticky') {
         d.pulseTimer = (d.pulseTimer || 0) + dt;
         const orb = d.mesh?.userData?.__orb || null;
         if (orb) {
           const pulse = 1 + Math.sin(d.anim * 7.0) * 0.08;
           orb.scale.setScalar(pulse);
         }
-        if (d.pulseTimer >= (d.pulseInterval || 0.45)) {
+        const lifeRatio = d.maxLife > 0 ? Math.max(0, Math.min(1, (d.life || 0) / d.maxLife)) : 0;
+        const progress = 1 - lifeRatio;
+        const baseStrength = Number(d.strength) || 0.8;
+        const strength = clamp(baseStrength * (0.7 + progress * 0.7), 0, 1);
+        const radius = Math.max(1, Math.round((Number(d.noiseRadius) || 14) * (0.85 + progress * 0.35)));
+        const ttl = Math.max(0.2, Number(d.noiseTtl) || 0.9);
+        const interval = Math.max(0.18, Number(d.pulseInterval) || 0.45);
+
+        if (d.pulseTimer >= interval) {
           d.pulseTimer = 0;
           this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
             source: 'player',
             kind: 'lure',
-            strength: d.strength ?? 0.8,
+            strength,
             position: d.position,
-            radius: d.noiseRadius ?? 14,
-            ttl: d.noiseTtl ?? 0.9
+            radius,
+            ttl
           });
+
+          // Periodically refresh lure scent so monsters can track it even when LOS is blocked.
+          if (mm?.registerScent && Math.random() < 0.65) {
+            const sRad = Math.max(1, Math.round(Number(d.scentRadius) || 12));
+            const sTtl = Math.max(0.5, Number(d.scentTtl) || 14);
+            mm.registerScent(d.position, { kind: 'lure', radius: sRad, ttl: sTtl, strength: 1.0, source: 'player' });
+          }
+        }
+      } else if (d.kind === 'fakeTerminal') {
+        d.pulseTimer = (d.pulseTimer || 0) + dt;
+        const interval = Math.max(0.2, Number(d.pulseInterval) || 0.9);
+        if (d.pulseTimer >= interval) {
+          d.pulseTimer = 0;
+          this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+            source: 'player',
+            kind: 'fake_terminal',
+            strength: 0.95,
+            position: d.position,
+            radius: Math.max(6, Math.round(Number(d.noiseRadius) || 24)),
+            ttl: 1.15
+          });
+          if (mm?.registerScent && Math.random() < 0.35) {
+            mm.registerScent(d.position, { kind: 'fake_terminal', radius: 14, ttl: 10, strength: 1.0, source: 'player' });
+          }
         }
       } else if (d.kind === 'trap') {
         const ring = d.mesh?.userData?.__ring || null;
@@ -939,6 +1467,62 @@ export class ToolSystem {
     }
   }
 
+  updateDecoyGhosts(dt) {
+    if (!this.decoyGhosts || this.decoyGhosts.length === 0) return;
+
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    for (let i = this.decoyGhosts.length - 1; i >= 0; i--) {
+      const g = this.decoyGhosts[i];
+      if (!g) {
+        this.decoyGhosts.splice(i, 1);
+        continue;
+      }
+      g.life -= dt;
+      if (g.life <= 0) {
+        this.decoyGhosts.splice(i, 1);
+        continue;
+      }
+
+      // Pick a new target occasionally.
+      if (!g.target || Math.random() < 0.02) {
+        const angle = Math.random() * Math.PI * 2;
+        const r = Math.random() * (g.roamRadius || tileSize * 2.2);
+        g.target = {
+          x: g.position.x + Math.cos(angle) * r,
+          z: g.position.z + Math.sin(angle) * r
+        };
+      }
+
+      // Drift toward target (fake "walking").
+      const tx = g.target?.x ?? g.position.x;
+      const tz = g.target?.z ?? g.position.z;
+      const dx = tx - g.position.x;
+      const dz = tz - g.position.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 0.05) {
+        const speed = 1.6 + Math.random() * 0.4;
+        const step = Math.min(dist, speed * dt);
+        g.position.x += (dx / dist) * step;
+        g.position.z += (dz / dist) * step;
+      }
+
+      g.pulseTimer = (g.pulseTimer || 0) + dt;
+      const interval = Math.max(0.18, Number(g.pulseInterval) || 0.35);
+      if (g.pulseTimer >= interval) {
+        g.pulseTimer = 0;
+        const strength = 0.75;
+        this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+          source: 'player',
+          kind: 'decoy_step',
+          strength,
+          position: { x: g.position.x, y: 0, z: g.position.z },
+          radius: Math.max(8, Math.round(tileSize * 6)),
+          ttl: 0.8
+        });
+      }
+    }
+  }
+
   updateSmokeClouds(dt) {
     for (let i = this.smokeClouds.length - 1; i >= 0; i--) {
       const c = this.smokeClouds[i];
@@ -976,7 +1560,34 @@ export class ToolSystem {
 
     this.updateInput();
     this.updateDevices(dt);
+    this.updateDecoyGhosts(dt);
+    this.updateDelayedNoises(dt);
     this.updateSmokeClouds(dt);
+  }
+
+  updateDelayedNoises(dt) {
+    if (!Array.isArray(this.delayedNoises) || this.delayedNoises.length === 0) return;
+    for (let i = this.delayedNoises.length - 1; i >= 0; i--) {
+      const e = this.delayedNoises[i];
+      if (!e) {
+        this.delayedNoises.splice(i, 1);
+        continue;
+      }
+      e.timer -= dt;
+      if (e.timer > 0) continue;
+      this.delayedNoises.splice(i, 1);
+      const pos = e.position || null;
+      if (!pos) continue;
+      this.audioManager?.playToolTrigger?.('decoy');
+      this.eventBus?.emit?.(EVENTS.NOISE_REQUESTED, {
+        source: 'player',
+        kind: 'decoy_boom',
+        strength: 1.0,
+        position: pos.clone(),
+        radius: Math.max(8, Math.round(Number(e.radius) || 28)),
+        ttl: 1.45
+      });
+    }
   }
 
   dispose() {

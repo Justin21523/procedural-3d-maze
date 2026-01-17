@@ -1,6 +1,7 @@
 import { CONFIG } from '../../core/config.js';
 import { BaseMonsterBrain } from './baseBrain.js';
 import { canSeePlayer as canSeePlayerGrid } from '../components/perception/vision.js';
+import { SearchModule } from '../components/perception/search.js';
 
 /**
  * DistanceStalkerBrain
@@ -63,8 +64,27 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
 
     this.mode = 'wander'; // 'wander' | 'follow'
     this.lastDetectedTime = 0;
+    this.lastSeenPlayerGrid = null;
+    this.lastSeenDir = null;
     this.lastKnownPlayerGrid = null;
     this.desiredTarget = null;
+
+    // Search after losing contact
+    this.searchUntil = 0;
+    this.searchStartedAt = 0;
+    this.searchSweepBaseDir = null;
+    this.searchRadius =
+      config.searchRadius ??
+      (CONFIG.AI_SEARCH_RADIUS ?? 4);
+    this.searchDurationSeconds =
+      config.searchDurationSeconds ??
+      (CONFIG.AI_SEARCH_SECONDS ?? 7.0);
+    this.searchModule = new SearchModule({
+      enabled: true,
+      radius: this.searchRadius,
+      repickSeconds: 1.05,
+      visitTTL: this.visitTTL
+    });
   }
 
   playerIsSprinting() {
@@ -121,6 +141,7 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
   updateDetection(monsterGrid, playerGrid) {
     const now = this.now();
     const smelled = this.hasRecentScent(now);
+    const suppressed = this.monster?.aiChaseSuppressed === true;
 
     if (!playerGrid) {
       if (smelled && this.lastSmelledScent?.grid) {
@@ -131,15 +152,27 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
           this.currentTarget = null;
           this.lastPlanTime = 0;
         }
-        this.mode = 'follow';
+        this.mode = suppressed ? 'search' : 'follow';
+        if (suppressed) {
+          this.beginSearch(this.lastKnownPlayerGrid, now, { durationSeconds: Math.min(3.5, this.searchDurationSeconds) });
+        }
         return;
       }
-      if (this.mode !== 'wander' && now - this.lastDetectedTime > this.memoryDuration) {
-        this.mode = 'wander';
-        this.lastKnownPlayerGrid = null;
+      if (this.mode === 'follow' && now - this.lastDetectedTime > this.memoryDuration) {
+        if (this.lastKnownPlayerGrid) {
+          this.beginSearch(this.lastKnownPlayerGrid, now);
+          this.mode = 'search';
+        } else {
+          this.mode = 'wander';
+        }
         this.currentPath = [];
         this.currentTarget = null;
         this.lastPlanTime = 0;
+      }
+      if (this.mode === 'search' && now > (this.searchUntil || 0)) {
+        this.mode = 'wander';
+        this.lastKnownPlayerGrid = null;
+        this.searchModule?.reset?.();
       }
       return;
     }
@@ -152,6 +185,12 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
       this.lastDetectedTime = now;
 
       if (saw) {
+        if (this.lastSeenPlayerGrid && (playerGrid.x !== this.lastSeenPlayerGrid.x || playerGrid.y !== this.lastSeenPlayerGrid.y)) {
+          const dx = Math.sign(playerGrid.x - this.lastSeenPlayerGrid.x);
+          const dy = Math.sign(playerGrid.y - this.lastSeenPlayerGrid.y);
+          if (dx !== 0 || dy !== 0) this.lastSeenDir = { x: dx, y: dy };
+        }
+        this.lastSeenPlayerGrid = { x: playerGrid.x, y: playerGrid.y };
         this.lastKnownPlayerGrid = { x: playerGrid.x, y: playerGrid.y };
       } else if (heardNoise && this.lastHeardNoise?.grid) {
         this.lastKnownPlayerGrid = { x: this.lastHeardNoise.grid.x, y: this.lastHeardNoise.grid.y };
@@ -167,17 +206,73 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
         this.lastPlanTime = 0;
       }
 
-      this.mode = 'follow';
+      if (suppressed) {
+        this.mode = 'search';
+        this.beginSearch(this.lastKnownPlayerGrid, now, { durationSeconds: Math.min(3.5, this.searchDurationSeconds) });
+      } else {
+        this.mode = 'follow';
+      }
       return;
     }
 
     if (this.mode === 'follow' && now - this.lastDetectedTime > this.memoryDuration) {
-      this.mode = 'wander';
-      this.lastKnownPlayerGrid = null;
+      if (this.lastKnownPlayerGrid) {
+        this.beginSearch(this.lastKnownPlayerGrid, now);
+        this.mode = 'search';
+      } else {
+        this.mode = 'wander';
+      }
       this.currentPath = [];
       this.currentTarget = null;
       this.lastPlanTime = 0;
     }
+
+    if (this.mode === 'search' && now > (this.searchUntil || 0)) {
+      this.mode = 'wander';
+      this.lastKnownPlayerGrid = null;
+      this.searchModule?.reset?.();
+      this.currentPath = [];
+      this.currentTarget = null;
+      this.lastPlanTime = 0;
+    }
+  }
+
+  beginSearch(originGrid, now, options = {}) {
+    if (!originGrid) return;
+    const t = Number.isFinite(now) ? now : this.now();
+    const radius = Math.max(1, Math.min(10, Math.round(Number(options.radius ?? this.searchRadius) || 4)));
+    const preferredDir = options.preferredDir ?? this.lastSeenDir ?? null;
+    this.searchModule?.begin?.(originGrid, { radius, preferredDir });
+    this.searchStartedAt = t;
+    this.searchSweepBaseDir = preferredDir ? { x: Number(preferredDir.x) || 0, y: Number(preferredDir.y) || 0 } : null;
+    const dur = Math.max(0.5, Number(options.durationSeconds ?? this.searchDurationSeconds) || 7.0);
+    this.searchUntil = Math.max(this.searchUntil || 0, t + dur);
+  }
+
+  getSearchSweepDir(now) {
+    const base = this.searchSweepBaseDir || this.lastSeenDir || null;
+    if (!base) return null;
+    const dx = Math.sign(Number(base.x) || 0);
+    const dy = Math.sign(Number(base.y) || 0);
+    if (dx === 0 && dy === 0) return null;
+    const elapsed = Math.max(0, now - (this.searchStartedAt || now));
+    if (elapsed < 1.2) return { x: dx, y: dy };
+    if (elapsed < 2.4) return { x: -dy, y: dx };
+    if (elapsed < 3.6) return { x: dy, y: -dx };
+    return { x: -dx, y: -dy };
+  }
+
+  tickSearch(monsterGrid, now) {
+    return this.searchModule?.tick?.({
+      now,
+      monsterGrid,
+      originGrid: this.searchModule?.plan?.originGrid || null,
+      preferredDir: this.getSearchSweepDir(now) || null,
+      radius: this.searchRadius,
+      isWalkableTile: (x, y) => this.isWalkableTile(x, y),
+      visitedTiles: this.visitedTiles,
+      posKey: (pos) => this.posKey(pos)
+    }) ?? null;
   }
 
   pickWanderTarget(monsterGrid) {
@@ -282,6 +377,17 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
       return this.lastKnownPlayerGrid;
     }
 
+    if (this.mode === 'search') {
+      const now = this.now();
+      if (now > (this.searchUntil || 0)) {
+        this.mode = 'wander';
+        this.searchModule?.reset?.();
+        return this.pickWanderTarget(monsterGrid);
+      }
+      const t = this.tickSearch(monsterGrid, now);
+      if (t) return t;
+    }
+
     return this.pickWanderTarget(monsterGrid);
   }
 
@@ -304,6 +410,17 @@ export class DistanceStalkerBrain extends BaseMonsterBrain {
 
     const playerGrid = this.getPlayerGridPosition();
     this.updateDetection(monsterGrid, playerGrid);
+
+    if (this.mode === 'search') {
+      this.desiredTarget = this.pickTarget(monsterGrid);
+      this.plan(monsterGrid);
+      this.desiredTarget = null;
+      const { move, targetGrid } = this.stepAlongPath(monsterGrid);
+      const now = this.now();
+      const lookJitter = Math.sin((now || 0) * 2.2) * 0.04;
+      const lookYaw = this.computeLookYawToGrid(targetGrid) + lookJitter;
+      return { move, lookYaw, sprint: false };
+    }
 
     const followTarget = this.mode === 'follow'
       ? this.pickFollowTarget(monsterGrid, playerGrid)

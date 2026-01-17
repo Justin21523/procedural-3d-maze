@@ -1,0 +1,117 @@
+{
+  "id": 12,
+  "name": "L12 - Sync Uplink",
+  "maze": { "width": 27, "height": 27, "roomDensity": 2.45, "extraConnectionChance": 0.08 },
+  "rooms": {
+    "typeWeights": {
+      "CLASSROOM": 2.9,
+      "CLASSROOMS_BLOCK": 1.5,
+      "OFFICE": 1.6,
+      "LAB": 1.2,
+      "STORAGE": 0.85,
+      "BATHROOM": 0.75,
+      "CAFETERIA": 0.7,
+      "LIBRARY": 0.6,
+      "POOL": 0.2,
+      "GYM": 0.3,
+      "BEDROOM": 0.35
+    }
+  },
+  "features": {
+    "specialRooms": {
+      "enabled": true,
+      "medical": {
+        "enabled": true,
+        "count": 1,
+        "healAmount": 24,
+        "charges": 1,
+        "minDistFromSpawn": 7,
+        "makeNoise": true
+      },
+      "armory": {
+        "enabled": true,
+        "count": 1,
+        "ammoAmount": 45,
+        "toolCount": 2,
+        "charges": 1,
+        "minDistFromSpawn": 7
+      }
+    }
+  },
+  "monsters": {
+    "count": 4,
+    "maxCount": 6,
+    "speedMultiplier": 1.02,
+    "visionMultiplier": 0.95,
+    "memoryMultiplier": 0.9,
+    "typeWeights": { "WANDERER": 0.45, "HUNTER": 0.35, "SENTINEL": 0.2 },
+    "allowSprintTypes": ["HUNTER", "SENTINEL"]
+  },
+  "budgets": {
+    "missionObjectsMax": 55
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "sync",
+        "template": "syncActivate",
+        "required": true,
+        "params": {
+          "switches": 2,
+          "windowSec": 14,
+          "roomTypes": ["OFFICE", "LAB"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Activate both sync switches within the time window.",
+            "Use smoke/flash/jammer if monsters pressure the route."
+          ]
+        }
+      },
+      {
+        "id": "upload",
+        "template": "uploadEvidence",
+        "required": true,
+        "params": {
+          "count": 5,
+          "required": 3,
+          "itemId": "evidence",
+          "uploadSeconds": 18,
+          "uploadRadius": 2,
+          "uploadScentRadius": 16,
+          "uploadScentStrength": 1.3,
+          "roomTypesEvidence": ["CLASSROOM", "OFFICE", "CLASSROOMS_BLOCK"],
+          "roomTypesTerminal": ["OFFICE", "LAB"],
+          "minDistFromSpawn": 7,
+          "hints": [
+            "Collect evidence pickups (need 3).",
+            "Start the upload at the terminal, then stay close until it completes."
+          ]
+        }
+      },
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Go to the exit and press E to unlock it.",
+            "After unlocking, press E again to finish the level."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["sync", "upload", "unlockExit"] }
+  },
+  "player": {
+    "maxHealthMultiplier": 1.0,
+    "upgradeChoices": ["SPRINT_BOOST", "EXTRA_HEART", "MISSION_HINT", "SHORT_STEALTH"],
+    "upgradesPerLevel": 1
+  },
+  "autopilot": {
+    "avoidRadius": 5,
+    "replanInterval": 0.5,
+    "stuckSeconds": 1.0,
+    "noProgressSeconds": 0.65
+  }
+}

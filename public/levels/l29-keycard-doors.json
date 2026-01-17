@@ -1,0 +1,33 @@
+{
+  "id": 29,
+  "name": "L29 - Keycard Doors",
+  "maze": { "width": 31, "height": 31, "roomDensity": 3.0, "extraConnectionChance": 0.12 },
+  "features": {
+    "lockedDoors": {
+      "enabled": true,
+      "count": 3,
+      "minDistFromSpawn": 9,
+      "keyItemId": "keycard",
+      "keyCount": 1,
+      "reuseKey": true
+    }
+  },
+  "missions": {
+    "timeLimitSec": 0,
+    "list": [
+      {
+        "id": "unlockExit",
+        "template": "unlockExit",
+        "required": true,
+        "params": {
+          "hints": [
+            "Find a keycard, then unlock locked doors to open shortcuts.",
+            "Press E at the exit to finish."
+          ]
+        }
+      }
+    ],
+    "exit": { "requires": ["unlockExit"] }
+  }
+}
+

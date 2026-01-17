@@ -1,4 +1,5 @@
 import { EVENTS } from './events.js';
+import { CONFIG } from './config.js';
 
 export class CombatSystem {
   constructor(options = {}) {
@@ -9,6 +10,8 @@ export class CombatSystem {
     this.playerRef = options.playerRef || null;
     this.gameState = options.gameState || null;
     this.audioManager = options.audioManager || null;
+
+    this.lastPlayerImpactNoiseAt = 0;
 
     this.unsubscribers = [];
     this.bind();
@@ -101,6 +104,44 @@ export class CombatSystem {
       this.projectileManager.spawnImpact(hitPosition, projectile);
     }
 
+    // Noise: wall impacts (primarily for monster projectiles / explosives).
+    // Player gunshots already emit noise on fire; avoid doubling that signal for normal bullets.
+    const owner = String(projectile?.owner || '').toLowerCase();
+    const isExplosive = Number(projectile?.explosionRadius) > 0;
+    const playerImpactEnabled = CONFIG.AI_NOISE_IMPACT_PLAYER_ENABLED !== false;
+    const shouldEmit = owner === 'monster' || isExplosive || (owner === 'player' && playerImpactEnabled);
+    if (shouldEmit && this.eventBus?.emit) {
+      if (owner === 'player' && !isExplosive) {
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() / 1000 : Date.now() / 1000;
+        const minGap = Math.max(0, Number(CONFIG.AI_NOISE_IMPACT_PLAYER_RATE_LIMIT_SECONDS) || 0.22);
+        if (now - (this.lastPlayerImpactNoiseAt || 0) < minGap) {
+          this.handleProjectileExplosion(hitPosition, projectile);
+          return;
+        }
+        this.lastPlayerImpactNoiseAt = now;
+      }
+
+      const radiusBase = Math.max(2, Number(CONFIG.AI_NOISE_IMPACT_RADIUS) || 10);
+      const radius =
+        isExplosive ? radiusBase * 1.35 :
+        (owner === 'player' ? radiusBase * 0.35 : radiusBase);
+      const ttl = Math.max(0.05, Number(CONFIG.AI_NOISE_IMPACT_TTL) || 0.6);
+      const strengthBase = Math.max(0.05, Number(CONFIG.AI_NOISE_IMPACT_STRENGTH) || 0.7);
+      const strength =
+        isExplosive ? Math.min(1.0, strengthBase * 1.15) :
+        (owner === 'player' ? Math.max(0.1, strengthBase * 0.45) : strengthBase);
+      this.eventBus.emit(EVENTS.NOISE_REQUESTED, {
+        kind:
+          owner === 'monster' ? (isExplosive ? 'impact_explosion' : 'impact_monster') :
+          (owner === 'player' ? 'impact_player' : 'impact'),
+        position: hitPosition.clone ? hitPosition.clone() : hitPosition,
+        radius,
+        ttl,
+        strength,
+        source: projectile?.owner || projectile?.source || 'projectile'
+      });
+    }
+
     this.handleProjectileExplosion(hitPosition, projectile);
   }
 
@@ -113,6 +154,7 @@ export class CombatSystem {
       const radius = Number.isFinite(payload?.radius) ? payload.radius : 4.2;
       const stunSeconds = Number.isFinite(payload?.stunSeconds) ? payload.stunSeconds : 1.6;
       const damage = Number.isFinite(payload?.damage) ? payload.damage : 0;
+      const jamSeconds = Number.isFinite(payload?.jamSeconds) ? payload.jamSeconds : null;
 
       this.projectileManager?.spawnExplosion?.(pos, {
         color: payload?.color ?? 0x66aaff,
@@ -120,9 +162,17 @@ export class CombatSystem {
         intensity: 2.0
       });
 
+      const pseudoProjectile = {
+        owner: 'player',
+        kind: 'emp',
+        element: 'electric',
+        jamSeconds: Number.isFinite(jamSeconds) ? jamSeconds : undefined,
+        stunSeconds
+      };
       this.monsterManager?.applyAreaDamage?.(pos, radius, damage, {
         owner: 'player',
         kind: 'emp',
+        projectile: pseudoProjectile,
         stunSeconds,
         damagePlayer: false
       });
@@ -156,6 +206,7 @@ export class CombatSystem {
     this.monsterManager?.applyAreaDamage?.(hitPosition, radius, damage, {
       owner: projectile.owner,
       kind: projectile.kind,
+      projectile,
       sourceMonster: projectile.sourceMonster || null,
       excludeMonster: options.excludeMonster || null,
       stunSeconds: projectile.stunSeconds

@@ -53,16 +53,59 @@ function defaultMonsterFovRad() {
  */
 export function canSeePlayer(worldState, monsterGrid, playerGrid, visionRange = null, options = {}) {
   if (!monsterGrid || !playerGrid) return false;
-  const vr = Number.isFinite(visionRange)
+  let vr = Number.isFinite(visionRange)
     ? visionRange
     : (CONFIG.MONSTER_VISION_RANGE ?? 12);
 
   const dist = manhattan(monsterGrid, playerGrid);
-  if (dist > vr) return false;
-
   const opts = options && typeof options === 'object' ? options : {};
   const monster = opts.monster || null;
+
   if (monster && (monster.perceptionBlindedTimer || 0) > 0) return false;
+
+  // Jammed: shorter effective vision (lose target, rely on noise/search).
+  if (monster && (monster.perceptionJammedTimer || 0) > 0) {
+    const m = Number(CONFIG.AI_JAMMED_VISION_MULT);
+    const mult = Number.isFinite(m) ? clamp(m, 0.15, 1.0) : 0.65;
+    vr *= mult;
+  }
+
+  // Darkness zones: reduce effective vision when either actor is inside a dark region.
+  const darkZones = typeof worldState?.getDarkZones === 'function'
+    ? worldState.getDarkZones()
+    : (Array.isArray(worldState?.darkZones) ? worldState.darkZones : []);
+  if (Array.isArray(darkZones) && darkZones.length > 0) {
+    const tileSize = CONFIG.TILE_SIZE || 1;
+    const mx = (monsterGrid.x + 0.5) * tileSize;
+    const mz = (monsterGrid.y + 0.5) * tileSize;
+    const px = (playerGrid.x + 0.5) * tileSize;
+    const pz = (playerGrid.y + 0.5) * tileSize;
+
+    let inDark = false;
+    for (const z of darkZones) {
+      if (!z) continue;
+      const r = Number(z.radius) || 0;
+      if (!(r > 0)) continue;
+      const cx = Number.isFinite(z.x) ? z.x : (Number.isFinite(z.position?.x) ? z.position.x : 0);
+      const cz = Number.isFinite(z.z) ? z.z : (Number.isFinite(z.position?.z) ? z.position.z : 0);
+      const dxm = mx - cx;
+      const dzm = mz - cz;
+      const dxp = px - cx;
+      const dzp = pz - cz;
+      if (dxm * dxm + dzm * dzm <= r * r || dxp * dxp + dzp * dzp <= r * r) {
+        inDark = true;
+        break;
+      }
+    }
+    if (inDark) {
+      const m = Number(CONFIG.AI_DARK_VISION_MULT);
+      const mult = Number.isFinite(m) ? clamp(m, 0.15, 1.0) : 0.55;
+      vr *= mult;
+    }
+  }
+
+  if (dist > vr) return false;
+
   const requireLineOfSight = opts.requireLineOfSight !== false;
 
   if (requireLineOfSight && worldState && typeof worldState.hasLineOfSight === 'function') {

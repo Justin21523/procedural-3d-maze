@@ -713,6 +713,26 @@ export class LevelDirector {
       exitRequires.push('power');
     }
 
+    if (difficulty >= 5.0 && Math.random() < 0.45) {
+      missionList.push({
+        id: 'sync',
+        template: 'syncActivate',
+        required: true,
+        params: { switches: 3, windowSec: clamp(Math.round(18 - difficulty), 10, 18), roomTypes: [ROOM_TYPES.LAB, ROOM_TYPES.STORAGE] }
+      });
+      exitRequires.push('sync');
+    }
+
+    if (difficulty >= 5.8 && Math.random() < 0.4) {
+      missionList.push({
+        id: 'zone',
+        template: 'surviveInZone',
+        required: true,
+        params: { seconds: clamp(Math.round(18 + difficulty * 2.2), 18, 70), radius: 2, exitGraceSec: 2, roomTypes: [ROOM_TYPES.CAFETERIA, ROOM_TYPES.GYM, ROOM_TYPES.STORAGE] }
+      });
+      exitRequires.push('zone');
+    }
+
     if (difficulty >= 6.5 && Math.random() < 0.35) {
       missionList.push({
         id: 'survive',

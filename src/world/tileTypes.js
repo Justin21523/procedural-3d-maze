@@ -26,6 +26,9 @@ export const ROOM_TYPES = {
   CLASSROOMS_BLOCK: 9, // Classroom block / wing
   LAB: 10,             // Laboratory
   CAFETERIA: 11,       // Cafeteria / canteen
+  MEDICAL: 12,         // Medical room (special)
+  ARMORY: 13,          // Armory (special)
+  CONTROL: 14,         // Control / Surveillance (special)
 };
 
 /**
@@ -116,6 +119,27 @@ export const ROOM_CONFIGS = {
     floorColor: 0xa1887f,
     ceilingColor: 0xfff8e1,
     lighting: { intensity: 0.75, color: 0xfff3d6 },
+  },
+  [ROOM_TYPES.MEDICAL]: {
+    name: 'Medical',
+    wallColor: 0xf4fbff,
+    floorColor: 0x90caf9,
+    ceilingColor: 0xffffff,
+    lighting: { intensity: 0.9, color: 0xe8f5ff },
+  },
+  [ROOM_TYPES.ARMORY]: {
+    name: 'Armory',
+    wallColor: 0x2e2e2e,
+    floorColor: 0x4e342e,
+    ceilingColor: 0x3a3a3a,
+    lighting: { intensity: 0.55, color: 0xffe0b2 },
+  },
+  [ROOM_TYPES.CONTROL]: {
+    name: 'Control',
+    wallColor: 0x1e2a36,
+    floorColor: 0x263238,
+    ceilingColor: 0x1b232c,
+    lighting: { intensity: 0.7, color: 0xb3e5fc },
   },
 };
 

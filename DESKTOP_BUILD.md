@@ -50,6 +50,20 @@ npm run desktop:build
 
 Outputs are placed under `src-tauri/target/release/bundle/`.
 
+### Bundle targets
+
+By default `npm run desktop:build` selects a stable bundle per platform:
+
+- Linux: `deb`
+- macOS: `dmg`
+- Windows: `nsis`
+
+Override with:
+
+```bash
+TAURI_BUNDLES=all npm run desktop:build
+```
+
 ## Windows + macOS downloads (GitHub Releases)
 
 This repo ships desktop builds via GitHub Actions:
@@ -75,4 +89,5 @@ GitHub → Actions → `Desktop Builds` → Run workflow, and set `release_tag` 
 
 - This repo uses absolute asset paths like `/models/...` and `/textures/...`.
   - Tauri's `custom-protocol` serves the app under an internal origin so these paths work without changing the game code.
+- Diagnostic/test pages in the repo root (e.g. `diagnostic.html`, `test-ai.html`) are included in the Vite multi-page build so they work inside the packaged Tauri app too.
 - Linux note: newer distros (e.g. Ubuntu 24.04) ship WebKitGTK 4.1 (libsoup3). This repo uses Tauri v2 to match that stack.

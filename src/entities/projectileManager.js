@@ -82,6 +82,9 @@ export class ProjectileManager {
     // Event hooks (optional)
     this.onPlayerHitMonster = null;
     this.onMonsterHitPlayer = null;
+
+    // Optional extra hittables (e.g. world devices)
+    this.extraHittablesProvider = null; // () => Array<{ kind, position, radius, ref }>
   }
 
   canSpawnProjectile(owner) {
@@ -330,6 +333,10 @@ export class ProjectileManager {
     this.onMonsterHitPlayer = typeof callback === 'function' ? callback : null;
   }
 
+  setExtraHittablesProvider(provider) {
+    this.extraHittablesProvider = typeof provider === 'function' ? provider : null;
+  }
+
   registerNoise(position, options = {}) {
     if (!position) return;
 
@@ -438,6 +445,7 @@ export class ProjectileManager {
         monsterHit = null;
       }
       const playerHit = p.canHitPlayer ? this.sweepPlayer(tmpStart, tmpEnd, p.playerHitRadius ?? this.playerHitRadius) : null;
+      const deviceHit = this.sweepExtraHittables(tmpStart, tmpEnd);
 
       let hitType = null;
       let hitResult = null;
@@ -453,6 +461,10 @@ export class ProjectileManager {
       if (playerHit && (!hitResult || playerHit.t < hitResult.t)) {
         hitType = 'player';
         hitResult = playerHit;
+      }
+      if (deviceHit && (!hitResult || deviceHit.t < hitResult.t)) {
+        hitType = 'device';
+        hitResult = deviceHit;
       }
 
       if (hitResult) {
@@ -505,6 +517,15 @@ export class ProjectileManager {
           }
           if (p.explosionRadius && p.explosionRadius > 0) {
             // Explosion handled by combat system.
+          }
+        } else if (hitType === 'device') {
+          const device = hitResult.target;
+          if (this.eventBus) {
+            this.eventBus.emit(EVENTS.PROJECTILE_HIT_DEVICE, {
+              device,
+              hitPosition: hitPos.clone(),
+              projectile: p
+            });
           }
         }
 
@@ -807,6 +828,32 @@ export class ProjectileManager {
     const res = this.segmentSphereHit(start, end, center, radius);
     if (!res) return null;
     return { ...res, target: 'player' };
+  }
+
+  sweepExtraHittables(start, end) {
+    const provider = this.extraHittablesProvider;
+    if (!provider) return null;
+
+    let list = null;
+    try {
+      list = provider();
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(list) || list.length === 0) return null;
+
+    let best = null;
+    for (const h of list) {
+      const center = h?.position || null;
+      if (!center) continue;
+      const r = Number.isFinite(h?.radius) ? h.radius : 0.5;
+      const res = this.segmentSphereHit(start, end, center, r);
+      if (!res) continue;
+      if (!best || res.t < best.t) {
+        best = { ...res, target: h?.ref || h, kind: h?.kind || 'unknown' };
+      }
+    }
+    return best;
   }
 
   spawnImpact(position, projectile = null) {

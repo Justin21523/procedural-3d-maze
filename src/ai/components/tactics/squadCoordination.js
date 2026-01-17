@@ -27,6 +27,20 @@ function hasAdjacentWall(isWalkableTile, x, y) {
   return false;
 }
 
+function countWalkableNeighbors(isWalkableTile, x, y) {
+  if (typeof isWalkableTile !== 'function') return 0;
+  let count = 0;
+  if (isWalkableTile(x + 1, y)) count++;
+  if (isWalkableTile(x - 1, y)) count++;
+  if (isWalkableTile(x, y + 1)) count++;
+  if (isWalkableTile(x, y - 1)) count++;
+  return count;
+}
+
+function isJunctionTile(isWalkableTile, x, y) {
+  return countWalkableNeighbors(isWalkableTile, x, y) >= 3;
+}
+
 export class SquadCoordinationModule {
   constructor(worldState, monster, options = {}) {
     this.worldState = worldState || null;
@@ -236,6 +250,53 @@ export class SquadCoordinationModule {
     return this.coverFireTarget;
   }
 
+  pickJunctionFlankTarget(monsterGrid, targetGrid, isWalkableTile) {
+    if (!isValidGrid(monsterGrid) || !isValidGrid(targetGrid)) return null;
+    if (typeof isWalkableTile !== 'function') return null;
+
+    const radius = Math.max(2, Math.round(Number(CONFIG.AI_SQUAD_FLANK_JUNCTION_RADIUS) || 7));
+    const minDist = Math.max(1, Math.round(Number(CONFIG.AI_SQUAD_FLANK_JUNCTION_MIN_DIST) || 2));
+
+    let best = null;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist < minDist || dist > radius) continue;
+        const x = targetGrid.x + dx;
+        const y = targetGrid.y + dy;
+        if (!isWalkableTile(x, y)) continue;
+        if (!isJunctionTile(isWalkableTile, x, y)) continue;
+
+        const dMonster = manhattan(monsterGrid, { x, y });
+        const dTarget = manhattan(targetGrid, { x, y });
+        // Prefer junctions close to the target (to "cut off"), but still reachable.
+        const score = -dMonster * 0.25 - Math.abs(dTarget - 3) * 1.25 + Math.random() * 0.35;
+        if (!best || score > best.score) {
+          best = { x, y, score };
+        }
+      }
+    }
+    if (!best) return null;
+
+    // Prefer standing on a "junction exit" that blocks escape routes: step away from the target if possible.
+    const neighbors = [
+      { x: best.x + 1, y: best.y },
+      { x: best.x - 1, y: best.y },
+      { x: best.x, y: best.y + 1 },
+      { x: best.x, y: best.y - 1 }
+    ];
+    let bestExit = null;
+    for (const n of neighbors) {
+      if (!isWalkableTile(n.x, n.y)) continue;
+      const delta = manhattan(targetGrid, n) - manhattan(targetGrid, best);
+      if (delta < 1) continue;
+      const score = delta * 10 - manhattan(monsterGrid, n) * 0.35 + Math.random() * 0.2;
+      if (!bestExit || score > bestExit.score) bestExit = { x: n.x, y: n.y, score };
+    }
+
+    return bestExit ? { x: bestExit.x, y: bestExit.y } : { x: best.x, y: best.y };
+  }
+
   getDirective({ now, monsterGrid, playerGrid, canSee, isWalkableTile, tactics, lastHeardNoise }) {
     if (!this.enabled) return null;
     const role = this.getSquadRole();
@@ -284,6 +345,14 @@ export class SquadCoordinationModule {
           this.flankTargetUntil = tNow + Math.max(0.6, (this.flankTargetKeepSeconds || 2.6) * (0.85 + Math.random() * 0.3));
           return { targetGrid: flank, holdPosition: false, lookAtGrid: sharedTarget, mode: 'flank' };
         }
+      }
+
+      // Corridors: if we can't flank as a ring, try to grab a nearby junction to cut off the target.
+      const junction = this.pickJunctionFlankTarget(monsterGrid, sharedTarget, isWalkableTile);
+      if (junction) {
+        this.flankTarget = junction;
+        this.flankTargetUntil = tNow + Math.max(0.9, (this.flankTargetKeepSeconds || 2.6) * (0.9 + Math.random() * 0.35));
+        return { targetGrid: junction, holdPosition: false, lookAtGrid: sharedTarget, mode: 'flank_junction' };
       }
 
       if (tactics?.tick) {
