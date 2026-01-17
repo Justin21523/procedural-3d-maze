@@ -1,6 +1,6 @@
 {
   "name": "procedural-3d-maze",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A procedurally generated 3D maze prototype with cute monsters, built with Three.js",
   "type": "module",
   "scripts": {
