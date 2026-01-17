@@ -91,3 +91,14 @@ GitHub → Actions → `Desktop Builds` → Run workflow, and set `release_tag` 
   - Tauri's `custom-protocol` serves the app under an internal origin so these paths work without changing the game code.
 - Diagnostic/test pages in the repo root (e.g. `diagnostic.html`, `test-ai.html`) are included in the Vite multi-page build so they work inside the packaged Tauri app too.
 - Linux note: newer distros (e.g. Ubuntu 24.04) ship WebKitGTK 4.1 (libsoup3). This repo uses Tauri v2 to match that stack.
+
+### Linux stability knobs
+
+Some Linux GPU/Wayland stacks can be unstable with WebKitGTK + WebGL. The app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` by default to improve compatibility.
+
+If you still see blank rendering / crashes:
+
+- Force conservative compositing: `P3DM_WEBKIT_NO_COMPOSITING=1`
+- Force software OpenGL (slow, but robust): `P3DM_SOFTWARE_GL=1`
+
+Also note: `Gtk-Message: Failed to load module "xapp-gtk3-module"` is a harmless warning about an optional GTK module.
