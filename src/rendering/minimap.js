@@ -4,7 +4,6 @@
  */
 
 import { TILE_TYPES, ROOM_TYPES, ROOM_CONFIGS } from '../world/tileTypes.js';
-import { CONFIG } from '../core/config.js';
 
 export class Minimap {
   /**
@@ -273,7 +272,7 @@ export class Minimap {
 
     // Debug: navigation/path heatmap (monster/player tile visits).
     const navHeat = Array.isArray(options?.navHeat) ? options.navHeat : null;
-    if ((CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) && navHeat && navHeat.length === height) {
+    if (navHeat && navHeat.length === height) {
       let max = 0;
       for (let y = 0; y < height; y++) {
         const row = navHeat[y];
@@ -284,7 +283,8 @@ export class Minimap {
         }
       }
       if (max > 0) {
-        const baseAlpha = Math.max(0.05, Math.min(0.95, Number(CONFIG.DEBUG_NAV_HEATMAP_ALPHA) || 0.55));
+        const alphaRaw = Number(options?.navHeatAlpha);
+        const baseAlpha = Math.max(0.05, Math.min(0.95, Number.isFinite(alphaRaw) ? alphaRaw : 0.55));
         for (let y = 0; y < height; y++) {
           const row = navHeat[y];
           if (!row) continue;

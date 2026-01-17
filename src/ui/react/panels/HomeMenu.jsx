@@ -241,6 +241,7 @@ export function HomeMenu({ snapshot, debugUi }) {
             <ActionButton size="sm" onClick={() => gameApi?.actions?.respawnEnemies?.()}>Respawn Enemies</ActionButton>
             <ActionButton size="sm" onClick={() => gameApi?.actions?.rebuildObstacles?.()}>Rebuild Obstacles</ActionButton>
             <ActionButton size="sm" onClick={() => gameApi?.actions?.reloadLevels?.()}>Reload Level JSON</ActionButton>
+            <ActionButton size="sm" variant="accent" onClick={() => gameApi?.actions?.runAssetSanityCheck?.()}>Asset Sanity Check (Copy)</ActionButton>
             <ActionButton size="sm" variant="danger" onClick={() => gameApi?.actions?.setDebugUiEnabled?.(true)}>Enable Debug Mode (Reload)</ActionButton>
             <ActionButton size="sm" onClick={() => gameApi?.actions?.setDebugUiEnabled?.(false)}>Disable Debug Mode (Reload)</ActionButton>
           </div>

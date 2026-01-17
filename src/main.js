@@ -340,8 +340,15 @@ window.addEventListener('unhandledrejection', (e) => {
     try {
       // In desktop (Tauri) builds, keep navigation inside the app window.
       // In browser dev, open a new tab.
-      if (typeof window !== 'undefined' && window.__TAURI__) {
-        window.location.assign(href);
+      const isTauri =
+        (typeof window !== 'undefined') && (
+          !!window.__TAURI__ ||
+          !!window.__TAURI_INTERNALS__ ||
+          (typeof navigator !== 'undefined' && /tauri/i.test(String(navigator.userAgent || '')))
+        );
+      if (isTauri) {
+        const url = new URL(href, window.location.origin);
+        window.location.assign(url.toString());
         return;
       }
       const w = window.open(href, '_blank', 'noopener,noreferrer');
@@ -429,6 +436,53 @@ window.addEventListener('unhandledrejection', (e) => {
 	      return await copyText(JSON.stringify(payload, null, 2));
 	    };
 
+	    const toast = (text, seconds = 2.0) => {
+	      try {
+	        eventBus?.emit?.(EVENTS.UI_TOAST, { text: String(text || ''), seconds });
+	      } catch {
+	        // ignore
+	      }
+	    };
+
+	    gameApi.actions.runAssetSanityCheck = async () => {
+	      const results = [];
+	      const probe = async (url, kind = 'GET') => {
+	        const abs = new URL(String(url), window.location.origin).toString();
+	        const started = performance.now();
+	        try {
+	          const res = await fetch(abs, { method: kind, cache: 'no-store' });
+	          const ms = Math.round(performance.now() - started);
+	          results.push({ url: String(url), ok: res.ok, status: res.status, ms });
+	          return res.ok;
+	        } catch (err) {
+	          const ms = Math.round(performance.now() - started);
+	          results.push({ url: String(url), ok: false, status: 0, ms, error: String(err?.message || err) });
+	          return false;
+	        }
+	      };
+
+	      // Critical manifests
+	      await probe('/levels/manifest.json');
+	      await probe('/models/enemy/manifest.json');
+	      await probe('/models/weapon/manifest.json');
+
+	      // Representative assets (fast sanity check)
+	      await probe('/models/enemy/CityLicker/CityLicker.dae');
+	      await probe('/models/weapon/assault_rifle_pbr.glb');
+
+	      const okCount = results.filter((r) => r.ok).length;
+	      toast(`Asset check: ${okCount}/${results.length} ok`, okCount === results.length ? 1.6 : 3.2);
+
+	      const payload = {
+	        version: '2.0.2',
+	        tMs: Date.now(),
+	        origin: String(window.location.origin),
+	        results
+	      };
+	      await copyText(JSON.stringify(payload, null, 2));
+	      return results;
+	    };
+
 	    gameApi.actions.rebuildObstacles = async () => {
 	      if (!bootReady) return false;
 	      if (!worldState || !sceneManager) return false;
@@ -455,6 +509,7 @@ window.addEventListener('unhandledrejection', (e) => {
 	              ...(deviceManager?.getDeviceMarkers?.() || [])
 	            ],
 	            navHeat: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (worldState?.getNavHeat?.() || null) : null,
+	            navHeatAlpha: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (Number(CONFIG.DEBUG_NAV_HEATMAP_ALPHA) || 0.55) : null,
 	            aiMarkers: (CONFIG.DEBUG_AI_MARKERS_ENABLED !== false && monsterManager?.getAIDebugMinimapMarkers)
 	              ? monsterManager.getAIDebugMinimapMarkers({
 	                onlyChasing: CONFIG.DEBUG_AI_FILTER_CHASE_ONLY === true,
@@ -893,6 +948,7 @@ window.addEventListener('unhandledrejection', (e) => {
 	            ...(deviceManager?.getDeviceMarkers?.() || [])
 	          ],
 	          navHeat: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (worldState?.getNavHeat?.() || null) : null,
+	          navHeatAlpha: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (Number(CONFIG.DEBUG_NAV_HEATMAP_ALPHA) || 0.55) : null,
 	          aiMarkers: (CONFIG.DEBUG_AI_MARKERS_ENABLED !== false && monsterManager?.getAIDebugMinimapMarkers)
 	            ? monsterManager.getAIDebugMinimapMarkers({
 	              onlyChasing: CONFIG.DEBUG_AI_FILTER_CHASE_ONLY === true,
@@ -1196,6 +1252,7 @@ window.addEventListener('unhandledrejection', (e) => {
             ...(deviceManager?.getDeviceMarkers?.() || [])
           ],
           navHeat: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (worldState?.getNavHeat?.() || null) : null,
+          navHeatAlpha: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (Number(CONFIG.DEBUG_NAV_HEATMAP_ALPHA) || 0.55) : null,
           aiMarkers: (CONFIG.DEBUG_AI_MARKERS_ENABLED !== false && monsterManager?.getAIDebugMinimapMarkers)
             ? monsterManager.getAIDebugMinimapMarkers({
               onlyChasing: CONFIG.DEBUG_AI_FILTER_CHASE_ONLY === true,
@@ -1537,10 +1594,11 @@ window.addEventListener('unhandledrejection', (e) => {
 	        ...(toolSystem?.getDeviceMarkers?.() || []),
 	        ...(deviceManager?.getDeviceMarkers?.() || [])
 	      ],
-	      navHeat: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (worldState?.getNavHeat?.() || null) : null,
-	      aiMarkers: (CONFIG.DEBUG_AI_MARKERS_ENABLED !== false && monsterManager?.getAIDebugMinimapMarkers)
-	        ? monsterManager.getAIDebugMinimapMarkers({
-	          onlyChasing: CONFIG.DEBUG_AI_FILTER_CHASE_ONLY === true,
+		      navHeat: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (worldState?.getNavHeat?.() || null) : null,
+		      navHeatAlpha: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (Number(CONFIG.DEBUG_NAV_HEATMAP_ALPHA) || 0.55) : null,
+		      aiMarkers: (CONFIG.DEBUG_AI_MARKERS_ENABLED !== false && monsterManager?.getAIDebugMinimapMarkers)
+		        ? monsterManager.getAIDebugMinimapMarkers({
+		          onlyChasing: CONFIG.DEBUG_AI_FILTER_CHASE_ONLY === true,
 	          onlyLeader: CONFIG.DEBUG_AI_FILTER_LEADER_ONLY === true,
           nearestN: Number(CONFIG.DEBUG_AI_FILTER_NEAREST_N) || 0
         })
@@ -1605,6 +1663,7 @@ window.addEventListener('unhandledrejection', (e) => {
 	          ...(deviceManager?.getDeviceMarkers?.() || [])
 	        ],
 	        navHeat: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (worldState?.getNavHeat?.() || null) : null,
+	        navHeatAlpha: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (Number(CONFIG.DEBUG_NAV_HEATMAP_ALPHA) || 0.55) : null,
 	        aiMarkers: (CONFIG.DEBUG_AI_MARKERS_ENABLED !== false && monsterManager?.getAIDebugMinimapMarkers)
 	          ? monsterManager.getAIDebugMinimapMarkers({
 	            onlyChasing: CONFIG.DEBUG_AI_FILTER_CHASE_ONLY === true,
@@ -1880,6 +1939,7 @@ window.addEventListener('unhandledrejection', (e) => {
 	            ...(deviceManager?.getDeviceMarkers?.() || [])
 	          ],
 	          navHeat: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (worldState?.getNavHeat?.() || null) : null,
+	          navHeatAlpha: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (Number(CONFIG.DEBUG_NAV_HEATMAP_ALPHA) || 0.55) : null,
 	          aiMarkers: (CONFIG.DEBUG_AI_MARKERS_ENABLED !== false && monsterManager?.getAIDebugMinimapMarkers)
 	            ? monsterManager.getAIDebugMinimapMarkers({
 	              onlyChasing: CONFIG.DEBUG_AI_FILTER_CHASE_ONLY === true,
@@ -2343,6 +2403,7 @@ window.addEventListener('unhandledrejection', (e) => {
 	          ...(deviceManager?.getDeviceMarkers?.() || [])
 	        ],
 	        navHeat: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (worldState?.getNavHeat?.() || null) : null,
+	        navHeatAlpha: (CONFIG.DEBUG_NAV_HEATMAP_ENABLED ?? false) ? (Number(CONFIG.DEBUG_NAV_HEATMAP_ALPHA) || 0.55) : null,
 	        aiMarkers: (CONFIG.DEBUG_AI_MARKERS_ENABLED !== false && monsterManager?.getAIDebugMinimapMarkers)
 	          ? monsterManager.getAIDebugMinimapMarkers({
 	            onlyChasing: CONFIG.DEBUG_AI_FILTER_CHASE_ONLY === true,

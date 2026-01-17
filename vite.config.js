@@ -62,6 +62,17 @@ function modelsManifestPlugin() {
       if (!fs.existsSync(route.scanDir)) continue;
       fs.mkdirSync(path.dirname(route.file), { recursive: true });
       const payload = buildManifestPayload(route);
+      try {
+        const existingRaw = fs.existsSync(route.file) ? fs.readFileSync(route.file, 'utf8') : '';
+        const existing = existingRaw ? JSON.parse(existingRaw) : null;
+        const existingModels = Array.isArray(existing?.models) ? existing.models : null;
+        if (existingModels && JSON.stringify(existingModels) === JSON.stringify(payload.models)) {
+          // Avoid dirty working trees when only the timestamp would change.
+          continue;
+        }
+      } catch {
+        // ignore
+      }
       fs.writeFileSync(route.file, JSON.stringify(payload, null, 2) + '\n', 'utf8');
     }
   }
